@@ -1,0 +1,349 @@
+<title>Where Agent Org Mesh Fits</title>
+<style>
+  :root {
+    --paper: #F5F6F4;
+    --paper-raised: #FFFFFF;
+    --ink: #171A1D;
+    --ink2: #454C52;
+    --ink3: #767E85;
+    --ink4: #9BA1A7;
+    --rule: #DDE1DF;
+    --rule2: #E9ECEA;
+    --accent: #33417A;
+    --accent-soft: #EEF0F8;
+    --warn: #A25A18;
+    --warn-soft: #FBF1E4;
+    --good: #2C6E4F;
+    --good-soft: #EAF3EC;
+    --serif: Iowan Old Style, "Palatino Linotype", Georgia, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14161A;
+      --paper-raised: #1B1E23;
+      --ink: #EDEFF1;
+      --ink2: #C2C8CD;
+      --ink3: #8B929A;
+      --ink4: #676E75;
+      --rule: #2B2F35;
+      --rule2: #23262B;
+      --accent: #96A3E3;
+      --accent-soft: #232A47;
+      --warn: #E0A458;
+      --warn-soft: #34291A;
+      --good: #7FC79E;
+      --good-soft: #1B2E24;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14161A; --paper-raised: #1B1E23; --ink: #EDEFF1; --ink2: #C2C8CD; --ink3: #8B929A; --ink4: #676E75;
+    --rule: #2B2F35; --rule2: #23262B; --accent: #96A3E3; --accent-soft: #232A47; --warn: #E0A458; --warn-soft: #34291A;
+    --good: #7FC79E; --good-soft: #1B2E24;
+  }
+  :root[data-theme="light"] {
+    --paper: #F5F6F4; --paper-raised: #FFFFFF; --ink: #171A1D; --ink2: #454C52; --ink3: #767E85; --ink4: #9BA1A7;
+    --rule: #DDE1DF; --rule2: #E9ECEA; --accent: #33417A; --accent-soft: #EEF0F8; --warn: #A25A18; --warn-soft: #FBF1E4;
+    --good: #2C6E4F; --good-soft: #EAF3EC;
+  }
+
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); font-size: 15.5px; line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 780px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  header.masthead { margin-bottom: 44px; }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 400; font-size: 40px; line-height: 1.12;
+    margin: 0 0 14px; text-wrap: balance; color: var(--ink);
+  }
+  .dek { font-size: 17px; color: var(--ink2); margin: 0 0 22px; max-width: 62ch; text-wrap: pretty; }
+  .meta {
+    display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px;
+    color: var(--ink3); border-top: 1px solid var(--rule); padding-top: 14px;
+  }
+  .meta b { color: var(--ink2); font-weight: 600; }
+
+  h2 {
+    font-family: var(--serif); font-weight: 400; font-size: 25px; margin: 52px 0 6px;
+    color: var(--ink); text-wrap: balance;
+  }
+  .h2-num { font-family: var(--mono); font-size: 13px; color: var(--accent); margin-right: 10px; }
+  h3 {
+    font-family: var(--sans); font-weight: 700; font-size: 14px; margin: 26px 0 8px; color: var(--ink);
+  }
+  p { margin: 0 0 14px; color: var(--ink2); max-width: 68ch; }
+  strong { color: var(--ink); font-weight: 650; }
+  a { color: var(--accent); }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; color: var(--ink2); }
+  li { margin-bottom: 6px; max-width: 66ch; }
+  li::marker { color: var(--ink4); }
+
+  .lede {
+    font-size: 16.5px; color: var(--ink); border-left: 3px solid var(--accent);
+    padding: 2px 0 2px 18px; margin: 0 0 8px;
+  }
+
+  .callout {
+    background: var(--paper-raised); border: 1px solid var(--rule); border-left: 3px solid var(--warn);
+    border-radius: 3px; padding: 16px 18px; margin: 18px 0 22px;
+  }
+  .callout .callout-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--warn); margin: 0 0 8px; display: block;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout p { color: var(--ink); }
+  .callout cite { display: block; margin-top: 8px; font-style: normal; font-size: 12px; color: var(--ink3); }
+
+  .signal {
+    background: var(--good-soft); border: 1px solid var(--rule); border-left: 3px solid var(--good);
+    border-radius: 3px; padding: 14px 18px; margin: 18px 0 22px;
+  }
+  .signal .callout-label { color: var(--good); font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; display: block; margin-bottom: 6px; }
+  .signal p { color: var(--ink); margin-bottom: 0; }
+
+  .table-wrap { overflow-x: auto; margin: 8px 0 24px; border: 1px solid var(--rule); border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; background: var(--paper-raised); }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule2); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink3); font-weight: 600; background: var(--accent-soft); }
+  tr:last-child td { border-bottom: none; }
+  td.cat { color: var(--ink); font-weight: 650; font-family: var(--sans); }
+  td.gap { color: var(--accent); }
+
+  .pillgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 8px 0 24px; }
+  .persona {
+    background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 4px; padding: 16px 16px 14px;
+  }
+  .persona .tier {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 6px;
+  }
+  .persona h4 { margin: 0 0 6px; font-size: 14.5px; font-weight: 700; color: var(--ink); }
+  .persona p { font-size: 12.5px; margin: 0; color: var(--ink3); }
+  .persona.not-fit { opacity: 0.72; }
+  .persona.not-fit .tier { color: var(--ink4); }
+
+  .checklist { list-style: none; padding: 0; margin: 0 0 24px; }
+  .checklist li {
+    display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-bottom: 1px solid var(--rule2);
+    max-width: none;
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .checklist .tag {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 3px; white-space: nowrap; margin-top: 2px; flex: none;
+  }
+  .tag.blocking { background: var(--warn-soft); color: var(--warn); }
+  .tag.growth { background: var(--accent-soft); color: var(--accent); }
+  .tag.position { background: var(--good-soft); color: var(--good); }
+  .checklist .item b { display: block; color: var(--ink); font-size: 13.5px; margin-bottom: 2px; }
+  .checklist .item span { font-size: 12.5px; color: var(--ink3); }
+
+  .divider { border: none; border-top: 1px solid var(--rule); margin: 48px 0; }
+
+  .sources { font-size: 12px; color: var(--ink3); }
+  .sources li { margin-bottom: 5px; }
+  .sources a { color: var(--ink3); text-decoration: underline; text-decoration-color: var(--rule); }
+
+  .flag { font-family: var(--mono); font-size: 11px; color: var(--ink4); }
+
+  @media (max-width: 560px) {
+    .page { padding: 36px 16px 72px; }
+    h1 { font-size: 30px; }
+    h2 { font-size: 21px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="kicker">Market &amp; positioning memo</p>
+    <h1>Where Agent Org Mesh actually fits</h1>
+    <p class="dek">What the product does in plain terms, which markets it's adjacent to, what's structurally missing before it can be sold, and who the first buyer should be.</p>
+    <div class="meta">
+      <span><b>Prepared</b> Aug 2026</span>
+      <span><b>Scope</b> product · competitive landscape · GTM</span>
+      <span><b>Basis</b> current codebase + live 2026 market research</span>
+    </div>
+  </header>
+
+  <h2><span class="h2-num">01</span>What this actually is</h2>
+  <p class="lede">Every person in an org gets a read-only AI agent that answers questions about their own real work — pulled live from GitHub, Jira, Slack, Calendar, Confluence, and dev-tool activity — but only the parts a deterministic policy engine says the asker's real org-chart relationship is allowed to see.</p>
+  <p>A manager asks "what's blocking the payments migration" and gets a synthesized answer instead of chasing a status meeting or a Slack thread. Every question is written into <em>the subject's own</em> audit trail, visible to them, permanently. Some data classes — compensation, performance reviews, legal matters, health data, benefits, DMs — are never ingested by any connector at all: not filtered after the fact, structurally absent from the system.</p>
+  <p>Stripped of implementation detail, that's five specific design bets bundled together, and the combination is what makes it unusual:</p>
+  <ol>
+    <li><strong>Pull, not push.</strong> Ask anytime; nobody has to file a status update for it to exist.</li>
+    <li><strong>Real authorization, not document permissions.</strong> Access is computed from the actual org chart relationship (direct manager, skip-level, peer, executive, IT admin, self) against a policy grid, deterministically — not a role a doc was shared with.</li>
+    <li><strong>Transparency to the subject, not just the asker.</strong> The person being asked about always sees who asked and what they were told. Nothing is silently withheld — a refusal is a visible line item, not an absence.</li>
+    <li><strong>A structural exclusion boundary.</strong> The most sensitive HR data classes are never connected, full stop — a decision made at the connector layer, not a toggle a policy admin could ever flip on.</li>
+    <li><strong>Model-agnostic per person.</strong> Claude, ChatGPT, or a self-hosted/local model, chosen per employee — no vendor lock-in built into the core design.</li>
+  </ol>
+
+  <h2><span class="h2-num">02</span>Where it sits relative to the market</h2>
+  <p>Nothing sells exactly this. Four adjacent categories each solve part of the problem — none combine free-text cross-org Q&amp;A, a real authorization layer, and subject-side transparency the way this does.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Category</th><th>What it actually does</th><th>Closest names</th><th>What it's missing that this has</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="cat">Engineering intelligence platforms</td>
+          <td>Dashboards and metrics on where engineering time and delivery risk live, for eng leadership and finance (capitalization, DORA metrics, PR throughput).</td>
+          <td>Jellyfish, LinearB, Swarmia, DX</td>
+          <td class="gap">No free-text Q&amp;A at all — you read a dashboard, you don't ask a question. No per-relationship disclosure. No concept of the subject seeing who looked.</td>
+        </tr>
+        <tr>
+          <td class="cat">Enterprise AI search / knowledge assistants</td>
+          <td>Chat-with-your-company's-documents, RAG over wikis, tickets, and drives, permission-aware retrieval.</td>
+          <td>Glean, Onyx, GoSearch, Microsoft Copilot</td>
+          <td class="gap">Access model is "can you see the doc," inherited from existing sharing settings — not an org-chart relationship or a deterministic disclosure tier. No audit visible to the subject of the query.</td>
+        </tr>
+        <tr>
+          <td class="cat">Async standup / status tools</td>
+          <td>Pulls commit/PR/ticket activity into a written daily or weekly update, usually shared to a channel.</td>
+          <td>Range, Geekbot, Kollabe, Linear Pulse</td>
+          <td class="gap">Push-based on a schedule, not ask-anytime. One broadcast update for everyone, not a disclosure that varies by who's asking. Closest functional cousin, but structurally simpler.</td>
+        </tr>
+        <tr>
+          <td class="cat">AI chief of staff / digital-twin agents</td>
+          <td>A personal proactive agent (often for one executive) that monitors, summarizes, and sometimes acts on someone's behalf; some vendors build literal "manager clone" agents.</td>
+          <td>Nerve, Senchal, ChiefOS, Microsoft DigitalMe</td>
+          <td class="gap">Closest conceptual sibling — and the one with a <em>documented trust problem</em> the market has already surfaced (see below). This is the category to watch, and to differentiate hardest against.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2><span class="h2-num">03</span>The whitespace, and why it's not an accident</h2>
+  <p>The category that looks most like this product — personal AI agents standing in for people, "digital twins," manager-clone bots — is also the one 2026 research says workers and managers actively distrust.</p>
+
+  <div class="callout">
+    <span class="callout-label">Carnegie Mellon / Emory study, 23 managers and workers</span>
+    <p>Participants worried about "lack of trust, lack of authenticity, and reduced interpersonal contact," and suspected "AI bossware might just be an excuse to surveil them." One manager: <em>"if my own work could be done by my agent, then what is this job position for me to do?"</em> The researchers' conclusion: manager-clone agents only work if framed as assistants, never substitutes — and only if the surveillance suspicion is actually addressed, not just denied.</p>
+    <cite>The Register, "AI digital twin boss bots not welcome by workers, managers," Mar 2026</cite>
+  </div>
+
+  <div class="callout">
+    <span class="callout-label">Meta, internal backlash, 2026</span>
+    <p>Meta's Model Capability Initiative collected employee mouse movement, clicks, and keystrokes to train internal AI agents. After staff objected — citing exposure of passwords, internal product info, and personal data — Meta had to add a pause button and an opt-out. This is what happens when a workplace AI project ships the surveillance concern instead of designing it away up front.</p>
+    <cite>HR Grapevine / Lawyer Monthly, Jun 2026</cite>
+  </div>
+
+  <div class="signal">
+    <span class="callout-label">Why this matters for this product specifically</span>
+    <p>Every objection in that CMU/Emory study — surveillance suspicion, no visibility into what's being said, no sense of authorship or control — is something this codebase already structurally answers: "Who asked about me" is a real, always-on page, not a promise; withholding is a visible line item, never silent; the model never acts, only answers what a deterministic policy already authorized. This isn't a hypothetical fit — it's a shipped counter-architecture to a documented, current market objection.</p>
+  </div>
+
+  <h2><span class="h2-num">04</span>What to change before selling it</h2>
+  <p>None of this is a rebuild — it's hardening around an architecture that's already right. Ordered by how hard it blocks a sale.</p>
+
+  <ul class="checklist">
+    <li>
+      <span class="tag blocking">Blocking</span>
+      <span class="item"><b>SSO / SAML</b><span>Any buyer past ~200 employees will ask in the first call. Currently one seeded platform admin — no identity federation.</span></span>
+    </li>
+    <li>
+      <span class="tag blocking">Blocking</span>
+      <span class="item"><b>RBAC beyond one admin per org</b><span>Real customers need more than one person able to manage policy/connectors without sharing a login.</span></span>
+    </li>
+    <li>
+      <span class="tag blocking">Blocking</span>
+      <span class="item"><b>Live where people already are</b><span>Every adjacent category that won distribution (standup tools, chief-of-staff agents) lives in Slack or Teams. A web app you have to remember to open loses to "ask in the channel you're already in."</span></span>
+    </li>
+    <li>
+      <span class="tag blocking">Blocking</span>
+      <span class="item"><b>HRIS org-chart sync</b><span>Structure only — name, manager, title — kept behind the same CANT boundary that already excludes comp and reviews. Manual chart-building doesn't survive a real onboarding.</span></span>
+    </li>
+    <li>
+      <span class="tag growth">Growth</span>
+      <span class="item"><b>Self-serve billing / usage pricing</b><span>Needed to land bottom-up on one team before there's an enterprise procurement motion at all.</span></span>
+    </li>
+    <li>
+      <span class="tag growth">Growth</span>
+      <span class="item"><b>SOC2 Type I runway</b><span>Not needed to sell the first few teams, but the clock should start now — security review is where trust-sensitive deals die if it's not underway.</span></span>
+    </li>
+    <li>
+      <span class="tag position">Positioning</span>
+      <span class="item"><b>Lead with the trust architecture, not "agent mesh"</b><span>"Who asked about me" and the CANT/WONT distinction should be the first thing a prospect sees, not a footnote — it's the one thing nothing in §2's table has, and it's the exact objection §3's research shows the market already raised about the nearest neighbor category.</span></span>
+    </li>
+    <li>
+      <span class="tag position">Positioning</span>
+      <span class="item"><b>Reconsider the name</b><span>"Mesh" reads infrastructure-first. The buyer is trust-first, and the real hero of the product is the subject, not the requester — the name should say what the person being asked-about gets, not just what the asker gets.</span></span>
+    </li>
+  </ul>
+
+  <h2><span class="h2-num">05</span>Who to sell it to</h2>
+  <p>The connector set (GitHub, Jira, Slack, Confluence, Claude Code/Codex/Gemini CLI) already skews engineering-org-shaped. Sell there first; broaden verticals only once more non-dev connectors exist.</p>
+
+  <div class="pillgrid">
+    <div class="persona">
+      <p class="tier">Primary buyer</p>
+      <h4>VP Engineering / CTO</h4>
+      <p>100&ndash;1,000 people, distributed or hybrid, 3+ management layers, GitHub + Jira + Slack already wired together. Status-meeting overhead is a felt, budgeted pain, not a hypothetical one.</p>
+    </div>
+    <div class="persona">
+      <p class="tier">Secondary buyer</p>
+      <h4>CPO / Head of People</h4>
+      <p>Especially at companies that had their own version of a monitoring-tool scare. Sell as the transparent, subject-visible alternative to "bossware" — the CMU/Emory objections, pre-answered.</p>
+    </div>
+    <div class="persona">
+      <p class="tier">Tertiary buyer</p>
+      <h4>Platform / DevEx team</h4>
+      <p>Already running Backstage, Cortex, or Port for ownership and service catalogs. This is the Q&amp;A layer those tools don't have — pointed at people instead of services.</p>
+    </div>
+    <div class="persona not-fit">
+      <p class="tier">Not a fit yet</p>
+      <h4>&lt;50-person companies</h4>
+      <p>Not enough management layers for the status-overhead pain to be worth buying software for. Revisit once self-serve pricing exists.</p>
+    </div>
+    <div class="persona not-fit">
+      <p class="tier">Not a fit yet</p>
+      <h4>Regulated / compliance-first verticals</h4>
+      <p>Healthcare, finance, public sector — will ask for SOC2 and data residency answers this doesn't have yet. Come back once §4's blocking items land.</p>
+    </div>
+    <div class="persona not-fit">
+      <p class="tier">Not a fit yet</p>
+      <h4>Non-engineering orgs</h4>
+      <p>Sales, support, and ops teams live in Salesforce and ticketing tools this doesn't connect to yet. The architecture generalizes; the connector list doesn't, today.</p>
+    </div>
+  </div>
+
+  <h3>A GTM motion that matches what's already built</h3>
+  <p>The local/self-hosted model option (already real, already verified against Ollama) is a genuine wedge: a prospect can trial this with zero AI spend commitment and no data leaving their network, which quietly answers the security team's first question before they ask it. Land on one engineering org this way, let the "no more status meetings" pull expand it across the chart organically, then convert to a paid/enterprise tier once IT or security notices it's now load-bearing — that's the point to sell SSO, RBAC, and the compliance story, because by then the champion is internal, not you.</p>
+
+  <hr class="divider" />
+
+  <h2 style="margin-top:0;"><span class="h2-num">—</span>Sources</h2>
+  <ul class="sources">
+    <li><a href="https://www.theregister.com/software/2026/03/23/ai-digital-twin-boss-bots-not-welcome-by-workers-managers/5223856">The Register — "AI digital twin boss bots not welcome by workers, managers"</a></li>
+    <li><a href="https://www.hrgrapevine.com/us/content/article/2026-06-01-meta-faces-employee-backlash-over-ai-tracking-tool-as-privacy-concerns-grow">HR Grapevine — "Meta scales back AI employee monitoring tool after staff backlash"</a></li>
+    <li><a href="https://www.lawyer-monthly.com/2026/06/meta-employee-tracking-ai-training-privacy/">Lawyer Monthly — "Meta Limits Employee Tracking Used for AI Training After Privacy Backlash"</a></li>
+    <li><a href="https://codepulsehq.com/guides/engineering-analytics-tools-comparison">CodePulse — "Jellyfish vs LinearB vs Swarmia: Full 2026 Comparison"</a></li>
+    <li><a href="https://getconcordance.com/guides/engineering-intelligence-platforms-compared">Concordance — "Engineering Intelligence Platforms Compared"</a></li>
+    <li><a href="https://www.gosearch.ai/blog/what-are-the-top-3-glean-alternatives-2026/">GoSearch — "Glean Alternatives: 10 AI Enterprise Search Platforms Compared (2026)"</a></li>
+    <li><a href="https://onyx.app/insights/glean-alternatives">Onyx — "Open-Source Glean Alternatives for Enterprise Search (2026)"</a></li>
+    <li><a href="https://www.range.co/product/async-meeting-software">Range — "Best Async Meeting Software for High-Performing Teams"</a></li>
+    <li><a href="https://runsteady.com/blog/tools-for-daily-weekly-status-updates/">Steady — "The Best Tools for Daily and Weekly Status Updates in 2026"</a></li>
+    <li><a href="https://www.vybe.build/blog/ai-chief-of-staff">Vybe — "AI Chief of Staff: how agentic AI is replacing the $150K hire"</a></li>
+    <li><a href="https://valueaddvc.com/blog/ai-chief-of-staff-what-the-role-looks-like-and-which-companies-are-hiring">Value Add VC — "AI Chief of Staff: What It Is, Salary, and Who's Hiring"</a></li>
+    <li><a href="https://www.microsoft.com/insidetrack/blog/meet-digitalme-our-ai-digital-twin-that-works-on-our-behalf/">Microsoft Inside Track — "Meet DigitalMe: Our AI digital twin that works on our behalf"</a></li>
+    <li><a href="https://promethium.ai/guides/ai-agent-data-governance-enterprise-playbook-2026/">Promethium — "AI Agent Data Governance: The Enterprise Playbook for 2026"</a></li>
+    <li><a href="https://atlan.com/know/ai-agent/how-to-give-ai-agents-access-to-enterprise-data/">Atlan — "AI Agent Data Access: Governed Patterns and Setup"</a></li>
+    <li><a href="https://northflank.com/blog/top-internal-developer-portals">Northflank — "Top internal developer portals in 2026"</a></li>
+    <li><a href="https://tekanaid.com/posts/backstage-vs-port-vs-cortex-internal-developer-portal-comparison-2026">TeKanAid — "Backstage vs Port vs Cortex (2026)"</a></li>
+  </ul>
+  <p class="flag">Grounded in live 2026 web research plus the current org_agent codebase (CLAUDE.md, domain/policy.ts, server.ts, seed data). Company names above are market context, not endorsements or partnership claims.</p>
+
+</div>
