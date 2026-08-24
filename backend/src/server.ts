@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import staticFiles from '@fastify/static';
 import Fastify from 'fastify';
 import {
   generateSessionToken,
@@ -37,8 +39,15 @@ import { allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll } from './integrations/resourceProviders.js';
 import { sendInviteEmail } from './integrations/resendEmail.js';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const app = Fastify({ logger: false });
-await app.register(cors, { origin: true, credentials: true });
+// Same-origin once frontend and API are served from this one process (see the static
+// registration below) — cross-origin requests have no legitimate reason to hit this API
+// in production, so CORS is disabled outright there rather than left permissively open.
+// Local dev keeps `origin: true` since the Vite dev server (:5173) is a different origin
+// from the API (:3001).
+await app.register(cors, { origin: isProduction ? false : true, credentials: true });
 await app.register(cookie);
 
 // Where the browser lands to sign in — used both for post-Gmail-OAuth redirects (already
@@ -54,10 +63,12 @@ function orgIdFromQuery(req: { query: unknown }): number {
 /* ---------- platform: real account authentication + RBAC ----------
    Server-side sessions (backend/src/db/repo.ts's sessions table), not JWTs — a random
    token in an httpOnly/sameSite cookie, looked up by its SHA-256 hash, exactly the
-   pattern ingest_tokens already established. Cookie isn't marked `secure` here because
-   this runs over plain http in local dev (matching person_oauth_tokens' plaintext-token
-   comment in schema.sql: honest about the dev-only posture, not pretending otherwise) —
-   flip that on before this ever runs anywhere real, behind HTTPS.
+   pattern ingest_tokens already established. `secure` follows `isProduction`: off for
+   local dev (plain http, matching person_oauth_tokens' plaintext-token comment in
+   schema.sql — honest about the dev-only posture, not pretending otherwise), on for a
+   real deployment (always served over HTTPS there — a `secure` cookie over plain http
+   is simply never sent, so this must flip the moment it's actually running anywhere
+   real).
 
    One account, two independent facts: whether it administers any orgs (org_admins) and
    whether it's linked to any org-chart identities (people.account_id, resolved via
@@ -73,7 +84,7 @@ async function setSessionCookie(reply: { setCookie: (...a: any[]) => void }, acc
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
   await repo.createSession(accountId, hashSessionToken(token), now.toISOString(), expiresAt.toISOString());
   reply.setCookie(SESSION_COOKIE, token, {
-    path: '/', httpOnly: true, sameSite: 'lax', secure: false, expires: expiresAt,
+    path: '/', httpOnly: true, sameSite: 'lax', secure: isProduction, expires: expiresAt,
   });
 }
 
@@ -1401,6 +1412,28 @@ app.get('/api/agent/conversations', async (req) => {
   const { requesterId, targetId } = req.query as { requesterId?: string; targetId?: string };
   return { conversations: await repo.listConversationsForPair(Number(requesterId), Number(targetId)) };
 });
+
+/* ---------- serve the built frontend (production only) ----------
+   Local dev keeps the two dev servers (Vite on :5173 proxying /api to this one on
+   :3001) — this block only matters for a real deployment, where this one process serves
+   both the API and the built frontend from the same origin (see the CORS/cookie notes
+   above for why that's deliberate, not incidental). */
+if (isProduction) {
+  const frontendDist = path.join(PROJECT_ROOT, 'frontend', 'dist');
+  await app.register(staticFiles, { root: frontendDist });
+
+  // SPA fallback: App.tsx's router is real pushState/popstate URLs (e.g. /me/setup), so
+  // a hard refresh on one of those has to still resolve to index.html rather than 404 —
+  // client-side routing takes it from there. Scoped to non-API GETs only: a genuine
+  // /api/* 404 must stay a real JSON 404, never get silently swallowed into this.
+  app.setNotFoundHandler((req, reply) => {
+    if (req.raw.method === 'GET' && !req.url.startsWith('/api')) {
+      return reply.sendFile('index.html', frontendDist);
+    }
+    reply.code(404);
+    return { error: 'not found' };
+  });
+}
 
 /* ---------- go ---------- */
 
