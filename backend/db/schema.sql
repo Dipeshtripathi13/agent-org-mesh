@@ -284,11 +284,22 @@ CREATE INDEX IF NOT EXISTS person_runtimes_org_idx ON person_runtimes(org_id);
 -- (server.ts's POST /api/organizations/:orgId/main-agent, requireOrgRole 'admin'), never
 -- by an individual person. org_id as the primary key makes "one per org" structural.
 -- Everyone in the org reads the same registration; nobody can register their own.
+--
+-- api_key_encrypted/base_url/model: the org's own optional credential override, so
+-- different organizations can each bring their own provider key or point at their own
+-- self-hosted endpoint instead of sharing this deployment's platform-wide env var default.
+-- All NULL (the default) means "use the platform default," unchanged from before this
+-- existed. Only the key is encrypted (domain/crypto.ts, AES-256-GCM) — base_url/model
+-- aren't secrets and an admin needs to see them to edit; the key must never be returned
+-- decrypted by any API response (server.ts's GET handler exposes only a boolean).
 CREATE TABLE IF NOT EXISTS org_main_agent (
-  org_id       integer PRIMARY KEY REFERENCES organizations(id),
-  runtime_key  text NOT NULL REFERENCES runtime_catalog(key),
-  scope        text NOT NULL,
-  added_at     date NOT NULL
+  org_id             integer PRIMARY KEY REFERENCES organizations(id),
+  runtime_key        text NOT NULL REFERENCES runtime_catalog(key),
+  scope              text NOT NULL,
+  added_at           date NOT NULL,
+  api_key_encrypted  text,
+  base_url           text,
+  model              text
 );
 
 /* ---------- personal OAuth connections ----------

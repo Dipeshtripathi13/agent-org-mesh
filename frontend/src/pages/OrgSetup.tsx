@@ -494,6 +494,10 @@ function OrgMainAgentPanel() {
   const [editing, setEditing] = useState(false);
   const [formRuntime, setFormRuntime] = useState('');
   const [formScope, setFormScope] = useState<'full' | 'narrow'>('full');
+  const [useOwnCredentials, setUseOwnCredentials] = useState(false);
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formBaseUrl, setFormBaseUrl] = useState('');
+  const [formModel, setFormModel] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -513,10 +517,15 @@ function OrgMainAgentPanel() {
   const showForm = canEdit && (!main || editing);
   const effectiveRuntime = formRuntime || main?.runtimeKey || mainOptions[0]?.key || '';
   const formEntry = byKey.get(effectiveRuntime) ?? null;
+  const supportsBaseUrl = formEntry?.apiFamily === 'openai-compatible';
 
   const openEdit = () => {
     setFormRuntime(main?.runtimeKey ?? mainOptions[0]?.key ?? '');
     setFormScope(main?.scope === 'narrow' ? 'narrow' : 'full');
+    setUseOwnCredentials(!!(main?.hasCustomApiKey || main?.baseUrl || main?.model));
+    setFormApiKey('');
+    setFormBaseUrl(main?.baseUrl ?? '');
+    setFormModel(main?.model ?? '');
     setEditing(true);
   };
   const submit = async () => {
@@ -524,7 +533,14 @@ function OrgMainAgentPanel() {
     setBusy(true);
     setError(null);
     try {
-      await api.setOrgMainAgent(orgId, effectiveRuntime, formScope);
+      const credentials = useOwnCredentials
+        ? {
+            apiKey: formApiKey.trim() === '' ? undefined : formApiKey.trim(),
+            baseUrl: supportsBaseUrl ? (formBaseUrl.trim() || null) : null,
+            model: formModel.trim() || null,
+          }
+        : { apiKey: null, baseUrl: null, model: null };
+      await api.setOrgMainAgent(orgId, effectiveRuntime, formScope, credentials);
       setEditing(false);
       await load();
     } catch (e) {
@@ -589,6 +605,69 @@ function OrgMainAgentPanel() {
                 pending regardless of the scope chosen above.
               </p>
             )}
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--rule2)' }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="chip"
+                  aria-pressed={!useOwnCredentials}
+                  onClick={() => setUseOwnCredentials(false)}
+                >
+                  Use the shared platform key
+                </button>
+                <button
+                  type="button"
+                  className="chip"
+                  aria-pressed={useOwnCredentials}
+                  onClick={() => setUseOwnCredentials(true)}
+                >
+                  Use our own credentials
+                </button>
+              </div>
+              {useOwnCredentials ? (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                    API key
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={formApiKey}
+                      onChange={(e) => setFormApiKey(e.target.value)}
+                      placeholder={main?.hasCustomApiKey ? '•••• already set — leave blank to keep it' : 'sk-...'}
+                      style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+                    />
+                  </label>
+                  {supportsBaseUrl && (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                      Endpoint URL
+                      <input
+                        type="text"
+                        value={formBaseUrl}
+                        onChange={(e) => setFormBaseUrl(e.target.value)}
+                        placeholder="https://api.openai.com/v1"
+                        style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+                      />
+                    </label>
+                  )}
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                    Model
+                    <input
+                      type="text"
+                      value={formModel}
+                      onChange={(e) => setFormModel(e.target.value)}
+                      placeholder={supportsBaseUrl ? 'gpt-4o-mini' : 'claude-sonnet-5'}
+                      style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 160 }}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+                  {main?.hasCustomApiKey || main?.baseUrl || main?.model
+                    ? 'Saving will clear this org\'s own credentials and switch back to the platform default.'
+                    : "This org uses the platform's shared key — no credentials to enter."}
+                </p>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 7, marginTop: 12 }}>
               <button
                 disabled={busy || !effectiveRuntime}
@@ -619,6 +698,11 @@ function OrgMainAgentPanel() {
                 Registration filed. Nothing connects until IT &amp; Security approves this runtime.
               </p>
             )}
+            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+              {main.hasCustomApiKey || main.baseUrl || main.model
+                ? <>Using this org's own credentials{main.baseUrl ? <> — <strong>{main.baseUrl}</strong></> : ''}{main.model ? <> (model: <strong>{main.model}</strong>)</> : ''}.</>
+                : "Using the platform's shared key."}
+            </p>
             {canEdit && (
               <div style={{ marginTop: 9 }}>
                 <button className="chip" disabled={busy} onClick={openEdit}>Edit</button>

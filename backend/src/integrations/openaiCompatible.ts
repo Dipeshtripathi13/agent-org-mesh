@@ -1,5 +1,5 @@
 import { parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
+import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
 /**
  * The ModelProvider implementation for anything speaking the OpenAI chat-completions
@@ -12,39 +12,40 @@ import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type Convers
  *
  * Same house rules as anthropicProvider: never invents beyond what it's given, fails open
  * on any missing config or request error, and never sees anything respond() didn't already
- * authorize.
+ * authorize. `credentials`, when passed, is an org's own key/endpoint/model — see
+ * modelProvider.ts's ProviderCredentials doc — and always wins over the env var default.
  */
 
-export function openaiConfigured(): boolean {
-  return !!process.env.OPENAI_API_KEY;
+export function openaiConfigured(credentials?: ProviderCredentials): boolean {
+  return !!(credentials?.apiKey || process.env.OPENAI_API_KEY);
 }
 
-function baseUrl(): string {
-  return (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+function baseUrl(credentials?: ProviderCredentials): string {
+  return (credentials?.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
 }
 
 /** Pure — the request body a chat-completions call sends. Split out from the actual
  *  fetch so the shape can be unit-tested without a network call. */
-export function buildChatCompletionsRequest(prompt: string): { model: string; messages: { role: string; content: string }[]; max_tokens: number } {
+export function buildChatCompletionsRequest(prompt: string, credentials?: ProviderCredentials): { model: string; messages: { role: string; content: string }[]; max_tokens: number } {
   return {
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    model: credentials?.model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 600,
   };
 }
 
-async function callOpenAI(prompt: string): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
+async function callOpenAI(prompt: string, credentials?: ProviderCredentials): Promise<string> {
+  const apiKey = credentials?.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not set on the backend — add it (and optionally OPENAI_BASE_URL / OPENAI_MODEL for a self-hosted model) to backend/.env and restart the server');
   }
-  const res = await fetch(`${baseUrl()}/chat/completions`, {
+  const res = await fetch(`${baseUrl(credentials)}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(buildChatCompletionsRequest(prompt)),
+    body: JSON.stringify(buildChatCompletionsRequest(prompt, credentials)),
   });
   if (!res.ok) {
     throw new Error(`OpenAI-compatible endpoint returned HTTP ${res.status}: ${await res.text()}`);
@@ -54,10 +55,10 @@ async function callOpenAI(prompt: string): Promise<string> {
   return text ? text.trim() : '(no response returned)';
 }
 
-async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[]): Promise<Set<string>> {
+async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Set<string>> {
   const keys = candidates.map((c) => c.surfaceKey);
   if (keys.length === 0) return new Set();
-  if (!openaiConfigured()) return new Set(keys);
+  if (!openaiConfigured(credentials)) return new Set(keys);
 
   const listing = candidates.map((c) => `- ${c.surfaceKey}: ${c.reads}`).join('\n');
   let raw: string;
@@ -74,6 +75,7 @@ async function selectRelevantSurfaces(question: string, candidates: SurfaceDescr
         '',
         listing,
       ].join('\n'),
+      credentials,
     );
   } catch {
     return new Set(keys); // request error — never let a router failure narrow coverage
@@ -81,7 +83,7 @@ async function selectRelevantSurfaces(question: string, candidates: SurfaceDescr
   return parseRelevantSurfaces(raw, keys);
 }
 
-async function synthesize(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[]): Promise<string> {
+async function synthesize(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[], credentials?: ProviderCredentials): Promise<string> {
   if (sections.length === 0) {
     throw new Error('no real activity to answer from — connect at least one real source first');
   }
@@ -96,17 +98,17 @@ async function synthesize(personName: string, question: string, sections: Activi
     wrapUntrustedData('question', question),
     '',
     wrapUntrustedData('authorized-data', body),
-  ].join('\n'));
+  ].join('\n'), credentials);
 }
 
-async function writeClaim(personName: string, digest: string): Promise<string> {
+async function writeClaim(personName: string, digest: string, credentials?: ProviderCredentials): Promise<string> {
   const text = await callOpenAI([
     `Write ONE concise, factual sentence describing ${personName}'s work today, for a manager status view.`,
     'Base it only on the real activity log below — never invent or infer anything beyond it.',
     'Plain sentence, no bullet points, no preamble, no quotes around it.',
     '',
     wrapUntrustedData('activity-log', digest),
-  ].join('\n'));
+  ].join('\n'), credentials);
   return text.replace(/^["']|["']$/g, '').trim();
 }
 

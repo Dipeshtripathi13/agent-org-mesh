@@ -19,8 +19,9 @@ import {
   nextSurfaceState,
   stateLabel,
 } from './domain/coverage.js';
+import { encryptSecret } from './domain/crypto.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
-import type { ConfigurableClass, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
+import type { ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
 import * as repo from './db/repo.js';
 import type { OrgRole } from './db/repo.js';
 import { anthropicConfigured, summarizeDailyActivity } from './integrations/anthropic.js';
@@ -789,6 +790,21 @@ async function checkCatalogEntry(runtimeKey: string, reply: { code: (n: number) 
   return { entry };
 }
 
+/** Strips a stored org_main_agent row down to what's safe to send over the wire — the
+ *  encrypted API key becomes a plain boolean, never the ciphertext or (obviously) the
+ *  decrypted value. baseUrl/model aren't secrets, so an admin can see them to edit them. */
+function sanitizeOrgMainAgent(registered: OrgMainAgent | null) {
+  if (!registered) return null;
+  return {
+    runtimeKey: registered.runtimeKey,
+    scope: registered.scope,
+    addedAt: registered.addedAt,
+    hasCustomApiKey: registered.apiKeyEncrypted !== null,
+    baseUrl: registered.baseUrl,
+    model: registered.model,
+  };
+}
+
 /** Read the org's one main/aggregator agent — no auth gate, same as the sub-agent GET
  *  above, since "My agent"'s free identity switcher (MeContext.tsx, CLAUDE.md rule 7)
  *  needs to show this even when nobody's logged in. Setting it is a separate,
@@ -796,7 +812,7 @@ async function checkCatalogEntry(runtimeKey: string, reply: { code: (n: number) 
 app.get('/api/organizations/:orgId/main-agent', async (req) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getOrgMainAgent(orgId)]);
-  return { catalog, registered };
+  return { catalog, registered: sanitizeOrgMainAgent(registered) };
 });
 
 /** Set or switch the org's one main/aggregator agent — admin-only (CLAUDE.md: "the main
@@ -812,7 +828,16 @@ app.get('/api/organizations/:orgId/main-agent', async (req) => {
  *  `mainEligible` (this entry is a sensible org-facing aggregator at all — claude-code has
  *  a real adapter but is a dev tool scoped to GitHub/Jira, so it stays sub-agent-only on
  *  mainEligible alone). See integrations/runtimeProvider.ts and domain/types.ts's
- *  AgentRuntime doc comment. */
+ *  AgentRuntime doc comment.
+ *
+ *  apiKey/baseUrl/model let the org bring its own provider credentials instead of sharing
+ *  this deployment's platform-wide env var default — e.g. its own Anthropic/OpenAI
+ *  billing, or a self-hosted endpoint (runtimeKey 'llama-local', any OpenAI-compatible
+ *  server). Each is optional and independently tri-state: omitted (undefined) leaves
+ *  whatever's already stored untouched, `null` (or an empty string) clears it back to the
+ *  platform default, a non-empty string sets it. The key is encrypted before it's ever
+ *  written to Postgres (domain/crypto.ts) and never returned by any response afterward —
+ *  see sanitizeOrgMainAgent above. */
 app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to set this organization\'s main agent');
@@ -820,7 +845,13 @@ app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
     reply.code(check.code);
     return { error: check.error };
   }
-  const { runtimeKey, scope: requestedScope } = req.body as { runtimeKey: string; scope?: RuntimeScope };
+  const { runtimeKey, scope: requestedScope, apiKey, baseUrl, model } = req.body as {
+    runtimeKey: string;
+    scope?: RuntimeScope;
+    apiKey?: string | null;
+    baseUrl?: string | null;
+    model?: string | null;
+  };
   if (requestedScope != null && requestedScope !== 'full' && requestedScope !== 'narrow') {
     reply.code(400);
     return { error: 'scope must be full or narrow — pending is assigned automatically, never chosen' };
@@ -831,10 +862,26 @@ app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
     reply.code(400);
     return { error: `"${checked.entry.name}" can't be a main agent — connect it as a sub-agent instead` };
   }
+  const existing = await repo.getOrgMainAgent(orgId);
+  let apiKeyEncrypted = existing?.apiKeyEncrypted ?? null;
+  if (apiKey !== undefined) {
+    if (!apiKey) {
+      apiKeyEncrypted = null;
+    } else {
+      try {
+        apiKeyEncrypted = encryptSecret(apiKey);
+      } catch {
+        reply.code(500);
+        return { error: 'this server is not configured to store a custom credential right now — contact your platform admin' };
+      }
+    }
+  }
+  const resolvedBaseUrl = baseUrl === undefined ? (existing?.baseUrl ?? null) : (baseUrl || null);
+  const resolvedModel = model === undefined ? (existing?.model ?? null) : (model || null);
   const scope: RuntimeScope = checked.entry.approved ? (requestedScope ?? 'full') : 'pending';
   const addedAt = new Date().toISOString().slice(0, 10);
-  await repo.setOrgMainAgent(orgId, runtimeKey, scope, addedAt);
-  return { registered: await repo.getOrgMainAgent(orgId) };
+  await repo.setOrgMainAgent(orgId, runtimeKey, scope, addedAt, apiKeyEncrypted, resolvedBaseUrl, resolvedModel);
+  return { registered: sanitizeOrgMainAgent(await repo.getOrgMainAgent(orgId)) };
 });
 
 /** Register a sub-agent — always a personal tool, never connected to org surfaces.

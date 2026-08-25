@@ -276,6 +276,27 @@ anymore. `person_runtimes` still exists but only ever holds personal sub-agents 
 (Claude Code, GitHub, etc. as status-check tools the org's main agent can query); it lost
 its old main/sub distinction entirely along with it.
 
+Each org can also bring its own provider credentials instead of sharing this deployment's
+platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
+different organizations on different LLM providers, including their own self-hosted/
+open-source model. Optional `api_key_encrypted`/`base_url`/`model` columns on
+`org_main_agent` (same admin-only endpoint, `apiKey`/`baseUrl`/`model` in the POST body)
+override the platform default just for that org; all-null (the default) is exactly the
+original behavior. The key is encrypted at rest — `backend/src/domain/crypto.ts`,
+AES-256-GCM keyed by a new `CREDENTIAL_ENCRYPTION_KEY` env var (one per deployment,
+required only once an org actually sets its own key) — and never leaves the server
+decrypted; `GET .../main-agent` exposes only `hasCustomApiKey: boolean`, never the key
+itself. `runtimeProvider.ts`'s `getMainProvider` resolves and binds the credential once
+per ask (`resolveCredentials`/`bindCredentials`), so none of the 5 existing call sites
+(`server.ts`'s `/api/agent/ask`, `realClaims.ts`'s 4 ingestion functions) needed to
+change. The `llama-local` catalog entry is the generic "bring your own self-hosted
+endpoint" vehicle — its copy is deliberately vendor-neutral (it used to describe one
+specific on-prem box) since `runtime_catalog` is global, shared by every org. Real and
+typechecked/tested (round-trip encryption, credential-resolution fallback), but only
+self-tested against one Anthropic key locally — not yet verified with two different real
+organizations actually using two different real providers side by side in a live
+deployment.
+
 Real per-person accounts, multi-org membership, and self-serve org creation are built —
 one `accounts` table is the login for everyone, admin or employee or both; the same
 account can administer several orgs and be a person in several orgs at once (two

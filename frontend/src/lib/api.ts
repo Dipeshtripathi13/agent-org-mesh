@@ -78,8 +78,18 @@ export interface AgentRuntime {
  *  org-level, admin-only concept. See OrgMainAgent below. */
 export interface PersonRuntime { runtimeKey: string; scope: RuntimeScope; addedAt: string; }
 /** The org's one main/aggregator agent — set only by an org admin
- *  (Admin → Organizations), read-only everywhere else. */
-export interface OrgMainAgent { runtimeKey: string; scope: RuntimeScope; addedAt: string; }
+ *  (Admin → Organizations), read-only everywhere else. `hasCustomApiKey`/`baseUrl`/`model`
+ *  reflect an optional org-owned credential override (never the decrypted key itself —
+ *  the backend never sends that back) that replaces this deployment's platform-wide
+ *  default just for this org, including pointing at a self-hosted endpoint. */
+export interface OrgMainAgent {
+  runtimeKey: string;
+  scope: RuntimeScope;
+  addedAt: string;
+  hasCustomApiKey: boolean;
+  baseUrl: string | null;
+  model: string | null;
+}
 /** The one real login identity in this app — a human, not a role. The same account can
  *  administer one or more orgs (org_admins) and/or be linked from one or more `people`
  *  rows (an org-chart identity, one per org) at the same time. */
@@ -248,10 +258,18 @@ export const api = {
    *  setOrgMainAgent below. */
   orgMainAgent: (orgId: number) =>
     req<{ catalog: AgentRuntime[]; registered: OrgMainAgent | null }>(`/organizations/${orgId}/main-agent`),
-  setOrgMainAgent: (orgId: number, runtimeKey: string, scope: 'full' | 'narrow') =>
+  /** `apiKey`/`baseUrl`/`model` are the org's own optional credential override — omit a
+   *  field to leave it untouched, pass `null` (or `''`) to clear it back to this
+   *  deployment's platform default. */
+  setOrgMainAgent: (
+    orgId: number,
+    runtimeKey: string,
+    scope: 'full' | 'narrow',
+    credentials?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null },
+  ) =>
     req<{ registered: OrgMainAgent }>(`/organizations/${orgId}/main-agent`, {
       method: 'POST',
-      body: JSON.stringify({ runtimeKey, scope }),
+      body: JSON.stringify({ runtimeKey, scope, ...credentials }),
     }),
   disconnectRuntime: (personId: number, runtimeKey: string) =>
     req<{ registered: PersonRuntime[] }>(`/person/${personId}/runtimes/${runtimeKey}`, {

@@ -173,7 +173,14 @@ function toPersonRuntime(row: any): PersonRuntime {
 }
 
 function toOrgMainAgent(row: any): OrgMainAgent {
-  return { runtimeKey: row.runtime_key, scope: row.scope, addedAt: isoDate(row.added_at) };
+  return {
+    runtimeKey: row.runtime_key,
+    scope: row.scope,
+    addedAt: isoDate(row.added_at),
+    apiKeyEncrypted: row.api_key_encrypted ?? null,
+    baseUrl: row.base_url ?? null,
+    model: row.model ?? null,
+  };
 }
 
 function toOrganization(row: any): Organization {
@@ -833,16 +840,26 @@ export async function getOrgMainAgent(orgId: number): Promise<OrgMainAgent | nul
  *  (server.ts's POST /api/organizations/:orgId/main-agent); no individual person can
  *  reach this. org_id is the table's primary key, so this is a plain upsert — there's
  *  never an old row to demote, unlike the old per-person version. */
+/** apiKeyEncrypted/baseUrl/model are the org's fully-resolved final values (never
+ *  "undefined meaning leave unchanged" — that merge, if the caller wants one, happens in
+ *  server.ts before calling this, same as every other value here). Pass null to clear an
+ *  override back to the platform default. */
 export async function setOrgMainAgent(
   orgId: number,
   runtimeKey: string,
   scope: RuntimeScope,
   addedAt: string,
+  apiKeyEncrypted: string | null,
+  baseUrl: string | null,
+  model: string | null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO org_main_agent (org_id, runtime_key, scope, added_at) VALUES ($1,$2,$3,$4)
-     ON CONFLICT (org_id) DO UPDATE SET runtime_key = $2, scope = $3, added_at = $4`,
-    [orgId, runtimeKey, scope, addedAt],
+    `INSERT INTO org_main_agent (org_id, runtime_key, scope, added_at, api_key_encrypted, base_url, model)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (org_id) DO UPDATE SET
+       runtime_key = $2, scope = $3, added_at = $4,
+       api_key_encrypted = $5, base_url = $6, model = $7`,
+    [orgId, runtimeKey, scope, addedAt, apiKeyEncrypted, baseUrl, model],
   );
 }
 

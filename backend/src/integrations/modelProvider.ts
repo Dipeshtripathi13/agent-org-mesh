@@ -14,17 +14,29 @@
  * unparseable response never blocks the caller — it falls back to gathering/returning
  * everything, exactly as if this abstraction didn't exist.
  */
+/** An org's own provider credentials, overriding the platform-wide env-var default for
+ *  just that org's calls — set via POST /api/organizations/:orgId/main-agent, resolved
+ *  and bound once per ask by runtimeProvider.ts's getMainProvider, never threaded through
+ *  by hand at each call site. Every field is optional: absent means "use this deployment's
+ *  env var default," exactly today's behavior. `baseUrl`/`model` are only meaningful for
+ *  apiFamily 'openai-compatible' — anthropicProvider ignores them. */
+export interface ProviderCredentials {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
 export interface ModelProvider {
-  configured(): boolean;
-  selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[]): Promise<Set<string>>;
+  configured(credentials?: ProviderCredentials): boolean;
+  selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Set<string>>;
   /** `priorTurns`, when passed, is prior questions in the same chat plus the answers this
    *  same function already returned for them — real conversational memory for a follow-up
    *  question. Safe to feed to a model unfiltered because it's a second-order derivative
    *  of text that already passed through allowedTextOnly() when it was first produced —
    *  never raw claims, never anything withheld. Only "My agent" → "Ask yourself" (a
    *  Self-role chat) ever passes this; cross-person Ask never does. */
-  synthesize(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[]): Promise<string>;
-  writeClaim(personName: string, digest: string): Promise<string>;
+  synthesize(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[], credentials?: ProviderCredentials): Promise<string>;
+  writeClaim(personName: string, digest: string, credentials?: ProviderCredentials): Promise<string>;
 }
 
 export interface ActivitySection {

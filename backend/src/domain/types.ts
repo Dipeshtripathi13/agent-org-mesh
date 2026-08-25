@@ -110,11 +110,20 @@ export interface PersonRuntime {
 /** The org's one main/aggregator agent — the only registration connected to the org: it
  *  carries surface scope and is what everyone's queries reach. Set only by an org admin
  *  (server.ts's POST /api/organizations/:orgId/main-agent), never by an individual
- *  person — see runtimeProvider.ts's getMainProvider. */
+ *  person — see runtimeProvider.ts's getMainProvider.
+ *
+ *  `apiKeyEncrypted`/`baseUrl`/`model` are the org's own optional credential override —
+ *  absent (null) means "use this deployment's platform-wide env var default," exactly the
+ *  original behavior. `apiKeyEncrypted` is opaque ciphertext (domain/crypto.ts) and must
+ *  never leave the server decrypted or reach an API response — server.ts's GET handler
+ *  strips it down to `hasCustomApiKey` before responding. */
 export interface OrgMainAgent {
   runtimeKey: string;
   scope: RuntimeScope;
   addedAt: string;
+  apiKeyEncrypted: string | null;
+  baseUrl: string | null;
+  model: string | null;
 }
 
 /* ---------- org ---------- */

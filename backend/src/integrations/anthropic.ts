@@ -1,27 +1,31 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
+import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
+// The platform-wide default client (env-var key), cached like before. An org with its own
+// credentials (ProviderCredentials.apiKey) gets a fresh, uncached client instead — client
+// construction does no network I/O, so this costs nothing and needs no cache invalidation.
 let client: Anthropic | null = null;
 
-function getClient(): Anthropic | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  if (!client) client = new Anthropic({ apiKey });
+function getClient(apiKey?: string): Anthropic | null {
+  if (apiKey) return new Anthropic({ apiKey });
+  const envKey = process.env.ANTHROPIC_API_KEY;
+  if (!envKey) return null;
+  if (!client) client = new Anthropic({ apiKey: envKey });
   return client;
 }
 
-export function anthropicConfigured(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY;
+export function anthropicConfigured(credentials?: ProviderCredentials): boolean {
+  return !!(credentials?.apiKey || process.env.ANTHROPIC_API_KEY);
 }
 
-async function callClaude(prompt: string): Promise<string> {
-  const anthropic = getClient();
+async function callClaude(prompt: string, credentials?: ProviderCredentials): Promise<string> {
+  const anthropic = getClient(credentials?.apiKey);
   if (!anthropic) {
     throw new Error('ANTHROPIC_API_KEY is not set on the backend — add it to backend/.env and restart the server');
   }
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-5',
+    model: credentials?.model || 'claude-sonnet-5',
     max_tokens: 600,
     messages: [{ role: 'user', content: prompt }],
   });
@@ -53,14 +57,14 @@ export async function summarizeDailyActivity(personName: string, sections: Activ
  * the seeded claims (e.g. "PR#2184 in payments-core is open with one blocking review
  * comment on the saved-card path.").
  */
-export async function writeActivityClaim(personName: string, digest: string): Promise<string> {
+export async function writeActivityClaim(personName: string, digest: string, credentials?: ProviderCredentials): Promise<string> {
   const text = await callClaude([
     `Write ONE concise, factual sentence describing ${personName}'s work today, for a manager status view.`,
     'Base it only on the real activity log below — never invent or infer anything beyond it.',
     'Plain sentence, no bullet points, no preamble, no quotes around it.',
     '',
     wrapUntrustedData('activity-log', digest),
-  ].join('\n'));
+  ].join('\n'), credentials);
   return text.replace(/^["']|["']$/g, '').trim();
 }
 
@@ -75,10 +79,10 @@ export async function writeActivityClaim(personName: string, digest: string): Pr
  * because the failure mode for a tool-selection stage has to be "gather everything," the
  * same behavior as before this existed, never "silently gather nothing."
  */
-export async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[]): Promise<Set<string>> {
+export async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Set<string>> {
   const keys = candidates.map((c) => c.surfaceKey);
   if (keys.length === 0) return new Set();
-  if (!anthropicConfigured()) return new Set(keys);
+  if (!anthropicConfigured(credentials)) return new Set(keys);
 
   const listing = candidates.map((c) => `- ${c.surfaceKey}: ${c.reads}`).join('\n');
   let raw: string;
@@ -95,6 +99,7 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
         '',
         listing,
       ].join('\n'),
+      credentials,
     );
   } catch {
     return new Set(keys); // Claude API error — never let a router failure narrow coverage
@@ -107,7 +112,7 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
  *  answer only from what's in the sections, never invent or infer beyond them. `priorTurns`
  *  — real prior Q&A from the same chat — is safe here for the same reason it's safe
  *  everywhere else: it's already-synthesized text, never raw or withheld claims. */
-export async function answerFromActivity(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[]): Promise<string> {
+export async function answerFromActivity(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[], credentials?: ProviderCredentials): Promise<string> {
   if (sections.length === 0) {
     throw new Error('no real activity to answer from — connect at least one real source first');
   }
@@ -122,7 +127,7 @@ export async function answerFromActivity(personName: string, question: string, s
     wrapUntrustedData('question', question),
     '',
     wrapUntrustedData('authorized-data', body),
-  ].join('\n'));
+  ].join('\n'), credentials);
 }
 
 /** Anthropic's ModelProvider implementation — a thin wrapper, no logic duplicated. */

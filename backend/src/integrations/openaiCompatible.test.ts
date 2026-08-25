@@ -38,4 +38,16 @@ describe('buildChatCompletionsRequest', () => {
     const req = buildChatCompletionsRequest('question');
     expect(req.max_tokens).toBe(600);
   });
+
+  it('prefers an org credential override over OPENAI_MODEL', () => {
+    process.env.OPENAI_MODEL = 'gpt-4o';
+    const req = buildChatCompletionsRequest('question', { model: 'llama3.1' });
+    expect(req.model).toBe('llama3.1');
+  });
+
+  it('falls back to OPENAI_MODEL when the credential override has no model set', () => {
+    process.env.OPENAI_MODEL = 'gpt-4o';
+    const req = buildChatCompletionsRequest('question', { apiKey: 'org-own-key' });
+    expect(req.model).toBe('gpt-4o');
+  });
 });

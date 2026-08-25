@@ -481,15 +481,22 @@ export const RUNTIME_CATALOG: AgentRuntime[] = [
     mainEligible: false,
   },
   {
+    // The vehicle for "bring your own self-hosted/open-source endpoint" — a global,
+    // vendor-neutral catalog entry (runtime_catalog is shared across every org, so its
+    // copy can never assume one organization's specific infrastructure). Any org can pick
+    // this and supply its own baseUrl/apiKey/model override (org_main_agent's credential
+    // columns, resolved by runtimeProvider.ts's resolveCredentials) to point at Ollama,
+    // vLLM, or a company-run model — same OpenAI-compatible wire protocol as chatgpt,
+    // no separate integration code needed.
     key: 'llama-local',
-    name: 'Qwen3 8B (self-hosted)',
-    vendor: 'Northbeam IT',
-    contextWindow: '40k',
-    host: 'On-prem · rack B4',
+    name: 'Self-hosted (OpenAI-compatible)',
+    vendor: 'Your own infrastructure',
+    contextWindow: 'varies by model',
+    host: 'Your own network — set per organization',
     approved: true,
     blocked: false,
     reads: 'All in-scope surfaces',
-    note: 'Nothing leaves the building. Served behind an OpenAI-compatible local gateway (Ollama), same wire protocol as ChatGPT — no separate integration needed. Reasoning output comes back in a separate field, never mixed into the answer text.',
+    note: 'Point at any OpenAI-compatible endpoint you run — Ollama, vLLM, or a company-hosted model. Requires your organization\'s own API key and endpoint URL below.',
     apiFamily: 'openai-compatible',
     mainEligible: true,
   },
@@ -532,4 +539,11 @@ export const PERSON_RUNTIMES: Record<number, PersonRuntime[]> = {
 /** The one seeded org's (Northbeam) admin-set main agent — set once by seed-db.ts, same
  *  as what used to be Diego's personal main-agent registration before that concept moved
  *  to the org level. */
-export const ORG_MAIN_AGENT: OrgMainAgent = { runtimeKey: 'claude-sonnet', scope: 'full', addedAt: '2026-07-14' };
+export const ORG_MAIN_AGENT: OrgMainAgent = {
+  runtimeKey: 'claude-sonnet',
+  scope: 'full',
+  addedAt: '2026-07-14',
+  apiKeyEncrypted: null,
+  baseUrl: null,
+  model: null,
+};

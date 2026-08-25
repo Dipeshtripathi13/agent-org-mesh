@@ -1,7 +1,8 @@
+import { decryptSecret } from '../domain/crypto.js';
 import * as repo from '../db/repo.js';
-import type { ApiFamily } from '../domain/types.js';
+import type { ApiFamily, OrgMainAgent } from '../domain/types.js';
 import { anthropicProvider } from './anthropic.js';
-import type { ModelProvider } from './modelProvider.js';
+import type { ModelProvider, ProviderCredentials } from './modelProvider.js';
 import { openaiCompatibleProvider } from './openaiCompatible.js';
 
 /**
@@ -41,6 +42,41 @@ export interface MainProviderResolution {
   configEnvVar: string | null;
 }
 
+/** Pure: turns an org's optional stored credential override into the ProviderCredentials
+ *  shape every adapter accepts, decrypting the API key if one is set. Absent fields mean
+ *  "fall back to this deployment's env var default" — the adapters handle that half.
+ *  Returns undefined when nothing is overridden, so bindCredentials can skip wrapping
+ *  entirely for the common case (an org using the platform default, unchanged behavior). */
+export function resolveCredentials(main: OrgMainAgent | null): ProviderCredentials | undefined {
+  if (!main) return undefined;
+  if (!main.apiKeyEncrypted && !main.baseUrl && !main.model) return undefined;
+  const credentials: ProviderCredentials = {};
+  if (main.apiKeyEncrypted) {
+    try {
+      credentials.apiKey = decryptSecret(main.apiKeyEncrypted);
+    } catch {
+      // A decryption failure (rotated CREDENTIAL_ENCRYPTION_KEY, corrupted row) must never
+      // crash an ask — fall back to the platform default, same as no override being set.
+    }
+  }
+  if (main.baseUrl) credentials.baseUrl = main.baseUrl;
+  if (main.model) credentials.model = main.model;
+  return credentials;
+}
+
+/** Closes over a resolved credential override so every one of ModelProvider's methods
+ *  forwards it automatically — the 5 existing call sites (server.ts's /api/agent/ask,
+ *  realClaims.ts's 4 ingestion functions) never need to know credentials exist at all. */
+function bindCredentials(provider: ModelProvider, credentials: ProviderCredentials | undefined): ModelProvider {
+  if (!credentials) return provider;
+  return {
+    configured: () => provider.configured(credentials),
+    selectRelevantSurfaces: (question, candidates) => provider.selectRelevantSurfaces(question, candidates, credentials),
+    synthesize: (personName, question, sections, priorTurns) => provider.synthesize(personName, question, sections, priorTurns, credentials),
+    writeClaim: (personName, digest) => provider.writeClaim(personName, digest, credentials),
+  };
+}
+
 /**
  * Resolves whichever model actually answers for `orgId` right now — reads the org's one
  * real `org_main_agent` registration (admin-set, shared by everyone in the org), not a
@@ -57,8 +93,9 @@ export async function getMainProvider(orgId: number): Promise<MainProviderResolu
   const [main, catalog] = await Promise.all([repo.getOrgMainAgent(orgId), repo.getRuntimeCatalog()]);
   const runtime = main ? (catalog.find((c) => c.key === main.runtimeKey) ?? null) : null;
   if (!runtime) return { provider: null, runtimeName: null, apiFamily: null, configEnvVar: null };
+  const baseProvider = providerForApiFamily(runtime.apiFamily);
   return {
-    provider: providerForApiFamily(runtime.apiFamily),
+    provider: baseProvider ? bindCredentials(baseProvider, resolveCredentials(main)) : null,
     runtimeName: runtime.name,
     apiFamily: runtime.apiFamily,
     configEnvVar: configEnvVarFor(runtime.apiFamily),
