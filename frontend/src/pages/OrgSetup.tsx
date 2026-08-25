@@ -187,29 +187,33 @@ function ChartBuilder() {
       </header>
 
       <div className="inner" style={{ borderBottom: '1px solid var(--rule)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        {/* auto-fit + minWidth:0 on each input — plain 1fr columns don't actually shrink
+            below an <input>'s intrinsic content width, which is how this used to overflow
+            its own panel (and drag the whole page into horizontal scroll) once the panel
+            itself got narrower than three inputs' natural width. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
           <input
             aria-label="Name" placeholder="Name"
             value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            style={{ height: 32, minWidth: 0, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
           />
           <input
             aria-label="Title" placeholder="Title"
             value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-            style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            style={{ height: 32, minWidth: 0, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
           />
           <input
             aria-label="Team" placeholder="Team"
             value={form.team} onChange={(e) => setForm((f) => ({ ...f, team: e.target.value }))}
-            style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            style={{ height: 32, minWidth: 0, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, alignItems: 'center' }}>
           <select
             aria-label="Manager"
             value={form.managerId}
             onChange={(e) => setForm((f) => ({ ...f, managerId: e.target.value === '' ? '' : Number(e.target.value) }))}
-            style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 6px', fontSize: 12 }}
+            style={{ flex: '1 1 180px', minWidth: 0, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 6px', fontSize: 12 }}
           >
             <option value="">No manager — top of chart</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>)}
@@ -219,7 +223,7 @@ function ChartBuilder() {
             placeholder="Email (optional login)"
             value={form.email}
             onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            style={{ flex: '1 1 160px', minWidth: 0, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
           />
           <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, whiteSpace: 'nowrap' }}>
             <input

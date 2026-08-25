@@ -186,7 +186,14 @@ h1 { font-size: 19px; font-weight: 600; margin: 4px 0 0; letter-spacing: -0.01em
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--ink3);
 }
-.panel .inner { padding: 14px; }
+/* overflow-x: auto here (not hidden) is a defensive backstop, not the primary fix for
+   any specific overflow — a panel's own content occasionally fights its container width
+   (1fr grid columns and flex:1 items both default to a content-based min-width, not 0,
+   so they resist shrinking below their natural size unless told to). When that happens
+   this keeps it to a scrollbar on the one panel instead of dragging the whole page into
+   horizontal scroll. Native <select> dropdowns render above page content regardless of
+   an ancestor's overflow, so this doesn't clip them. */
+.panel .inner { padding: 14px; overflow-x: auto; }
 
 table { border-collapse: collapse; width: 100%; }
 th {
