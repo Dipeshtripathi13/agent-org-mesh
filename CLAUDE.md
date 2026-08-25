@@ -154,19 +154,29 @@ thrown away and reseeded by that exact script. To try self-serve signup instead,
 "New here? Create your organization" on the login screen with any new email.
 
 ## Where to go next
-- **Make the self-service endpoints and `/api/agent/ask` actually trust the session.**
-  This is the real remaining half of rule 7, now much more narrowly scoped than it used
-  to be: real per-person login exists (`people.account_id`, `getPeopleForAccount`,
-  self-serve signup) and multi-org membership is real, but nothing downstream of login
-  *uses* that yet — `POST /api/agent/ask`'s `requesterId`, GitHub/Jira/Gmail connect,
-  ingest tokens, sub-agent registration, and claim correction all still take whatever
-  `personId` a request body hands them, and "My agent"'s free identity switcher
-  (`MeContext.tsx`) is deliberately still open regardless of login (a documented demo
-  affordance, not an oversight). The fix is preferring the session's own person-identity
-  over a client-asserted one when a session exists, falling back to today's behavior when
-  it doesn't (most of the seeded 40-person roster has no linked account and never will in
-  a demo context) — endpoint by endpoint, starting with `/api/agent/ask` since that's the
-  one where spoofing "who's asking about whom" actually matters.
+- **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
+  now mostly closed, not mostly open — updated after a full security audit fixed the
+  worst of it. `POST /api/agent/ask` and `POST /api/query`'s `requesterId`, escalation
+  acknowledge/resolve's `actorPersonId`, and `/api/agent/conversations`'s `requesterId`
+  all now prefer the logged-in session's own linked person-identity over a client-asserted
+  one (`sessionPreferredPersonId` in `server.ts`) — this is exactly the piece that used to
+  let anyone spoof "who's asking about whom," and it's fixed everywhere that actually
+  gates disclosure. What's left is narrower and lower-stakes: GitHub/Jira/Gmail connect,
+  ingest tokens, sub-agent registration, and claim correction still use the more
+  permissive `requireSelfIfLoggedIn` — open when there's no session at all (most of the
+  seeded 40-person roster has no linked account and never will in a demo context), open
+  when a real session exists but has no linked identity in *this* id's org, and only
+  fails closed on a genuine mismatch (a real, linked session trying to touch a different
+  real person's own connections). Tightening these to the same unconditional
+  session-preferring treatment `/api/agent/ask` gets is the honest remaining gap — real,
+  but these are personal tool connections, not org-wide disclosure, so the blast radius of
+  leaving them as-is is much smaller than what was just closed. "My agent"'s free identity
+  switcher (`MeContext.tsx`) stays deliberately open regardless of login either way — a
+  documented demo affordance, not an oversight, and several real self-service transparency
+  endpoints (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) depend on reaching it
+  without a session; do not blanket-gate those without re-checking every frontend caller
+  first (found the hard way during the same audit — three of six initially-flagged
+  endpoints turned out to be this, not oversights).
 
 - **Verify the Gmail self-ask bridge against a real Gmail account.** Same shape of gap as
   Jira/OpenAI below, but for a different reason: Google OAuth itself is already configured
