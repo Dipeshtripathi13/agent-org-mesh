@@ -295,7 +295,43 @@ specific on-prem box) since `runtime_catalog` is global, shared by every org. Re
 typechecked/tested (round-trip encryption, credential-resolution fallback), but only
 self-tested against one Anthropic key locally — not yet verified with two different real
 organizations actually using two different real providers side by side in a live
-deployment.
+deployment. Its `base_url` is the one place this app ever fetches a URL an org admin
+supplied itself — `backend/src/integrations/urlSafety.ts`'s `isSafeExternalUrl` blocks
+private/loopback/link-local ranges and internal hostnames before it's ever stored *and*
+again at fetch time (DNS can change between save and use), found and closed during a
+security audit alongside the other findings below.
+
+A full-app security audit (six pillars: auth/session, authz/multi-tenant isolation, input/
+output handling, secrets/crypto, API/integration, AI-LLM specifics) found and fixed 12
+issues, live-verified against the real deployment, not just read in code. The most
+significant: `POST /api/query` returned the org's *entire* evidence table on every call
+— including fully unauthenticated ones — regardless of what `respond()` actually
+authorized; now scoped to only the evidence its own response items reference. Both
+`/api/query` and `/api/agent/ask` also let an unauthenticated caller claim any role about
+any person via `persist:false` ("preview" mode) with no relationship check at all;
+`/api/agent/ask` now verifies unconditionally (no real caller ever used the bypass),
+while `/api/query`'s preview requires either a genuine self-preview (`requesterId ===
+targetId`, matching the free-identity-switcher leniency below) or a real org viewer+ role
+— since `PolicyMatrix.tsx`'s admin policy-testing panel and `Preview.tsx`'s self-service
+"what would X role see about me" both depend on bypassing role-*truthfulness* on purpose,
+just not on being a real caller. Three read endpoints
+(`/api/overview`, `/api/escalations` GET, `/api/connections`) were completely
+unauthenticated, gated only by a guessable `orgId` query param — now `requireOrgRole`
+'viewer'-gated like `/api/audit` always was. Three siblings that look identical at a
+glance (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) are **deliberately left
+open** — real self-service endpoints (`MeContext.tsx`'s free switcher, `WhoAsked.tsx`,
+`Ask.tsx`, `MyAgent.tsx`, `OrgStructure.tsx`) depend on reaching them without a session,
+per rule 7 below; gating them would break real functionality, not close a gap. Also
+fixed: escalation acknowledge/resolve and `/api/agent/conversations` now prefer the
+session's own linked identity over a client-asserted one (the same pattern `/api/agent/
+ask` already used, factored into `sessionPreferredPersonId`); linking an *existing*
+account into a new org's chart by email now notifies that account
+(`sendAddedToOrgEmail`) instead of happening silently; Postgres connections negotiate TLS
+against anything that isn't `localhost` (`db/sslConfig.ts`); `change-password` is rate-
+limited like login; `@fastify/helmet` is registered; the session cookie's TTL dropped
+from 30 to 7 days (true idle-timeout/sliding renewal is real, larger follow-up work — it
+needs `reply`, not just `req`, threaded through every session check to also refresh the
+cookie's own client-side expiry, not only the DB row).
 
 Real per-person accounts, multi-org membership, and self-serve org creation are built —
 one `accounts` table is the login for everyone, admin or employee or both; the same
