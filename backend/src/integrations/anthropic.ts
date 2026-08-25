@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
+import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
 
 let client: Anthropic | null = null;
 
@@ -41,7 +41,7 @@ export async function summarizeDailyActivity(personName: string, sections: Activ
     'Use only what is in the sections below — never invent or infer anything not supported by them.',
     'Write 3-6 concise bullet points, grouped sensibly by source or theme. Plain text, no headers.',
     '',
-    body,
+    wrapUntrustedData('activity-log', body),
   ].join('\n'));
 }
 
@@ -59,7 +59,7 @@ export async function writeActivityClaim(personName: string, digest: string): Pr
     'Base it only on the real activity log below — never invent or infer anything beyond it.',
     'Plain sentence, no bullet points, no preamble, no quotes around it.',
     '',
-    digest,
+    wrapUntrustedData('activity-log', digest),
   ].join('\n'));
   return text.replace(/^["']|["']$/g, '').trim();
 }
@@ -91,7 +91,7 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
         "If the question is a greeting, small talk, or otherwise isn't actually asking about the person's work, activity, or status, return an empty array [] — don't include a surface just because one exists.",
         'Otherwise, if you are at all unsure whether a surface is relevant, include it. Only exclude a surface you are confident has nothing to do with the question.',
         '',
-        `Question: ${question}`,
+        wrapUntrustedData('question', question),
         '',
         listing,
       ].join('\n'),
@@ -119,9 +119,9 @@ export async function answerFromActivity(personName: string, question: string, s
     'Be concise and direct.',
     '',
     formatPriorTurns(priorTurns),
-    `Question: ${question}`,
+    wrapUntrustedData('question', question),
     '',
-    body,
+    wrapUntrustedData('authorized-data', body),
   ].join('\n'));
 }
 

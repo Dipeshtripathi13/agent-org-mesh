@@ -1,5 +1,5 @@
 import { parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
+import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type SurfaceDescriptor } from './modelProvider.js';
 
 /**
  * The ModelProvider implementation for anything speaking the OpenAI chat-completions
@@ -70,7 +70,7 @@ async function selectRelevantSurfaces(question: string, candidates: SurfaceDescr
         "If the question is a greeting, small talk, or otherwise isn't actually asking about the person's work, activity, or status, return an empty array [] — don't include a surface just because one exists.",
         'Otherwise, if you are at all unsure whether a surface is relevant, include it. Only exclude a surface you are confident has nothing to do with the question.',
         '',
-        `Question: ${question}`,
+        wrapUntrustedData('question', question),
         '',
         listing,
       ].join('\n'),
@@ -93,9 +93,9 @@ async function synthesize(personName: string, question: string, sections: Activi
     'Be concise and direct.',
     '',
     formatPriorTurns(priorTurns),
-    `Question: ${question}`,
+    wrapUntrustedData('question', question),
     '',
-    body,
+    wrapUntrustedData('authorized-data', body),
   ].join('\n'));
 }
 
@@ -105,7 +105,7 @@ async function writeClaim(personName: string, digest: string): Promise<string> {
     'Base it only on the real activity log below — never invent or infer anything beyond it.',
     'Plain sentence, no bullet points, no preamble, no quotes around it.',
     '',
-    digest,
+    wrapUntrustedData('activity-log', digest),
   ].join('\n'));
   return text.replace(/^["']|["']$/g, '').trim();
 }
