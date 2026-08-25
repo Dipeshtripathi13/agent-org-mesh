@@ -1,3 +1,4 @@
+import { randomBytes, scryptSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   generateSessionToken,
@@ -37,11 +38,26 @@ describe('hashPassword / verifyPassword', () => {
     expect(verifyPassword('anything', 'scrypt$onlytwoparts')).toBe(false);
   });
 
-  it('stores the scrypt marker and a salt/hash pair', () => {
+  it('stores the scrypt marker, cost parameter, and a salt/hash pair', () => {
     const stored = hashPassword('x');
     const parts = stored.split('$');
     expect(parts[0]).toBe('scrypt');
-    expect(parts).toHaveLength(3);
+    expect(Number(parts[1])).toBeGreaterThan(0);
+    expect(parts).toHaveLength(4);
+  });
+
+  // Deliberate, not an accident: the cost parameter (N) was raised from Node's old
+  // implicit default (16384) to the current OWASP-recommended 131072 during a security
+  // audit. Every password hash minted before that change is in the old 3-part format
+  // (scrypt$salt$hash, no encoded N) — this proves that format still verifies correctly
+  // under the legacy cost it was actually hashed with, so raising the cost for new
+  // passwords never locks out anyone who registered before this change.
+  it('still verifies a pre-upgrade 3-part hash (scrypt$salt$hash, no encoded N)', () => {
+    const salt = randomBytes(16).toString('hex');
+    const legacyHash = scryptSync('an old password', salt, 64).toString('hex');
+    const legacyStored = `scrypt$${salt}$${legacyHash}`;
+    expect(verifyPassword('an old password', legacyStored)).toBe(true);
+    expect(verifyPassword('wrong password', legacyStored)).toBe(false);
   });
 });
 

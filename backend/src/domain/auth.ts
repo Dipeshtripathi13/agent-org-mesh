@@ -12,23 +12,54 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypt
  */
 
 const SCRYPT_KEYLEN = 64;
+// 2^17 — current OWASP-recommended minimum scrypt cost parameter, up from Node's own
+// default of 2^14 (found during a security audit: fine in 2024, below current guidance
+// now). r/p stay at their conventional values; maxmem has to rise to match — N=131072 at
+// r=8 needs ~134MB, over Node's 32MB default ceiling.
+const SCRYPT_N = 2 ** 17;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+// Every password hash minted before this change used Node's implicit default (no options
+// passed at all) — that's N=16384, r=8, p=1. Never used for new hashes, only so an
+// already-registered password keeps verifying under the cost it was actually hashed with.
+const LEGACY_SCRYPT_N = 16384;
 
-/** 'scrypt$<saltHex>$<hashHex>' — the whole thing is what's stored in admins.password_hash. */
+function scrypt(password: string, salt: string, n: number): Buffer {
+  return scryptSync(password, salt, SCRYPT_KEYLEN, { N: n, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM });
+}
+
+/** 'scrypt$<N>$<saltHex>$<hashHex>' — the cost parameter travels with the hash so a
+ *  future increase (like this one) never locks anyone out; verifyPassword just re-derives
+ *  with whatever N the hash was actually minted under, old or new. */
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, SCRYPT_KEYLEN).toString('hex');
-  return `scrypt$${salt}$${hash}`;
+  const hash = scrypt(password, salt, SCRYPT_N).toString('hex');
+  return `scrypt$${SCRYPT_N}$${salt}$${hash}`;
 }
 
 /** Timing-safe by construction — always compares two fixed-length digests, never the
  *  password itself, and never short-circuits on a length mismatch by returning early with
- *  a cheaper failure path (a malformed stored hash just fails the compare, same cost). */
+ *  a cheaper failure path (a malformed stored hash just fails the compare, same cost).
+ *  Accepts both the current 4-part format and the pre-audit 3-part one (no encoded N,
+ *  implicitly LEGACY_SCRYPT_N) — anything else fails closed. */
 export function verifyPassword(password: string, stored: string): boolean {
   const parts = stored.split('$');
-  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
-  const [, salt, hashHex] = parts;
+  let n: number;
+  let salt: string;
+  let hashHex: string;
+  if (parts.length === 4 && parts[0] === 'scrypt') {
+    n = Number(parts[1]);
+    [, , salt, hashHex] = parts;
+  } else if (parts.length === 3 && parts[0] === 'scrypt') {
+    n = LEGACY_SCRYPT_N;
+    [, salt, hashHex] = parts;
+  } else {
+    return false;
+  }
+  if (!Number.isFinite(n) || !salt || !hashHex) return false;
   const expected = Buffer.from(hashHex, 'hex');
-  const actual = scryptSync(password, salt, SCRYPT_KEYLEN);
+  const actual = scrypt(password, salt, n);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 

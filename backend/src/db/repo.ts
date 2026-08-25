@@ -541,6 +541,11 @@ export async function getClaims(orgId: number, personId?: number): Promise<Claim
  *  reads that column's value as anything but a truthy/falsy "was this corrected" check
  *  (confirmed by grep before making this the storage, not a second column). Found and
  *  fixed together: the frontend form was asking for this note and discarding it. */
+export async function getClaimById(id: string): Promise<Claim | null> {
+  const { rows } = await pool.query('SELECT * FROM claims WHERE id = $1', [id]);
+  return rows.length ? toClaim(rows[0]) : null;
+}
+
 export async function correctClaim(id: string, note: string): Promise<Claim | null> {
   const { rows } = await pool.query(
     `UPDATE claims SET superseded_by = $2 WHERE id = $1 RETURNING *`,

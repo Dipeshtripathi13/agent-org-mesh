@@ -524,6 +524,37 @@ async function verifySelfAccess(req: { query: unknown; cookies: Record<string, s
   return effectiveRequesterId === id;
 }
 
+type SelfCheck = { ok: true } | { ok: false; code: 403; error: string };
+
+/** The other half of the same gap `verifySelfAccess` closes above, for the rest of the
+ *  self-service surface CLAUDE.md's rule 7 names directly: GitHub/Jira/Gmail connections,
+ *  ingest tokens, sub-agent (runtime) registration, claim correction. All of these already
+ *  took a client-asserted `personId` from the URL path with no verification at all — that
+ *  path id *is* the self-assertion, there was just nothing checking it against who's
+ *  actually logged in.
+ *
+ *  Deliberately asymmetric with verifySelfAccess, and deliberately *not* a blanket "any
+ *  session blocks any mismatched id" rule either — two cases stay open on purpose:
+ *  no session at all (today's behavior, the documented demo affordance for the ~40 seeded
+ *  people with no linked account), and a session that's real but has no linked identity in
+ *  *this* id's org at all (an admin-only account, or one linked elsewhere, browsing this
+ *  org purely through "My agent"'s free switcher — there's no real identity of theirs in
+ *  this org for the check to protect, so treating it as open is correct, not a gap: it's
+ *  the exact same trust level the no-session case already has for this org). The one case
+ *  that fails closed is the one that's an actual regression risk: the session *does* have
+ *  a real, linked identity in this org, and it doesn't match `id` — that's a genuinely
+ *  logged-in person trying to touch a *different* real person's connections, which is
+ *  exactly what this exists to stop. */
+async function requireSelfIfLoggedIn(req: { cookies: Record<string, string | undefined> }, id: number): Promise<SelfCheck> {
+  const sessionAccountId = await currentAccountId(req);
+  if (sessionAccountId == null) return { ok: true };
+  const orgId = await repo.getOrgIdOfPerson(id);
+  const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
+  const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
+  if (!sessionPerson || sessionPerson.id === id) return { ok: true };
+  return { ok: false, code: 403, error: 'you may only manage your own connections' };
+}
+
 /** Raw claims, not a policy-filtered synthesis — this is "what it knows", a self-view
  *  showing someone their own real claim objects (ids included, needed for correction),
  *  never a cross-person read. Used to return that to anyone who could name any id at all;
@@ -599,6 +630,16 @@ app.post('/api/claim/:id/correct', async (req, reply) => {
   if (!note?.trim()) {
     reply.code(400);
     return { error: 'note is required — what is actually true, and where can it be verified?' };
+  }
+  const existing = await repo.getClaimById(id);
+  if (!existing) {
+    reply.code(404);
+    return { error: 'not found' };
+  }
+  const check = await requireSelfIfLoggedIn(req, existing.personId);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
   }
   const claim = await repo.correctClaim(id, note.trim());
   if (!claim) return { error: 'not found' };
@@ -686,8 +727,13 @@ app.get('/api/connections', async (req) => {
    Cycling your own surface is not a write to a connected system — it changes what the
    mesh is permitted to read, the same class of mutation as a policy-grid edit. */
 
-app.post('/api/person/:id/surface/cycle', async (req) => {
+app.post('/api/person/:id/surface/cycle', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const { surfaceKey } = req.body as { surfaceKey: SurfaceKey };
   const before = await repo.getPerson(id);
   const person = await repo.updatePersonSurface(id, surfaceKey, nextSurfaceState(before.surfaces[surfaceKey]));
@@ -805,6 +851,11 @@ app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
  *  found live testing a fresh self-serve org. */
 app.post('/api/person/:id/runtimes', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const selfCheck = await requireSelfIfLoggedIn(req, id);
+  if (!selfCheck.ok) {
+    reply.code(selfCheck.code);
+    return { error: selfCheck.error };
+  }
   const { runtimeKey } = req.body as { runtimeKey: string };
   const checked = await checkCatalogEntry(runtimeKey, reply);
   if ('error' in checked) return checked;
@@ -825,8 +876,13 @@ app.post('/api/person/:id/runtimes', async (req, reply) => {
   return { registered: await repo.getPersonRuntimes(id) };
 });
 
-app.delete('/api/person/:id/runtimes/:key', async (req) => {
+app.delete('/api/person/:id/runtimes/:key', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const key = (req.params as { key: string }).key;
   await repo.deletePersonRuntime(id, key);
   if (key === 'claude-code') {
@@ -844,6 +900,11 @@ app.delete('/api/person/:id/runtimes/:key', async (req) => {
  *  yet. Nothing here is persisted or treated as a claim. */
 app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const key = (req.params as { key: string }).key;
   const list = await repo.getPersonRuntimes(id);
   const reg = list.find((r) => r.runtimeKey === key);
@@ -887,8 +948,13 @@ app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
  *  session logs. Different from the endpoint above: that one reports what already
  *  happened; this one looks live. Claude-code only — there's no equivalent CLI to shell
  *  out to for the other catalog runtimes. */
-app.post('/api/person/:id/runtimes/claude-code/ask-live', async (req, reply) => {
+app.post('/api/person/:id/runtimes/claude-code/ask-live', { config: { rateLimit: { max: 20, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const { question } = req.body as { question?: string };
   if (!question?.trim()) {
     reply.code(400);
@@ -925,6 +991,11 @@ app.get('/api/oauth/gmail/start', async (req, reply) => {
     reply.code(400);
     return { error: 'personId is required' };
   }
+  const check = await requireSelfIfLoggedIn(req, personId);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   if (!googleConfigured()) {
     reply.code(503);
     return { error: 'Google OAuth is not configured on the backend — see backend/.env.example' };
@@ -954,13 +1025,23 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
     <script>setTimeout(() => { location.href = ${JSON.stringify(frontendUrl)}; }, 1200);</script>`;
 });
 
-app.get('/api/person/:id/gmail/status', async (req) => {
+app.get('/api/person/:id/gmail/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   return getGmailStatus(id);
 });
 
-app.delete('/api/person/:id/gmail', async (req) => {
+app.delete('/api/person/:id/gmail', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   await disconnectGmail(id);
   return { ok: true };
 });
@@ -973,6 +1054,11 @@ app.delete('/api/person/:id/gmail', async (req) => {
 
 app.post('/api/person/:id/github', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const { token } = req.body as { token?: string };
   if (!token?.trim()) {
     reply.code(400);
@@ -990,13 +1076,23 @@ app.post('/api/person/:id/github', async (req, reply) => {
   return { connected: true, login: result.login };
 });
 
-app.get('/api/person/:id/github/status', async (req) => {
+app.get('/api/person/:id/github/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   return getGithubStatus(id);
 });
 
-app.delete('/api/person/:id/github', async (req) => {
+app.delete('/api/person/:id/github', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   await disconnectGithub(id);
   const before = await repo.getPerson(id);
   if (before.surfaces.github === 'connected') {
@@ -1013,6 +1109,11 @@ app.delete('/api/person/:id/github', async (req) => {
 
 app.post('/api/person/:id/jira', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const { siteUrl, email, apiToken } = req.body as { siteUrl?: string; email?: string; apiToken?: string };
   if (!siteUrl?.trim() || !email?.trim() || !apiToken?.trim()) {
     reply.code(400);
@@ -1027,13 +1128,23 @@ app.post('/api/person/:id/jira', async (req, reply) => {
   return { connected: true, displayName: result.displayName };
 });
 
-app.get('/api/person/:id/jira/status', async (req) => {
+app.get('/api/person/:id/jira/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   return getJiraStatus(id);
 });
 
-app.delete('/api/person/:id/jira', async (req) => {
+app.delete('/api/person/:id/jira', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   await disconnectJira(id);
   const before = await repo.getPerson(id);
   if (before.surfaces.jira === 'connected') {
@@ -1055,6 +1166,11 @@ const INGEST_SOURCES = ['claude-code', 'codex', 'gemini-cli'];
 
 app.post('/api/person/:id/ingest-tokens', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const { label } = req.body as { label?: string };
   if (!label?.trim()) {
     reply.code(400);
@@ -1065,13 +1181,23 @@ app.post('/api/person/:id/ingest-tokens', async (req, reply) => {
   return { id: created.id, token: created.token };
 });
 
-app.get('/api/person/:id/ingest-tokens', async (req) => {
+app.get('/api/person/:id/ingest-tokens', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   return { tokens: await listTokens(id) };
 });
 
-app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req) => {
+app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const tokenId = (req.params as { tokenId: string }).tokenId;
   await revokeToken(id, tokenId);
   return { tokens: await listTokens(id) };
