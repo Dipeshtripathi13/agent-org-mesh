@@ -67,7 +67,7 @@ input:focus, select:focus, textarea:focus {
 .app { display: flex; flex-direction: column; min-height: 100%; }
 .topbar {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  height: 48px; padding: 0 16px; background: var(--panel);
+  min-height: 48px; padding: 8px 16px; background: var(--panel);
   border-bottom: 1px solid var(--rule2); position: sticky; top: 0; z-index: 10;
 }
 .brand { font-weight: 600; letter-spacing: -0.01em; }
