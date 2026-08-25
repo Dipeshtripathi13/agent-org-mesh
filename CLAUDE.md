@@ -301,11 +301,16 @@ per ask (`resolveCredentials`/`bindCredentials`), so none of the 5 existing call
 (`server.ts`'s `/api/agent/ask`, `realClaims.ts`'s 4 ingestion functions) needed to
 change. The `llama-local` catalog entry is the generic "bring your own self-hosted
 endpoint" vehicle — its copy is deliberately vendor-neutral (it used to describe one
-specific on-prem box) since `runtime_catalog` is global, shared by every org. Real and
-typechecked/tested (round-trip encryption, credential-resolution fallback), but only
-self-tested against one Anthropic key locally — not yet verified with two different real
-organizations actually using two different real providers side by side in a live
-deployment. Its `base_url` is the one place this app ever fetches a URL an org admin
+specific on-prem box) since `runtime_catalog` is global, shared by every org. Real, typechecked/tested (round-trip encryption, credential-resolution fallback), and now
+live-verified against a real, independent Anthropic API key: a genuine self-serve-signup
+org (4 people, its own admin, no relation to the seeded Northbeam org) set its own key via
+this exact flow, pushed one real activity event, and asked a real question — both the
+claim-writing and the answer-synthesis steps came back as real Claude prose, not a
+fallback, proving the org's own key (not any platform-wide env var, since that deployment
+has none set) was genuinely what answered. `GET .../main-agent` was re-confirmed to never
+return the key in any form. Still open: two *different* real organizations using two
+*different* real providers side by side in the same deployment hasn't been exercised yet.
+Its `base_url` is the one place this app ever fetches a URL an org admin
 supplied itself — `backend/src/integrations/urlSafety.ts`'s `isSafeExternalUrl` blocks
 private/loopback/link-local ranges and internal hostnames before it's ever stored *and*
 again at fetch time (DNS can change between save and use), found and closed during a
