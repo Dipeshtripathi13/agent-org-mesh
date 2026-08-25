@@ -224,14 +224,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ surfaceKey }),
     }),
+  // A self-view (raw claims, ids and all) — the backend requires the caller to actually
+  // be this person (session identity, falling back to requesterId===id when logged out,
+  // same free-switcher trust level as the rest of "My agent"), so it's always called with
+  // your own id as both the path param and requesterId.
   person: (id: number) => req<{
     person: Person; coverage: Coverage;
     surfaces: (Surface & { state: SurfaceState; label: string })[];
     claims: Claim[];
-  }>(`/person/${id}`),
+  }>(`/person/${id}?requesterId=${id}`),
   correctClaim: (id: string, note: string) =>
     req<{ claim: Claim }>(`/claim/${id}/correct`, { method: 'POST', body: JSON.stringify({ note }) }),
-  exportPerson: (id: number) => req<Record<string, unknown>>(`/person/${id}/export`),
+  exportPerson: (id: number) => req<Record<string, unknown>>(`/person/${id}/export?requesterId=${id}`),
   runtimeCatalog: () => req<{ catalog: AgentRuntime[] }>('/runtimes'),
   personRuntimes: (id: number) =>
     req<{ catalog: AgentRuntime[]; registered: PersonRuntime[] }>(`/person/${id}/runtimes`),

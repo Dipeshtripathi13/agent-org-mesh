@@ -35,7 +35,14 @@ BEGIN
 END
 $$;
 
-GRANT CONNECT ON DATABASE agent_org_mesh TO mesh_app;
+-- current_database() rather than a hardcoded name — the local docker-compose database is
+-- always agent_org_mesh, but a managed Postgres instance (Railway, etc.) names its
+-- database whatever it wants (e.g. "railway"), and this has to work against either.
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO mesh_app', current_database());
+END
+$$;
 GRANT USAGE ON SCHEMA public TO mesh_app;
 
 /* ---------- platform: accounts & organizations ----------

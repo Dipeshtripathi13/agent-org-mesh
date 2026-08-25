@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import Fastify from 'fastify';
 import {
@@ -41,7 +42,10 @@ import { sendInviteEmail } from './integrations/resendEmail.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-const app = Fastify({ logger: false });
+// trustProxy: this sits behind Railway's own reverse proxy in production, so req.ip has
+// to come from the forwarded header or every request looks like it's from the same
+// address — both for rate limiting below and for anything else that ever keys on IP.
+const app = Fastify({ logger: false, trustProxy: true });
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
 // in production, so CORS is disabled outright there rather than left permissively open.
@@ -49,6 +53,30 @@ const app = Fastify({ logger: false });
 // from the API (:3001).
 await app.register(cors, { origin: isProduction ? false : true, credentials: true });
 await app.register(cookie);
+// A generous global ceiling (every route not given its own stricter config below still
+// gets one) plus much tighter per-route limits on login/signup specifically, where the
+// real risk is — unlimited attempts against a known or guessed email. Keyed on IP; on
+// Railway that's the proxy-forwarded client IP, not the load balancer's own address,
+// since `trustProxy` is on.
+await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
+
+// Fastify's default error handler echoes err.message (and, for a raw thrown error, its
+// name/code) straight into the response — fine locally, a real information leak once
+// this is a public URL: a malformed request was returning the exact Postgres error code
+// and message, confirming the stack (Postgres, its column types) to anyone probing it.
+// Validation errors (400s Fastify raises itself, e.g. `question is required` — already
+// meant to be seen) keep their real message; anything else collapses to one generic
+// line. The real error still goes to console.error either way (app.log is a no-op — see
+// the account+RBAC section below), so nothing is lost server-side.
+app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
+  console.error({ err, url: req.url, method: req.method }, 'unhandled request error');
+  const status = err.statusCode ?? 500;
+  if (status < 500) {
+    reply.code(status).send({ error: err.message });
+    return;
+  }
+  reply.code(500).send({ error: 'internal server error' });
+});
 
 // Where the browser lands to sign in — used both for post-Gmail-OAuth redirects (already
 // existed) and now for the login link in invite emails.
@@ -122,14 +150,23 @@ async function requireOrgRole(
   return { ok: true, accountId };
 }
 
-app.post('/api/auth/login', async (req, reply) => {
+// Fixed, never-logged-into hash — burned in a scrypt comparison below whenever an email
+// doesn't resolve to a real account, so a nonexistent email takes the same real scrypt
+// time as a wrong password on a real one. Without this, verifyPassword was only ever
+// called on the "account exists" branch, so response time alone told an attacker which
+// emails have real accounts — same class of bug as a different error message would be,
+// just via a timing channel instead of response content.
+const DUMMY_PASSWORD_HASH = hashPassword(randomUUID());
+
+app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email?.trim() || !password) {
     reply.code(400);
     return { error: 'email and password are required' };
   }
   const account = await repo.getAccountByEmail(email.trim().toLowerCase());
-  if (!account?.passwordHash || !verifyPassword(password, account.passwordHash)) {
+  const ok = verifyPassword(password, account?.passwordHash ?? DUMMY_PASSWORD_HASH);
+  if (!account?.passwordHash || !ok) {
     reply.code(401);
     return { error: 'invalid email or password' };
   }
@@ -143,7 +180,7 @@ app.post('/api/auth/login', async (req, reply) => {
  *  instead, possibly to then get invited into a *second* org for real multi-org
  *  membership. See repo.ts's signUpWithNewOrganization for the atomic account+org+
  *  person+owner sequence this wraps. */
-app.post('/api/auth/signup', async (req, reply) => {
+app.post('/api/auth/signup', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const { name, email, password, organizationName } = req.body as {
     name?: string; email?: string; password?: string; organizationName?: string;
   };
@@ -468,8 +505,37 @@ app.get('/api/overview', async (req) => {
   };
 });
 
-app.get('/api/person/:id', async (req) => {
+/** Resolves who's *really* asking for a self-view endpoint like this one: prefers the
+ *  logged-in session's own linked identity in `id`'s org over whatever `requesterId` the
+ *  query string claims (exact same pattern /api/agent/ask uses), then requires the result
+ *  to actually equal `id` — this is a self-view, never a way to read anyone else's raw
+ *  claims. Returns false (never throws) so callers can turn that into a clean 403; no
+ *  session and no matching requesterId both fail closed, not open. */
+async function verifySelfAccess(req: { query: unknown; cookies: Record<string, string | undefined> }, id: number): Promise<boolean> {
+  const { requesterId } = req.query as { requesterId?: string };
+  let effectiveRequesterId = requesterId != null ? Number(requesterId) : undefined;
+  const sessionAccountId = await currentAccountId(req);
+  if (sessionAccountId != null) {
+    const orgId = await repo.getOrgIdOfPerson(id);
+    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
+    const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
+    if (sessionPerson) effectiveRequesterId = sessionPerson.id;
+  }
+  return effectiveRequesterId === id;
+}
+
+/** Raw claims, not a policy-filtered synthesis — this is "what it knows", a self-view
+ *  showing someone their own real claim objects (ids included, needed for correction),
+ *  never a cross-person read. Used to return that to anyone who could name any id at all;
+ *  now requires the caller to actually be that person (see verifySelfAccess) — found and
+ *  closed during a security audit, since a raw, unauthenticated dump of even Sensitive-tier
+ *  claims is exactly what the deterministic policy engine exists to prevent. */
+app.get('/api/person/:id', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  if (!(await verifySelfAccess(req, id))) {
+    reply.code(403);
+    return { error: 'you may only view your own record here' };
+  }
   const person = await repo.getPerson(id);
   const [surfaces, claims] = await Promise.all([
     repo.getSurfaces(),
@@ -493,9 +559,15 @@ app.get('/api/person/:id', async (req) => {
  *  never actually happened). Everything held about this person: their claims, only the
  *  evidence those claims actually reference (not the whole org's), and every audit entry
  *  where they were the subject — the "every query that touched your agent, and every
- *  refusal" the Controls page copy already promises. */
-app.get('/api/person/:id/export', async (req) => {
+ *  refusal" the Controls page copy already promises. Same self-only gate as GET
+ *  /api/person/:id above — this is strictly more sensitive (it includes evidence and full
+ *  audit history), not less. */
+app.get('/api/person/:id/export', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  if (!(await verifySelfAccess(req, id))) {
+    reply.code(403);
+    return { error: 'you may only export your own record here' };
+  }
   const orgId = await repo.getOrgIdOfPerson(id);
   const [person, claims, allEvidence, auditEntriesAsSubject] = await Promise.all([
     repo.getPerson(id),
