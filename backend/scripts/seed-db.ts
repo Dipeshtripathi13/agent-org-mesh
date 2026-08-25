@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { hashPassword } from '../src/domain/auth.js';
+import { sslForConnectionString } from '../src/db/sslConfig.js';
 import { DEFAULT_GRID } from '../src/domain/policy.js';
 import {
   CLAIMS,
@@ -18,7 +19,7 @@ const { Client } = pg;
 const adminUrl =
   process.env.DATABASE_ADMIN_URL ?? 'postgres://mesh_admin:mesh_admin_dev_only@localhost:5433/agent_org_mesh';
 
-const client = new Client({ connectionString: adminUrl });
+const client = new Client({ connectionString: adminUrl, ssl: sslForConnectionString(adminUrl) });
 await client.connect();
 
 try {

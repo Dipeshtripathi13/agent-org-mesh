@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { sslForConnectionString } from '../src/db/sslConfig.js';
 
 const { Client } = pg;
 
@@ -10,7 +11,7 @@ const adminUrl =
 const schemaPath = fileURLToPath(new URL('../db/schema.sql', import.meta.url));
 const sql = readFileSync(schemaPath, 'utf8');
 
-const client = new Client({ connectionString: adminUrl });
+const client = new Client({ connectionString: adminUrl, ssl: sslForConnectionString(adminUrl) });
 await client.connect();
 try {
   await client.query(sql);

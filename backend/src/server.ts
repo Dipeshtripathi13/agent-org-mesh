@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import Fastify from 'fastify';
@@ -27,6 +28,7 @@ import type { OrgRole } from './db/repo.js';
 import { anthropicConfigured, summarizeDailyActivity } from './integrations/anthropic.js';
 import { rawActivityDigest } from './integrations/modelProvider.js';
 import { getMainProvider } from './integrations/runtimeProvider.js';
+import { isSafeExternalUrl } from './integrations/urlSafety.js';
 import { formatClaudeCodeDigest, getTodaysClaudeCodeActivity, PROJECT_ROOT } from './integrations/claudeCodeActivity.js';
 import { askClaudeCli, claudeCliAvailable } from './integrations/claudeCli.js';
 import { disconnectGmail, getGmailStatus, getValidGmailAccessToken, saveGmailConnection } from './integrations/gmailConnection.js';
@@ -39,7 +41,7 @@ import { runEscalationChecks } from './integrations/escalationEngine.js';
 import { generateToken, listTokens, resolveToken, revokeToken } from './integrations/ingestTokens.js';
 import { allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll } from './integrations/resourceProviders.js';
-import { sendInviteEmail } from './integrations/resendEmail.js';
+import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -53,6 +55,15 @@ const app = Fastify({ logger: false, trustProxy: true });
 // Local dev keeps `origin: true` since the Vite dev server (:5173) is a different origin
 // from the API (:3001).
 await app.register(cors, { origin: isProduction ? false : true, credentials: true });
+// Standard security headers (CSP, X-Content-Type-Options, X-Frame-Options, HSTS, ...) —
+// found missing entirely during a security audit. Defaults are already a good fit for a
+// same-origin SPA+API (everything's served from this one process in production, see the
+// static registration below): default-src 'self' covers the built frontend's own script/
+// style/fetch calls with nothing to relax. crossOriginEmbedderPolicy is disabled — it's
+// an isolation feature this app has no use for (no SharedArrayBuffer, nothing embedding
+// cross-origin resources) and is a known source of breakage for OAuth redirect flows
+// (Gmail) in some browsers.
+await app.register(helmet, { crossOriginEmbedderPolicy: false });
 await app.register(cookie);
 // A generous global ceiling (every route not given its own stricter config below still
 // gets one) plus much tighter per-route limits on login/signup specifically, where the
@@ -105,7 +116,13 @@ function orgIdFromQuery(req: { query: unknown }): number {
    different *views*, not different accounts. */
 
 const SESSION_COOKIE = 'aom_session';
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// 7 days, down from 30 — found during a security audit: a 30-day fixed TTL with no idle
+// timeout meant a leaked/stolen session cookie stayed valid for up to a month regardless
+// of activity. True idle-timeout (sliding renewal) would need `reply` threaded through
+// every currentAccountId call site to also refresh the cookie's own client-side expiry,
+// not just the DB row — real, larger follow-up work, not done here; this is the
+// proportionate fix for now (a 4x-shorter fixed exposure window).
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 async function setSessionCookie(reply: { setCookie: (...a: any[]) => void }, accountId: number): Promise<void> {
   const token = generateSessionToken();
@@ -149,6 +166,25 @@ async function requireOrgRole(
   const role = await repo.getOrgRole(orgId, accountId);
   if (role == null || ROLE_RANK[role] < ROLE_RANK[minRole]) return { ok: false, code: 403, error: deniedMessage };
   return { ok: true, accountId };
+}
+
+/** Resolves which personId a request should be trusted to act as, in `orgId`: the
+ *  logged-in session's own linked identity there if one exists, else the client-asserted
+ *  `claimedId` unchanged. The same session-preferring pattern /api/agent/ask and
+ *  /api/query use inline, factored out for the escalation-action and conversation-read
+ *  endpoints so all four stay identical rather than drifting. Found and closed during a
+ *  security audit: these two didn't have this check at all, taking actorPersonId/
+ *  requesterId purely at face value. */
+async function sessionPreferredPersonId(
+  req: { cookies: Record<string, string | undefined> },
+  orgId: number,
+  claimedId: number | undefined,
+): Promise<number | undefined> {
+  const sessionAccountId = await currentAccountId(req);
+  if (sessionAccountId == null) return claimedId;
+  const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
+  const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
+  return sessionPerson ? sessionPerson.id : claimedId;
 }
 
 // Fixed, never-logged-into hash — burned in a scrypt comparison below whenever an email
@@ -228,7 +264,10 @@ app.get('/api/auth/me', async (req) => {
   return { account, orgRoles, people };
 });
 
-app.post('/api/auth/change-password', async (req, reply) => {
+// Rate-limited the same way login is (10/15min) — found during a security audit: this
+// previously only inherited the generous global 300/min ceiling, giving up to 300
+// guesses/minute at currentPassword to anyone holding a stolen session cookie.
+app.post('/api/auth/change-password', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -403,11 +442,13 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
 
   let accountId: number | null = null;
   let tempPassword: string | null = null;
+  let linkedExistingAccount = false;
   const email = body.email?.trim().toLowerCase();
   if (email) {
     const existing = await repo.getAccountByEmail(email);
     if (existing) {
       accountId = existing.id;
+      linkedExistingAccount = true;
     } else {
       tempPassword = generateTempPassword();
       const created = await repo.insertAccount(body.name.trim(), email, hashPassword(tempPassword));
@@ -436,8 +477,21 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
       tempPassword,
       loginUrl: FRONTEND_URL,
     });
+  } else if (linkedExistingAccount && email) {
+    // No temp password involved — this real account already had its own login. Found and
+    // closed during a security audit: linking an existing account into a new org's chart
+    // by email previously happened with no signal to the account owner at all.
+    const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
+    emailSent = await sendAddedToOrgEmail({
+      to: email,
+      recipientName: body.name.trim(),
+      addedByName: inviter?.name ?? 'A teammate',
+      orgName: org.name,
+      roleDescription: `${body.title.trim()} in ${org.name}'s org chart`,
+      loginUrl: FRONTEND_URL,
+    });
   }
-  return { person, tempPassword, emailSent };
+  return { person, tempPassword, emailSent, linkedExistingAccount };
 });
 
 app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
@@ -459,6 +513,12 @@ app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
 
 /* ---------- org ---------- */
 
+// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
+// MeContext.tsx's free identity switcher, Ask.tsx, MyAgent.tsx, and OrgStructure.tsx all
+// call this without a session — CLAUDE.md rule 7's "still open by design" self-service
+// affordance depends on the org's people list being loadable before anyone picks who they
+// are. Gating this the way /api/overview etc. now are would break that real, documented
+// flow. If rule 7 is ever fully closed, revisit this alongside it, not in isolation.
 app.get('/api/org', async (req) => {
   const orgId = orgIdFromQuery(req);
   const [people, surfaces, neverIngested] = await Promise.all([
@@ -473,8 +533,18 @@ app.get('/api/org', async (req) => {
   };
 });
 
-app.get('/api/overview', async (req) => {
+/** Admin-only — unlike /api/org and /api/policy (also reached by orgIdFromQuery), nothing
+ *  in the self-service "My agent" surface calls this; only Overview.tsx does, inside the
+ *  Admin panel. Found and closed during a security audit: this had no gate at all,
+ *  exposing org-wide stats (query volume, refusal counts) to anyone who could guess an
+ *  orgId. */
+app.get('/api/overview', async (req, reply) => {
   const orgId = orgIdFromQuery(req);
+  const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to view this organization\'s overview');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const [people, surfaces, entries, current] = await Promise.all([
     repo.getPeople(orgId),
     repo.getSurfaces(),
@@ -649,7 +719,19 @@ app.post('/api/claim/:id/correct', async (req, reply) => {
 
 /* ---------- escalations ---------- */
 
-app.get('/api/escalations', async (req) => ({ escalations: await repo.getEscalations(orgIdFromQuery(req)) }));
+/** Admin-only, same rationale as /api/overview above — no self-service caller, only
+ *  Escalations.tsx/OrgGraph.tsx inside the Admin panel. Found and closed during a
+ *  security audit: escalation detail text and full manager-chain paths (real names,
+ *  personIds) were reachable with no auth at all. */
+app.get('/api/escalations', async (req, reply) => {
+  const orgId = orgIdFromQuery(req);
+  const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to view this organization\'s escalations');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  return { escalations: await repo.getEscalations(orgId) };
+});
 
 /** Who may act on an escalation: anyone on its path, or anyone whose real relationship to
  *  the escalated person (deriveAllowedRoles — the org graph, never asserted) is IT admin
@@ -664,8 +746,8 @@ async function canActOnEscalation(escalation: { personId: number; path: { person
 
 app.post('/api/escalations/:id/acknowledge', async (req, reply) => {
   const id = (req.params as { id: string }).id;
-  const { actorPersonId } = req.body as { actorPersonId?: number };
-  if (!actorPersonId) {
+  const { actorPersonId: claimedActorId } = req.body as { actorPersonId?: number };
+  if (!claimedActorId) {
     reply.code(400);
     return { error: 'actorPersonId is required' };
   }
@@ -675,7 +757,8 @@ app.post('/api/escalations/:id/acknowledge', async (req, reply) => {
     return { error: 'not found' };
   }
   const orgId = await repo.getOrgIdOfPerson(escalation.personId);
-  if (!(await canActOnEscalation(escalation, actorPersonId, orgId))) {
+  const actorPersonId = await sessionPreferredPersonId(req, orgId, claimedActorId);
+  if (!actorPersonId || !(await canActOnEscalation(escalation, actorPersonId, orgId))) {
     reply.code(403);
     return { error: 'you are not on this escalation\'s path and are not IT admin or Executive for this person' };
   }
@@ -689,8 +772,8 @@ app.post('/api/escalations/:id/acknowledge', async (req, reply) => {
 
 app.post('/api/escalations/:id/resolve', async (req, reply) => {
   const id = (req.params as { id: string }).id;
-  const { actorPersonId } = req.body as { actorPersonId?: number };
-  if (!actorPersonId) {
+  const { actorPersonId: claimedActorId } = req.body as { actorPersonId?: number };
+  if (!claimedActorId) {
     reply.code(400);
     return { error: 'actorPersonId is required' };
   }
@@ -700,7 +783,8 @@ app.post('/api/escalations/:id/resolve', async (req, reply) => {
     return { error: 'not found' };
   }
   const orgId = await repo.getOrgIdOfPerson(escalation.personId);
-  if (!(await canActOnEscalation(escalation, actorPersonId, orgId))) {
+  const actorPersonId = await sessionPreferredPersonId(req, orgId, claimedActorId);
+  if (!actorPersonId || !(await canActOnEscalation(escalation, actorPersonId, orgId))) {
     reply.code(403);
     return { error: 'you are not on this escalation\'s path and are not IT admin or Executive for this person' };
   }
@@ -714,8 +798,15 @@ app.post('/api/escalations/:id/resolve', async (req, reply) => {
 
 /* ---------- connections ---------- */
 
-app.get('/api/connections', async (req) => {
+/** Admin-only, same rationale as /api/overview above — no self-service caller, only
+ *  Connections.tsx inside the Admin panel. Found and closed during a security audit. */
+app.get('/api/connections', async (req, reply) => {
   const orgId = orgIdFromQuery(req);
+  const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to view this organization\'s connections');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const [surfaces, people, neverIngested] = await Promise.all([
     repo.getSurfaces(),
     repo.getPeople(orgId),
@@ -874,6 +965,18 @@ app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
         reply.code(500);
         return { error: 'this server is not configured to store a custom credential right now — contact your platform admin' };
       }
+    }
+  }
+  // SSRF guard: a custom baseUrl is fetched server-side on every ask for this org
+  // (openaiCompatible.ts's callOpenAI). Found during a security audit: nothing previously
+  // stopped an org admin from pointing this at Railway's private network, localhost, or a
+  // cloud-metadata-style address. Only validated when actually being set to a new,
+  // non-empty value — clearing it back to null, or leaving it untouched, needs no check.
+  if (baseUrl) {
+    const safety = await isSafeExternalUrl(baseUrl);
+    if (!safety.ok) {
+      reply.code(400);
+      return { error: `endpoint URL rejected: ${safety.reason}` };
     }
   }
   const resolvedBaseUrl = baseUrl === undefined ? (existing?.baseUrl ?? null) : (baseUrl || null);
@@ -1294,6 +1397,10 @@ app.post('/api/ingest/:source', async (req, reply) => {
 
 /* ---------- policy ---------- */
 
+// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
+// OrgStructure.tsx shows an employee the disclosure grid governing them as a self-service
+// transparency feature, same "still open by design" rule-7 posture as /api/org above —
+// gating this would break that real flow, not just the Admin panel's PolicyMatrix.tsx.
 app.get('/api/policy', async (req) => {
   const orgId = orgIdFromQuery(req);
   const [revision, history] = await Promise.all([repo.getCurrentRevision(orgId), repo.listRevisions(orgId)]);
@@ -1352,11 +1459,39 @@ app.post('/api/query', async (req, reply) => {
   };
   const orgId = await repo.getOrgIdOfPerson(body.targetId);
 
+  // Session-trust hardening, same pattern /api/agent/ask already uses: prefer the
+  // logged-in account's own linked identity in this org over a client-asserted
+  // requesterId, whenever a session exists and is actually linked here.
+  const sessionAccountId = await currentAccountId(req);
+  let requesterId = body.requesterId;
+  if (sessionAccountId != null) {
+    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
+    const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
+    if (sessionPerson) requesterId = sessionPerson.id;
+  }
+
   if (body.persist) {
-    const ok = await verifyRequesterRole(orgId, body.requesterId ?? 0, body.targetId, body.role);
+    const ok = await verifyRequesterRole(orgId, requesterId ?? 0, body.targetId, body.role);
     if (!ok) {
       reply.code(403);
       return { error: `you may not ask as "${body.role}" about this person — that relationship doesn't hold in the org chart` };
+    }
+  } else {
+    // Preview/simulation mode deliberately bypasses org-graph role-truthfulness — that's
+    // the whole point of "what would an Executive see", regardless of whether the caller
+    // genuinely has that relationship (My agent → Preview, Admin → Policy Matrix). But it
+    // still needs a real caller behind it: either previewing your own data (self, the
+    // same free-identity-switcher leniency as everywhere else — CLAUDE.md rule 7) or a
+    // real org admin/viewer testing the policy grid. Found and closed during a security
+    // audit: this endpoint previously had no gate at all, so a fully anonymous caller
+    // could preview any role's view of any person in any organization.
+    const isSelfPreview = requesterId != null && requesterId === body.targetId;
+    if (!isSelfPreview) {
+      const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to preview this organization\'s policy');
+      if (!check.ok) {
+        reply.code(check.code);
+        return { error: check.error };
+      }
     }
   }
 
@@ -1393,7 +1528,7 @@ app.post('/api/query', async (req, reply) => {
   if (body.persist) {
     await repo.appendAuditEntry({
       orgId,
-      requesterId: body.requesterId ?? 0,
+      requesterId: requesterId ?? 0,
       requesterRole: body.role,
       targetPersonId: body.targetId,
       question: body.question ?? '(no question)',
@@ -1406,13 +1541,25 @@ app.post('/api/query', async (req, reply) => {
     // Best-effort: one detection rule erroring must never break a normal ask.
     try {
       const people = await repo.getPeople(orgId);
-      await runEscalationChecks({ orgId, requesterId: body.requesterId ?? 0, target, people, surfaces, claims, now: new Date(now) });
+      await runEscalationChecks({ orgId, requesterId: requesterId ?? 0, target, people, surfaces, claims, now: new Date(now) });
     } catch (err) {
       app.log.error({ err }, 'escalation checks failed — continuing');
     }
   }
 
-  return { response: snapshot, evidence: await repo.getEvidence(orgId) };
+  // Scoped strictly to what respond() actually disclosed in `snapshot.items` — never the
+  // whole org's evidence table. Found and closed during a security audit: this used to
+  // return repo.getEvidence(orgId) unfiltered, so every evidence record in the
+  // organization (regardless of tier or whether anything referencing it was actually
+  // authorized) rode along with every response, persisted or not, authenticated or not.
+  const referencedEvidenceIds = new Set(snapshot.items.map((i) => i.evidenceId).filter((id): id is string => id != null));
+  const allEvidence = await repo.getEvidence(orgId);
+  const evidence: Record<string, unknown> = {};
+  for (const id of referencedEvidenceIds) {
+    if (allEvidence[id]) evidence[id] = allEvidence[id];
+  }
+
+  return { response: snapshot, evidence };
 });
 
 /**
@@ -1464,7 +1611,14 @@ app.post('/api/agent/ask', async (req, reply) => {
     if (sessionPerson) requesterId = sessionPerson.id;
   }
 
-  if (body.persist) {
+  // Verified unconditionally, not just when persist is true: no real caller in this
+  // codebase ever sends persist:false here (Preview/policy-testing UIs go through
+  // /api/query instead), and the response body — items already filtered per the claimed
+  // role — is exactly as disclosive un-persisted as persisted. Found and closed during a
+  // security audit: an unauthenticated, non-persisted call could previously claim any
+  // role about any person and receive that role's real, policy-computed view, simply
+  // never logged for it.
+  {
     const ok = await verifyRequesterRole(orgId, requesterId ?? 0, body.targetId, body.role);
     if (!ok) {
       reply.code(403);
@@ -1645,6 +1799,10 @@ app.get('/api/audit', async (req, reply) => {
   };
 });
 
+// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
+// this is the "who asked about me" self-service transparency feature (WhoAsked.tsx),
+// also used by MyAgent.tsx and Ask.tsx for chat-history context — same rule-7 posture as
+// /api/org and /api/policy above.
 app.get('/api/audit/subject/:id', async (req) => {
   const id = Number((req.params as { id: string }).id);
   return { entries: await repo.auditForSubject(id) };
@@ -1654,8 +1812,15 @@ app.get('/api/audit/subject/:id', async (req) => {
  *  targetId) or a real cross-person Ask thread — derived from that pair's own real audit
  *  rows (listConversationsForPair groups them; nothing new is stored). */
 app.get('/api/agent/conversations', async (req) => {
-  const { requesterId, targetId } = req.query as { requesterId?: string; targetId?: string };
-  return { conversations: await repo.listConversationsForPair(Number(requesterId), Number(targetId)) };
+  const { requesterId: claimedRequesterId, targetId } = req.query as { requesterId?: string; targetId?: string };
+  const targetIdNum = Number(targetId);
+  const orgId = await repo.getOrgIdOfPerson(targetIdNum);
+  // Session-trust hardening, same pattern as /api/agent/ask: prefer the logged-in
+  // account's own linked identity here over a client-asserted requesterId. Found and
+  // closed during a security audit: this previously trusted requesterId completely,
+  // letting anyone read any two people's chat history by guessing both ids.
+  const requesterId = await sessionPreferredPersonId(req, orgId, claimedRequesterId != null ? Number(claimedRequesterId) : undefined);
+  return { conversations: await repo.listConversationsForPair(requesterId ?? 0, targetIdNum) };
 });
 
 /* ---------- serve the built frontend (production only) ----------

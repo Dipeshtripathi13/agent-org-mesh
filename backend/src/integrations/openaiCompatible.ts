@@ -1,5 +1,6 @@
 import { parseRelevantSurfaces } from './orchestrator.js';
 import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
+import { isSafeExternalUrl } from './urlSafety.js';
 
 /**
  * The ModelProvider implementation for anything speaking the OpenAI chat-completions
@@ -38,6 +39,18 @@ async function callOpenAI(prompt: string, credentials?: ProviderCredentials): Pr
   const apiKey = credentials?.apiKey || process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not set on the backend — add it (and optionally OPENAI_BASE_URL / OPENAI_MODEL for a self-hosted model) to backend/.env and restart the server');
+  }
+  // Re-validated here, not just when the org first saved it (server.ts's POST
+  // .../main-agent) — a hostname's DNS answer can change between save and use
+  // (rebinding), so a write-time-only check isn't a real guarantee. The platform-wide
+  // OPENAI_BASE_URL env var is operator-set and trusted, so only an org's own override is
+  // checked. Fails the same way a network error would — every ModelProvider call site
+  // already has a fallback for that.
+  if (credentials?.baseUrl) {
+    const safety = await isSafeExternalUrl(credentials.baseUrl);
+    if (!safety.ok) {
+      throw new Error(`custom endpoint URL is no longer considered safe to use: ${safety.reason}`);
+    }
   }
   const res = await fetch(`${baseUrl(credentials)}/chat/completions`, {
     method: 'POST',

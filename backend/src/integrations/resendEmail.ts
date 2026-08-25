@@ -84,3 +84,56 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<boolean>
     return false;
   }
 }
+
+export interface AddedToOrgEmailInput {
+  to: string;
+  recipientName: string;
+  addedByName: string;
+  orgName: string;
+  roleDescription: string;
+  loginUrl: string;
+}
+
+/** Distinct from sendInviteEmail above: no temp password, because there isn't one — this
+ *  fires when an *existing* real account gets linked into a new org's chart by email
+ *  (server.ts's POST /api/organizations/:orgId/people), not when a brand-new login is
+ *  created. Found and closed during a security audit: linking an existing account by
+ *  email previously happened with zero signal to the account owner at all — this at
+ *  least tells them, even though (like every other email here) it's best-effort and
+ *  never blocks the underlying action if it fails or isn't configured. */
+export async function sendAddedToOrgEmail(input: AddedToOrgEmailInput): Promise<boolean> {
+  if (!emailConfigured()) return false;
+  const from = process.env.EMAIL_FROM || 'Agent Org Mesh <onboarding@resend.dev>';
+  const subject = `${input.addedByName} added you to ${input.orgName}`;
+  const text = [
+    `${input.addedByName} added your existing Agent Org Mesh account as ${input.roleDescription}.`,
+    ``,
+    `Sign in at ${input.loginUrl} with your existing password to see it.`,
+    `Email: ${input.to}`,
+  ].join('\n');
+  const html = `
+    <p>${escapeHtml(input.addedByName)} added your existing Agent Org Mesh account as ${escapeHtml(input.roleDescription)}.</p>
+    <p><a href="${input.loginUrl}">Sign in</a> with your existing password to see it.</p>
+    <p>Email: ${escapeHtml(input.to)}</p>
+  `.trim();
+
+  try {
+    const res = await fetch(RESEND_API_URL, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: input.to, subject, text, html }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`resend send failed: ${res.status} ${body}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('resend send failed:', err);
+    return false;
+  }
+}

@@ -277,6 +277,13 @@ export function SetUpMyAgent() {
                   Registration filed. Nothing connects until IT &amp; Security approves this runtime.
                 </p>
               )}
+              {(main.hasCustomApiKey || main.baseUrl || main.model) && (
+                <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+                  This organization uses its own provider credentials for this agent
+                  {main.baseUrl ? <> &mdash; questions and authorized data are sent to <strong>{main.baseUrl}</strong></> : ''},
+                  not this platform's shared default.
+                </p>
+              )}
               <p className="glossary" style={{ marginTop: 9 }}>
                 Read-only here &mdash; an organization admin sets this for everyone from
                 Admin &rarr; Organizations. Everyone in the org shares the same one.

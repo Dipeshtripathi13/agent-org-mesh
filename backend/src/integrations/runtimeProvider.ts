@@ -42,11 +42,13 @@ export interface MainProviderResolution {
   configEnvVar: string | null;
 }
 
-/** Pure: turns an org's optional stored credential override into the ProviderCredentials
- *  shape every adapter accepts, decrypting the API key if one is set. Absent fields mean
- *  "fall back to this deployment's env var default" — the adapters handle that half.
- *  Returns undefined when nothing is overridden, so bindCredentials can skip wrapping
- *  entirely for the common case (an org using the platform default, unchanged behavior). */
+/** Turns an org's optional stored credential override into the ProviderCredentials shape
+ *  every adapter accepts, decrypting the API key if one is set. Absent fields mean "fall
+ *  back to this deployment's env var default" — the adapters handle that half. Returns
+ *  undefined when nothing is overridden, so bindCredentials can skip wrapping entirely
+ *  for the common case (an org using the platform default, unchanged behavior).
+ *  Deterministic and synchronous (still safely unit-testable without mocking I/O) but not
+ *  side-effect-free — a decryption failure logs via console.error, see below. */
 export function resolveCredentials(main: OrgMainAgent | null): ProviderCredentials | undefined {
   if (!main) return undefined;
   if (!main.apiKeyEncrypted && !main.baseUrl && !main.model) return undefined;
@@ -54,9 +56,14 @@ export function resolveCredentials(main: OrgMainAgent | null): ProviderCredentia
   if (main.apiKeyEncrypted) {
     try {
       credentials.apiKey = decryptSecret(main.apiKeyEncrypted);
-    } catch {
+    } catch (err) {
       // A decryption failure (rotated CREDENTIAL_ENCRYPTION_KEY, corrupted row) must never
       // crash an ask — fall back to the platform default, same as no override being set.
+      // Still logged (found missing during a security audit): silently reverting to the
+      // platform default is the right behavior, but it should never be invisible — an
+      // admin whose org quietly stopped using its own key deserves a signal in the logs,
+      // not just a puzzling change in which provider answered.
+      console.error({ err, orgRuntimeKey: main.runtimeKey }, 'org credential decryption failed — falling back to the platform default provider');
     }
   }
   if (main.baseUrl) credentials.baseUrl = main.baseUrl;
