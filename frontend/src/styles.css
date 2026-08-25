@@ -6,6 +6,21 @@
   --hatch: repeating-linear-gradient(135deg, #c5ccd1 0 3px, #eef1f3 3px 6px);
   --hold-bg: repeating-linear-gradient(135deg, #e7ebee 0 4px, #f2f4f6 4px 8px);
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Primary accent — deliberately a berry/plum, outside every hue already claimed by a
+     tier or status color (t1 blue, t2/partial amber, t3 purple, ok teal-green, stale
+     khaki) so an interactive/brand element is never mistaken for a disclosure-tier or
+     connector-health signal. Kept at the same muted, document-like saturation as the
+     rest of the palette rather than a bright SaaS-purple, so it reads as this product's
+     own accent, not a bolt-on. */
+  --accent: #7a2e54;
+  --accent-hover: #5e2340;
+  --accent-bg: #fbeef4;
+  --accent-border: #e3bdd0;
+  --shadow-1: 0 1px 2px rgba(16, 22, 26, 0.06);
+  --shadow-2: 0 4px 14px rgba(16, 22, 26, 0.10);
+  --radius: 3px;
+  --ease: 150ms ease;
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
@@ -15,8 +30,39 @@ body {
   font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
 }
 button { font: inherit; cursor: pointer; }
-:focus-visible { outline: 2px solid var(--t1); outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+
+/* Every text input/select in the app gets this for free — a single, branded focus
+   treatment instead of relying on the browser default (or nothing) per form. */
+input, select, textarea {
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--ink4); }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-bg); outline: none;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 1px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+/* ---------- shared interactive primitives ----------
+   Most buttons across this app are still one-off inline styles (pre-dating this pass);
+   these two classes are the reusable, accent-aware alternative, applied at the highest-
+   traffic call sites (auth, primary "create/save" actions) rather than a full rewrite of
+   every button in one pass. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 14px; font-size: 12.5px; font-weight: 500;
+  border-radius: var(--radius); border: 1px solid transparent; cursor: pointer;
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease),
+    transform 100ms ease, box-shadow var(--ease);
+}
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-1); }
+.btn-secondary { background: #fff; border-color: var(--rule2); color: var(--ink2); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
 
 .app { display: flex; flex-direction: column; min-height: 100%; }
 .topbar {
@@ -37,7 +83,7 @@ button { font: inherit; cursor: pointer; }
 
 .whoami { display: inline-flex; align-items: center; gap: 7px; }
 .avatar-dot {
-  width: 22px; height: 22px; border-radius: 50%; background: var(--ink);
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
   color: #fff; font-style: normal; font-size: 11px; font-weight: 600;
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
@@ -46,14 +92,20 @@ button { font: inherit; cursor: pointer; }
 .whoami-title { font-size: 10px; color: var(--ink4); white-space: nowrap; }
 
 .tabs { display: flex; border: 1px solid var(--rule2); border-radius: 2px; overflow: hidden; }
-.tabs button { height: 32px; padding: 0 12px; font-size: 12px; border: 0; background: #fff; color: var(--ink2); }
+.tabs button {
+  height: 32px; padding: 0 12px; font-size: 12px; border: 0; background: #fff; color: var(--ink2);
+  transition: background-color var(--ease), color var(--ease);
+}
+.tabs button:hover[aria-pressed='false'] { background: var(--accent-bg); color: var(--accent-hover); }
 .tabs button + button { border-left: 1px solid var(--rule2); }
-.tabs button[aria-pressed='true'] { background: var(--ink); color: #fff; }
+.tabs button[aria-pressed='true'] { background: var(--accent); color: #fff; }
 
 .org-switcher {
   height: 32px; border: 1px solid var(--rule2); border-radius: 2px; background: #fff;
   font-size: 12px; padding: 0 8px; color: var(--ink); max-width: 200px;
+  transition: border-color var(--ease);
 }
+.org-switcher:hover { border-color: var(--accent); }
 
 .body { display: flex; flex: 1; align-items: stretch; flex-wrap: wrap; }
 .sidebar {
@@ -64,18 +116,40 @@ button { font: inherit; cursor: pointer; }
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--ink4); padding: 0 14px 8px; margin: 0; font-weight: 400;
 }
+.navlist { display: flex; flex-direction: column; }
 .navitem {
   width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 8px;
   border: 0; background: transparent; color: var(--ink2); font-size: 12.5px; padding: 7px 14px;
+  transition: background-color var(--ease), color var(--ease);
 }
+.navitem:hover:not([aria-current]) { background: #f1f3f4; color: var(--ink); }
 .navitem[aria-current='page'] {
-  background: #eef4f8; color: var(--t1); box-shadow: inset 2px 0 0 var(--t1); font-weight: 500;
+  background: var(--accent-bg); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); font-weight: 500;
 }
 .navfoot {
   margin: 14px 14px 0; padding-top: 12px; border-top: 1px solid #f1f3f4;
   font-size: 11px; color: var(--ink3);
 }
 .main { flex: 1; min-width: 340px; padding: 20px 22px 60px; }
+
+/* ---------- responsive: narrow viewports ----------
+   Sidebar becomes a horizontal, scrollable strip above the content instead of a fixed
+   left column — same pattern this file already used for .chat-rail at 560px, applied to
+   the primary nav so it doesn't eat a third of a phone's width. */
+@media (max-width: 720px) {
+  .body { flex-direction: column; flex-wrap: nowrap; }
+  .sidebar { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid var(--rule); padding: 8px 0; }
+  .sidebar h2 { display: none; }
+  .navlist { flex-direction: row; overflow-x: auto; gap: 2px; padding: 0 10px; -webkit-overflow-scrolling: touch; }
+  .navitem { width: auto; flex: none; white-space: nowrap; border-radius: var(--radius); padding: 7px 11px; }
+  .navitem[aria-current='page'] { box-shadow: none; }
+  .navfoot { display: none; }
+  .main { min-width: 0; padding: 16px 14px 40px; }
+}
+@media (max-width: 480px) {
+  .clock { display: none; }
+  .topbar { gap: 10px; padding: 0 10px; }
+}
 .crumb {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--ink4);
@@ -86,9 +160,10 @@ h1 { font-size: 19px; font-weight: 600; margin: 4px 0 0; letter-spacing: -0.01em
 .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
 .card {
   background: var(--panel); border: 1px solid var(--rule); padding: 12px 14px;
-  flex: 1 1 178px; min-width: 178px;
+  flex: 1 1 178px; min-width: 178px; transition: box-shadow var(--ease), border-color var(--ease);
 }
-.card.accent { border-color: var(--ink); }
+.card:hover { box-shadow: var(--shadow-1); border-color: var(--rule2); }
+.card.accent { border-color: var(--accent); }
 .card h3 {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--ink3); margin: 0; font-weight: 400;
@@ -120,16 +195,21 @@ th {
   color: var(--ink3); border-bottom: 1px solid var(--rule2);
 }
 td { padding: 6px 10px; border-bottom: 1px solid #f1f3f4; }
-.scroll { overflow-x: auto; }
+tbody tr { transition: background-color var(--ease); }
+tbody tr:hover { background: #fafbfb; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 .cell { width: 34px; height: 18px; border-radius: 2px; border: 1px solid transparent; }
 .pct { font-family: var(--mono); font-size: 11px; }
 
 .chip {
   font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 2px;
-  border: 1px solid var(--rule2); background: #fff; color: var(--ink2);
+  border: 1px solid var(--rule2); background: #fff; color: var(--ink2); cursor: pointer;
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease);
 }
-.chip[aria-pressed='true'] { background: #eef4f8; border-color: var(--t1); color: var(--t1); }
+.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.chip[aria-pressed='true'] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.chip[aria-pressed='true']:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* Evidence chip — tier-tinted, distinct from filter/toggle chips. Solid border for a
    resolvable T1 artifact, dashed for a T3 inference the reader shouldn't treat as fact. */
@@ -273,20 +353,36 @@ td { padding: 6px 10px; border-bottom: 1px solid #f1f3f4; }
 
 .runtime-card {
   border: 1px solid var(--rule2); border-radius: 3px; padding: 12px 14px; background: #fff;
-  margin-bottom: 10px;
+  margin-bottom: 10px; transition: box-shadow var(--ease), border-color var(--ease);
 }
+.runtime-card:hover { border-color: var(--rule2); box-shadow: var(--shadow-1); }
 .runtime-card.is-blocked { background: repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px); }
 
 .tree-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 5px 12px; border-bottom: 1px solid #f1f3f4;
+  padding: 5px 12px; border-bottom: 1px solid #f1f3f4; transition: background-color var(--ease);
 }
+.tree-row:hover { background: #fafbfb; }
 .tree-row.no-agent { background: repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px); }
 .tree-toggle {
   width: 18px; height: 18px; flex-shrink: 0; border: 1px solid var(--rule2); background: #fff;
   color: var(--ink3); font-family: var(--mono); font-size: 11px; border-radius: 2px;
+  transition: border-color var(--ease), color var(--ease);
 }
+.tree-toggle:hover:not(.leaf) { border-color: var(--accent); color: var(--accent); }
 .tree-toggle.leaf { border: 0; color: var(--ink4); }
 .tree-name { background: transparent; border: 0; padding: 0; text-align: left; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .esc-path { font-family: var(--mono); font-size: 11px; color: var(--ink3); }
+
+/* ---------- print ----------
+   Navigation chrome and controls have no meaning on paper; what's worth printing is the
+   record itself (a policy grid, an audit log, a coverage report). */
+@media print {
+  .topbar, .sidebar, .navfoot, button, .search-field, .readonly { display: none !important; }
+  .body { display: block; }
+  .main { padding: 0; min-width: 0; }
+  body { background: #fff; }
+  .panel, .card { box-shadow: none !important; break-inside: avoid; }
+  a { color: var(--ink); text-decoration: none; }
+}

@@ -136,10 +136,7 @@ function Topbar({ panel, switchPanel }: { panel: 'admin' | 'me'; switchPanel: (p
         </span>
       )}
       {panel === 'admin' && account && (
-        <button
-          onClick={() => void logout()}
-          style={{ fontSize: 11, background: 'none', border: '1px solid var(--rule2)', borderRadius: 2, padding: '5px 9px', cursor: 'pointer', color: 'var(--ink2)' }}
-        >
+        <button className="btn btn-secondary" style={{ height: 28, fontSize: 11, padding: '0 10px' }} onClick={() => void logout()}>
           Log out
         </button>
       )}
@@ -255,16 +252,18 @@ function Shell() {
         <div className="body">
           <nav className="sidebar">
             <h2>{panel === 'admin' ? 'Admin · IT & exec' : 'My agent · employee'}</h2>
-            {nav.map((n) => (
-              <button
-                key={n.key}
-                className="navitem"
-                aria-current={active.key === n.key ? 'page' : undefined}
-                onClick={() => setScreen(n.key)}
-              >
-                {n.label}
-              </button>
-            ))}
+            <div className="navlist">
+              {nav.map((n) => (
+                <button
+                  key={n.key}
+                  className="navitem"
+                  aria-current={active.key === n.key ? 'page' : undefined}
+                  onClick={() => setScreen(n.key)}
+                >
+                  {n.label}
+                </button>
+              ))}
+            </div>
             <p className="navfoot">
               {panel === 'admin'
                 ? 'Every query you run appears in the subject’s own log, attributed to you.'

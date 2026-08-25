@@ -376,6 +376,7 @@ function OrgAdmins() {
         </span>
       </header>
       <div className="inner">
+        <div className="scroll">
         <table>
           <tbody>
             {admins.map((a) => (
@@ -407,6 +408,7 @@ function OrgAdmins() {
             ))}
           </tbody>
         </table>
+        </div>
 
         {isOwner && (
           <div style={{ display: 'flex', gap: 8, marginTop: 12, borderTop: '1px solid var(--rule)', paddingTop: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>

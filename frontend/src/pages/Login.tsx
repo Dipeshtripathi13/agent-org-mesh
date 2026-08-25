@@ -65,9 +65,10 @@ export function Login() {
               />
             </label>
             <button
+              className="btn btn-primary"
               onClick={submit}
               disabled={busy || !email.trim() || !password}
-              style={{ height: 34, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, marginTop: 4 }}
+              style={{ width: '100%', marginTop: 4 }}
             >
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
@@ -81,7 +82,7 @@ export function Login() {
             New here?{' '}
             <button
               onClick={() => setMode('signup')}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--ink)', textDecoration: 'underline', cursor: 'pointer' }}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Create your organization
             </button>{' '}

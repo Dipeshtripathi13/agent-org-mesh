@@ -59,9 +59,10 @@ export function SignUp({ onBack }: { onBack: () => void }) {
             {field('Password', password, setPassword, 'password', 'new-password')}
             {field('Organization name', organizationName, setOrganizationName)}
             <button
+              className="btn btn-primary"
               onClick={submit}
               disabled={busy || !name.trim() || !email.trim() || !password || !organizationName.trim()}
-              style={{ height: 34, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, marginTop: 4 }}
+              style={{ width: '100%', marginTop: 4 }}
             >
               {busy ? 'Creating…' : 'Create organization'}
             </button>
@@ -75,7 +76,7 @@ export function SignUp({ onBack }: { onBack: () => void }) {
             Already have an account?{' '}
             <button
               onClick={onBack}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--ink)', textDecoration: 'underline', cursor: 'pointer' }}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
             >
               Log in instead
             </button>

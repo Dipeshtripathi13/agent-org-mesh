@@ -131,6 +131,7 @@ export function MyAgent() {
               <div className="inner">
                 <CoverageBar states={surfaces.map((s) => me.surfaces[s.key])} height={8} />
                 <CoverageKey />
+                <div className="scroll">
                 <table style={{ marginTop: 12 }}>
                   <tbody>
                     {surfaces.map((s) => (
@@ -144,6 +145,7 @@ export function MyAgent() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                 <div className="coverage-note">
                   {me.coverage.gaps.length
                     ? `Because ${me.coverage.gaps.join(', and ')}, answers about those areas are incomplete — and every answer says so.`
