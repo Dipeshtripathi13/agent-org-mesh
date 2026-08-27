@@ -2,9 +2,17 @@ import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { SignUp } from './SignUp';
 
+// Read once at module load — before Shell's own mount effect normalizes the URL (it
+// replaceState's the query string away almost immediately, and Login itself doesn't
+// mount until the async auth check resolves, well after that happens). A lazy useState
+// initializer inside the component would run too late and always see it already gone.
+const wantsSignupOnLoad = new URLSearchParams(window.location.search).get('signup') === '1';
+
 export function Login() {
   const { login } = useAuth();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  // A marketing-site "Try it for free" link can land straight on org creation via
+  // ?signup=1, instead of forcing an extra manual click past the login form first.
+  const [mode, setMode] = useState<'login' | 'signup'>(wantsSignupOnLoad ? 'signup' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
