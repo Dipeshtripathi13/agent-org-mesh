@@ -11,10 +11,18 @@ export function Overview() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Cleared at the start of every attempt, not just set on failure — orgId briefly
+    // starts at 1 (OrgContext's placeholder default) before the real org list loads for
+    // whoever's logged in, so this effect's very first run can 403 against an org the
+    // account has no role on. Without clearing here, that transient failure stuck
+    // forever: the follow-up fetch against the *correct* orgId would succeed, set real
+    // data, and still render the error underneath it — first thing a brand-new self-serve
+    // signup saw was "Couldn't load the overview," even though it had, a moment later.
+    setError(null);
     api.overview(orgId).then(setData).catch((e) => setError(String(e)));
   }, [orgId]);
 
-  if (error) return <p className="sub">Couldn&rsquo;t load the overview. Is the API running on port 3001?</p>;
+  if (error) return <p className="sub">Couldn&rsquo;t load the overview. Is the API running?</p>;
   if (!data) return <p className="sub">Loading&hellip;</p>;
 
   const { bands } = data.coverage;
