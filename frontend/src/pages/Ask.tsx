@@ -70,6 +70,10 @@ export function Ask() {
     setQuestion('');
     setPending(null);
     setHistoryLoaded(false);
+    // target stays 0 — not a real person id — whenever there's genuinely no one else in
+    // the org to ask about yet (a brand-new chart of one). Nothing to load in that case;
+    // skip the request instead of asking the backend about a person that doesn't exist.
+    if (!target) { setEntries([]); setConversations([]); setActiveConversationId(null); setHistoryLoaded(true); return; }
     loadHistory(meId, target).then((convos) => {
       setActiveConversationId(convos[0]?.id ?? null);
       setHistoryLoaded(true);

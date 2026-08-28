@@ -1829,7 +1829,14 @@ app.get('/api/audit/subject/:id', async (req) => {
 app.get('/api/agent/conversations', async (req) => {
   const { requesterId: claimedRequesterId, targetId } = req.query as { requesterId?: string; targetId?: string };
   const targetIdNum = Number(targetId);
-  const orgId = await repo.getOrgIdOfPerson(targetIdNum);
+  // The frontend fires this with targetId=0 whenever nothing's selected yet (a brand-new
+  // org with nobody else in the chart to ask about, or the picker just hasn't loaded) —
+  // not a real person id. getOrgIdOfPerson throws on any id with no matching row, which
+  // this always was for 0; that unhandled throw was surfacing as a raw 500 to the
+  // browser instead of the empty history this genuinely is.
+  if (!Number.isInteger(targetIdNum) || targetIdNum <= 0) return { conversations: [] };
+  const orgId = await repo.getOrgIdOfPerson(targetIdNum).catch(() => null);
+  if (orgId == null) return { conversations: [] };
   // Session-trust hardening, same pattern as /api/agent/ask: prefer the logged-in
   // account's own linked identity here over a client-asserted requesterId. Found and
   // closed during a security audit: this previously trusted requesterId completely,
