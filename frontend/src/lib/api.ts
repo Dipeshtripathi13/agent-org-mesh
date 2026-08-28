@@ -102,8 +102,9 @@ export interface OrgAdmin { accountId: number; name: string; email: string; role
 /** One of an account's own org-chart identities — `orgId` rides outside `Person` itself
  *  since this is the one place identities from different orgs appear side by side. */
 export type MyIdentity = Person & { orgId: number };
+export type OrgPlan = 'starter' | 'business' | 'enterprise';
 export interface Organization {
-  id: number; slug: string; name: string; createdAt: string; peopleCount: number;
+  id: number; slug: string; name: string; createdAt: string; plan: OrgPlan; peopleCount: number;
 }
 export interface NewPerson {
   name: string; title: string; team: string; managerId: number | null; agentDeployed: boolean;

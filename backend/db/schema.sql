@@ -19,9 +19,14 @@
 -- surfaces_catalog, never_ingested, and runtime_catalog stay global: they're
 -- the platform's connector/runtime product surface, the same for every org.
 
--- This is a reset, not an incremental migration: there's no production data behind this
--- schema, so `npm run db:migrate` always rebuilds from a clean slate rather than growing
--- a chain of ALTERs. Re-seed afterward with `npm run db:seed`.
+-- This is a reset, not an incremental migration: it rebuilds from a clean slate rather
+-- than growing a chain of ALTERs. That was safe by default before this app had a real
+-- prod deployment with real signups behind it — it no longer is. backend/scripts/
+-- migrate.ts refuses to run this against a database that already has organizations in
+-- it unless CONFIRM_RESET=yes is set explicitly; a genuinely additive change against a
+-- live database (like the one that added the `plan` column below) should be applied by
+-- hand as its own ALTER, not by loosening that guard. Re-seed afterward with
+-- `npm run db:seed`.
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 
@@ -66,7 +71,11 @@ CREATE TABLE IF NOT EXISTS organizations (
   id              serial PRIMARY KEY,
   slug            text NOT NULL UNIQUE,
   name            text NOT NULL,
-  created_at      timestamptz NOT NULL
+  created_at      timestamptz NOT NULL,
+  -- 'starter' | 'business' | 'enterprise' — see backend/src/db/repo.ts's PLAN_LIMITS for
+  -- what each actually caps. No billing integration exists yet, so moving an org off
+  -- 'starter' is a manual UPDATE today, not something any endpoint does automatically.
+  plan            text NOT NULL DEFAULT 'starter'
 );
 
 -- Real multi-admin RBAC: which accounts can act on which org, and how much they can do.

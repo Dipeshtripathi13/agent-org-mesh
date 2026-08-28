@@ -445,6 +445,16 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
     return { error: 'name, title, and team are required' };
   }
 
+  // Enforced here, not just claimed on the pricing page — an org already at its plan's
+  // seat limit can't add another person until it upgrades. No self-serve upgrade path
+  // exists yet (see repo.ts's OrgPlan comment), so today that means talking to us.
+  const org = await repo.getOrganization(orgId);
+  const limit = repo.PLAN_LIMITS[org.plan];
+  if (org.peopleCount >= limit) {
+    reply.code(402);
+    return { error: `This organization is on the ${org.plan} plan (${limit} people max) and is already at that limit. Upgrade to add more.` };
+  }
+
   let accountId: number | null = null;
   let tempPassword: string | null = null;
   let linkedExistingAccount = false;

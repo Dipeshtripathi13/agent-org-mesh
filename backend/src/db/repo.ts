@@ -41,11 +41,21 @@ export interface OrgAdmin {
   addedAt: string;
 }
 
+// No real billing integration exists yet (see CLAUDE.md's "Where to go next") — an org's
+// plan is a plain column, starting everyone on 'starter' at signup. Until Stripe lands,
+// moving an org to 'business'/'enterprise' is a manual operational step (an admin runs
+// an UPDATE after collecting payment outside the app), not something any endpoint here
+// does automatically. PLAN_LIMITS is what actually gets enforced regardless of how the
+// column got set.
+export type OrgPlan = 'starter' | 'business' | 'enterprise';
+export const PLAN_LIMITS: Record<OrgPlan, number> = { starter: 10, business: 200, enterprise: Infinity };
+
 export interface Organization {
   id: number;
   slug: string;
   name: string;
   createdAt: string;
+  plan: OrgPlan;
   peopleCount: number;
 }
 
@@ -189,6 +199,7 @@ function toOrganization(row: any): Organization {
     slug: row.slug,
     name: row.name,
     createdAt: iso(row.created_at),
+    plan: row.plan as OrgPlan,
     peopleCount: Number(row.people_count ?? 0),
   };
 }
