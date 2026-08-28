@@ -27,11 +27,12 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const [meId, setMeId] = useState(DEFAULT_ME);
   const [people, setPeople] = useState<Person[]>([]);
 
-  // Unfiltered directory, not the admin-scoped api.organizations() — this switcher is
-  // intentionally open regardless of whether an account happens to be logged in
-  // elsewhere in the app (CLAUDE.md rule 7). Using the admin-scoped list here was a real
-  // bug: it silently emptied this switcher whenever no session existed.
-  useEffect(() => { api.orgDirectory().then((d) => setOrganizations(d.organizations)); }, []);
+  // Not the admin-scoped api.organizations() — this switcher still works logged out
+  // (CLAUDE.md rule 7), which that endpoint never has. But orgDirectory() itself is no
+  // longer "every org on the platform, unfiltered" the way it originally was: it's the
+  // public demo org plus whatever real orgs the current session is actually connected
+  // to — see listOrganizationsForIdentitySwitcher's own comment for why that changed.
+  useEffect(() => { api.orgDirectory().then((d) => setOrganizations(d.organizations)); }, [account]);
 
   // Logging in as yourself (a real account linked to at least one org-chart identity)
   // moves "My agent" to *you* by default, instead of the anonymous demo default above —

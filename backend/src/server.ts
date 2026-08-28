@@ -294,12 +294,17 @@ app.get('/api/organizations', async (req) => {
   return { organizations: accountId == null ? [] : await repo.listOrganizationsForAccount(accountId) };
 });
 
-/** Every org, unfiltered — feeds "My agent"'s identity switcher (MeContext.tsx), which is
- *  intentionally open regardless of login (CLAUDE.md rule 7). Deliberately separate
- *  from the admin-scoped listing above rather than reusing it with a flag — the two have
- *  different authorization stories and shouldn't share a code path that could later grow
- *  a bug where one accidentally inherits the other's filtering (or lack of it). */
-app.get('/api/org-directory', async () => ({ organizations: await repo.listAllOrganizations() }));
+/** Feeds "My agent"'s identity switcher (MeContext.tsx) — the demo org plus whatever
+ *  real orgs the caller's own session is actually connected to (see
+ *  listOrganizationsForIdentitySwitcher's own comment for why this is no longer every
+ *  org, unfiltered). Deliberately separate from the admin-scoped listing above rather
+ *  than reusing it with a flag — the two have different authorization stories and
+ *  shouldn't share a code path that could later grow a bug where one accidentally
+ *  inherits the other's filtering. */
+app.get('/api/org-directory', async (req) => {
+  const accountId = await currentAccountId(req);
+  return { organizations: await repo.listOrganizationsForIdentitySwitcher(accountId) };
+});
 
 app.post('/api/organizations', async (req, reply) => {
   const accountId = await currentAccountId(req);

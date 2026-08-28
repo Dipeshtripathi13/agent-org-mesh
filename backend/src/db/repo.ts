@@ -245,19 +245,35 @@ export async function listOrganizationsForAccount(accountId: number): Promise<Or
   return rows.map(toOrganization);
 }
 
-/** Every organization, regardless of admin membership — deliberately NOT filtered the
- *  way listOrganizationsForAccount is. Used only to populate "My agent"'s identity
- *  switcher (frontend/src/lib/MeContext.tsx), which is intentionally open regardless of
- *  login (CLAUDE.md rule 7) — an org's name/slug/headcount is no more sensitive than the
- *  person-level data that panel already shows unauthenticated. Never use this for
- *  anything admin-scoped; that's what listOrganizationsForAccount is for. */
-export async function listAllOrganizations(): Promise<Organization[]> {
+/** Northbeam — the seeded, intentionally-public demo org (matches MeContext.tsx's
+ *  DEFAULT_ORG). Always included in the identity-switcher directory below regardless of
+ *  login, so the "try it without an account" demo experience keeps working exactly as
+ *  designed even after the fix this constant is part of. */
+const PUBLIC_DEMO_ORG_ID = 1;
+
+/** Every organization visible to "My agent"'s identity switcher (frontend/src/lib/
+ *  MeContext.tsx): the standing public demo org, always, plus whichever real
+ *  organizations the logged-in account actually has a connection to — as an admin or as
+ *  a linked person. Used to return every organization in the system, completely
+ *  unfiltered, on the reasoning that an org's name/slug/headcount was no more sensitive
+ *  than the person-level data that panel already showed unauthenticated. That reasoning
+ *  held while this was a closed dev/demo build with only seed data behind it — it
+ *  stopped holding the moment this went live on a real domain, where the same
+ *  unfiltered query let any anonymous visitor enumerate the name of every real
+ *  organization anyone had ever signed up, via one unauthenticated request. Scoped now
+ *  exactly like getPeopleForAccount/getOrgRolesForAccount — an account with no real
+ *  identity anywhere gets just the demo org back, never anyone else's private one. */
+export async function listOrganizationsForIdentitySwitcher(accountId: number | null): Promise<Organization[]> {
   const { rows } = await pool.query(
     `SELECT o.*, count(p.id)::int AS people_count
      FROM organizations o
      LEFT JOIN people p ON p.org_id = o.id
+     WHERE o.id = $1
+        OR o.id IN (SELECT org_id FROM org_admins WHERE account_id = $2)
+        OR o.id IN (SELECT org_id FROM people WHERE account_id = $2)
      GROUP BY o.id
      ORDER BY o.id`,
+    [PUBLIC_DEMO_ORG_ID, accountId],
   );
   return rows.map(toOrganization);
 }
