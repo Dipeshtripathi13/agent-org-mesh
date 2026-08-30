@@ -46,7 +46,11 @@ export type SurfaceKey =
   // Connect-and-validate live, ingestion not yet wired ('connectable' tier):
   | 'trello' | 'airtable' | 'monday' | 'figma' | 'discord'
   // Catalog-listed only — needs a platform-registered OAuth app first ('coming-soon' tier):
-  | 'microsoft365' | 'zoom' | 'dropbox';
+  | 'microsoft365' | 'zoom' | 'dropbox'
+  // Data-engineering pipeline/job status — real ingestion, same 'live' tier as the row above
+  // (docs/data-engineering-connectors research memo's Tier A: status/metadata, never a
+  // connector-composed query against real warehouse data):
+  | 'airflow' | 'dbt' | 'snowflake';
 
 /**
  * connected  — live and inside the freshness window

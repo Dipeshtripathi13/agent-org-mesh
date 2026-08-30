@@ -107,8 +107,9 @@ export interface ConnectorField {
   placeholder?: string;
   secret?: boolean;
   optional?: boolean;
+  multiline?: boolean;
 }
-export type ConnectorCategory = 'code' | 'docs' | 'project-mgmt' | 'support' | 'crm' | 'comms' | 'calendar' | 'storage' | 'design';
+export type ConnectorCategory = 'code' | 'docs' | 'project-mgmt' | 'support' | 'crm' | 'comms' | 'calendar' | 'storage' | 'design' | 'data-eng';
 export interface ConnectorDef {
   key: string;
   name: string;

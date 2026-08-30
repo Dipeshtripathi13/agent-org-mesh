@@ -22,6 +22,7 @@ function person(overrides: Partial<Person> = {}): Person {
       linear: 'outOfScope', notion: 'outOfScope', asana: 'outOfScope', gitlab: 'outOfScope', hubspot: 'outOfScope', zendesk: 'outOfScope',
       trello: 'outOfScope', airtable: 'outOfScope', monday: 'outOfScope', figma: 'outOfScope', discord: 'outOfScope',
       microsoft365: 'outOfScope', zoom: 'outOfScope', dropbox: 'outOfScope',
+      airflow: 'outOfScope', dbt: 'outOfScope', snowflake: 'outOfScope',
       'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope',
     },
     ...overrides,

@@ -382,6 +382,52 @@ end-to-end at the DB level: `DELETE /api/person/:id/connectors/:key` removes the
 `person_oauth_tokens` row and resets `people.surfaces[key]` back to `'absent'`, so the very
 next `gatherAll` stops treating that tool as a discovery candidate.
 
+**The catalog grows from 20 to 23 tools with a data-engineering category — Airflow, dbt
+Cloud, and Snowflake — following a dedicated research memo's own recommended sequencing,
+not built as an ad hoc addition.** The memo (published as an artifact, researched against
+each vendor's real docs before any code was written) drew one hard line: a *status*
+connector (did the pipeline run, did it pass) fits this project's existing shape exactly,
+but a connector that lets an agent compose and run its own SQL against a warehouse is a
+different, much riskier product — it would let the *connector* decide what data a
+requester ultimately sees, which is exactly the job `policy.ts`'s deterministic engine
+exists to keep out of an LLM's hands. All three new connectors are the first kind only:
+every query any of them runs is fixed, connector-authored, and reads metadata (DAG run
+state, job run status, `QUERY_HISTORY`/`TASK_HISTORY`), never a query built from a
+person's question or a read against real table contents. The ad hoc warehouse-query
+product the memo describes was deliberately *not* built — it needs its own explicit
+product sign-off and threat model, not a slot in this framework.
+
+Auth shape differs more between these three than any three tools added before them, each
+matching that vendor's own documented least-privilege guidance rather than one uniform
+pattern: Airflow uses HTTP Basic auth against a dedicated Viewer-role user (OSS/2.x's
+REST API — the memo's research found Airflow 3.x's short-lived JWTs and most managed
+offerings' token models don't hold as a long-lived stored credential the way this
+project's other connectors expect, so this targets self-hosted OSS/2.x specifically);
+dbt Cloud uses a Service Account Token scoped to Read-Only/Metadata permissions (dbt's own
+docs recommend this over a personal PAT for exactly this kind of integration); Snowflake
+uses RSA key-pair JWT auth, Snowflake's stated preference over passwords for service
+accounts. The Snowflake piece needed genuinely new code, not just a new client module:
+`snowflake.ts` builds and signs that JWT by hand with Node's own `crypto` module (RS256,
+the exact `iss`/`sub` claim format and SHA-256 public-key-fingerprint procedure from
+Snowflake's docs) — no JWT library dependency, same "no new dependency" convention
+`domain/auth.ts` already set for password/session hashing. Live-verified as far as a real
+account allows without one: the constructed JWT's RS256 signature was checked against its
+own public key and genuinely verifies (proving the encoding and signing are correct, not
+just "didn't throw"), and all three connectors reach their real APIs and fail cleanly on
+deliberately invalid credentials — zero 500s. A real successful connect-then-ask round
+trip remains unverified for the same honest reason every other new connector in this
+project does; update this note once a real Airflow/dbt Cloud/Snowflake account is
+available.
+
+Snowflake's private key is the first connector field that's genuinely multi-line (a PEM
+block, not a token) — `connectorCatalog.ts`'s `ConnectorField` gained a `multiline` flag,
+and `ConnectorsPanel.tsx` renders a `<textarea>` for it instead of the usual single-line
+input, the first real extension to the generic field-rendering system since it was built.
+A shared `pipelineDigest.ts` formats "did it run, did it pass" for all three — the memo's
+own recommendation to build this once rather than three near-duplicate formatters, since a
+pipeline run reads differently from "issues assigned to you" (a pass/fail count first,
+failures listed after, rather than a bare list of every run).
+
 **The same connector catalog also reaches a personal (no-org) account — self-set, no
 admin, mirroring how `account_main_agent` already parallels `org_main_agent`.** Found
 live, asked for directly, in the same spirit as the personal-main-agent work above: a

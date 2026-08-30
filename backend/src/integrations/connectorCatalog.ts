@@ -24,7 +24,7 @@ import type { SurfaceKey } from '../domain/types.js';
  *                     — never a connect button that would fail.
  */
 export type ConnectorCategory =
-  | 'code' | 'docs' | 'project-mgmt' | 'support' | 'crm' | 'comms' | 'calendar' | 'storage' | 'design';
+  | 'code' | 'docs' | 'project-mgmt' | 'support' | 'crm' | 'comms' | 'calendar' | 'storage' | 'design' | 'data-eng';
 
 export interface ConnectorField {
   key: string;
@@ -36,6 +36,10 @@ export interface ConnectorField {
   /** May be submitted blank — e.g. GitLab's self-hosted instance URL, which defaults to
    *  gitlab.com. Every other field is required. */
   optional?: boolean;
+  /** Rendered as a textarea instead of a single-line input — for a credential that
+   *  genuinely spans multiple lines (Snowflake's PEM private key) rather than a token or
+   *  password, which every other field so far has been. */
+  multiline?: boolean;
 }
 
 export interface ConnectorDef {
@@ -116,6 +120,34 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     key: 'calendar', name: 'Google Calendar', category: 'calendar', authType: 'oauth-google', status: 'live',
     fields: [],
     helpText: 'Uses the same Google sign-in as Gmail — connect Gmail in this panel to enable Calendar too.',
+  },
+  {
+    key: 'airflow', name: 'Airflow', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    fields: [
+      { key: 'siteUrl', label: 'Webserver URL', placeholder: 'https://airflow.yourcompany.com' },
+      { key: 'username', label: 'Username' },
+      { key: 'password', label: 'Password', secret: true },
+    ],
+    helpText: 'A dedicated user with the built-in Viewer role — Airflow → Security → List Users → Add a user, role: Viewer.',
+  },
+  {
+    key: 'dbt', name: 'dbt Cloud', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    fields: [
+      { key: 'token', label: 'Service account token', secret: true },
+      { key: 'accountId', label: 'Account ID' },
+      { key: 'siteUrl', label: 'Host (only if not cloud.getdbt.com)', placeholder: 'https://cloud.getdbt.com', optional: true },
+    ],
+    helpText: 'dbt Cloud → Account settings → Service tokens → create one with Read-Only or Metadata-only permissions.',
+  },
+  {
+    key: 'snowflake', name: 'Snowflake', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    fields: [
+      { key: 'account', label: 'Account identifier', placeholder: 'myorg-myaccount' },
+      { key: 'username', label: 'Username' },
+      { key: 'privateKey', label: 'Private key (PEM)', secret: true, multiline: true },
+      { key: 'warehouse', label: 'Warehouse', optional: true },
+    ],
+    helpText: 'Register a public key on this user (ALTER USER ... SET RSA_PUBLIC_KEY=...) and paste the matching private key — Snowflake\'s own recommended auth for service accounts, never a password.',
   },
 
   // ---- connectable: real connect+validate, ingestion not yet wired ----

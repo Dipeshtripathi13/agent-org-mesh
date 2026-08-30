@@ -155,6 +155,27 @@ export const SURFACES: Surface[] = [
     doesNotRead: 'File contents are never stored',
   },
   {
+    key: 'airflow',
+    name: 'Airflow',
+    feedsTier: 'T1',
+    reads: 'Recent DAG run status and duration, across DAGs the connection can see',
+    doesNotRead: 'DAG source code, task logs, or XCom payload contents',
+  },
+  {
+    key: 'dbt',
+    name: 'dbt Cloud',
+    feedsTier: 'T1',
+    reads: 'Recent job run status and test pass/fail counts',
+    doesNotRead: 'Model SQL, compiled queries, or table contents',
+  },
+  {
+    key: 'snowflake',
+    name: 'Snowflake',
+    feedsTier: 'T1',
+    reads: 'Recent query and task run history — did it run, did it succeed',
+    doesNotRead: 'Query results or table contents — never executes a query of its own',
+  },
+  {
     key: 'claude-code',
     name: 'Claude Code',
     feedsTier: 'T2',
@@ -263,7 +284,7 @@ export const PEOPLE: Person[] = RAW.map(([id, name, title, managerId, team, code
   // who hasn't connected them, not 'outOfScope' (which means "doesn't apply to this
   // role," untrue here — any of these genuinely could apply, none happen to be wired up
   // for this fictional roster).
-  (['linear', 'notion', 'asana', 'gitlab', 'hubspot', 'zendesk', 'trello', 'airtable', 'monday', 'figma', 'discord', 'microsoft365', 'zoom', 'dropbox'] as const)
+  (['linear', 'notion', 'asana', 'gitlab', 'hubspot', 'zendesk', 'trello', 'airtable', 'monday', 'figma', 'discord', 'microsoft365', 'zoom', 'dropbox', 'airflow', 'dbt', 'snowflake'] as const)
     .forEach((key) => { surfaces[key] = 'absent'; });
   return { id, name, title, team, managerId, agentDeployed: !NO_AGENT.has(id), surfaces };
 });

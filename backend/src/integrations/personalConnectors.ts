@@ -32,6 +32,18 @@ import { saveAirtableAccountConnection, getAirtableAccountStatus, disconnectAirt
 import { saveMondayAccountConnection, getMondayAccountStatus, disconnectMondayAccount } from './monday.js';
 import { saveFigmaAccountConnection, getFigmaAccountStatus, disconnectFigmaAccount } from './figma.js';
 import { saveDiscordAccountConnection, getDiscordAccountStatus, disconnectDiscordAccount } from './discord.js';
+import {
+  saveAirflowAccountConnection, getAirflowAccountStatus, getAirflowAccountConnection, disconnectAirflowAccount,
+  getRecentAirflowActivity, formatAirflowDigest,
+} from './airflow.js';
+import {
+  saveDbtAccountConnection, getDbtAccountStatus, getDbtAccountConnection, disconnectDbtAccount,
+  getRecentDbtActivity, formatDbtDigest,
+} from './dbtCloud.js';
+import {
+  saveSnowflakeAccountConnection, getSnowflakeAccountStatus, getSnowflakeAccountConnection, disconnectSnowflakeAccount,
+  getRecentSnowflakeActivity, formatSnowflakeDigest,
+} from './snowflake.js';
 
 /**
  * The personal (no-org) counterpart to server.ts's CONNECT_HANDLERS/DISCONNECT_HANDLERS/
@@ -60,6 +72,9 @@ export const ACCOUNT_CONNECT_HANDLERS: Partial<Record<SurfaceKey, AccountConnect
   monday: (id, f) => saveMondayAccountConnection(id, f.token),
   figma: (id, f) => saveFigmaAccountConnection(id, f.token),
   discord: (id, f) => saveDiscordAccountConnection(id, f.token),
+  airflow: (id, f) => saveAirflowAccountConnection(id, f.siteUrl, f.username, f.password),
+  dbt: (id, f) => saveDbtAccountConnection(id, f.token, f.accountId, f.siteUrl?.trim() || null),
+  snowflake: (id, f) => saveSnowflakeAccountConnection(id, f.account, f.username, f.privateKey, f.warehouse?.trim() || null),
 };
 
 export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId: number) => Promise<void>>> = {
@@ -75,6 +90,9 @@ export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId:
   monday: disconnectMondayAccount,
   figma: disconnectFigmaAccount,
   discord: disconnectDiscordAccount,
+  airflow: disconnectAirflowAccount,
+  dbt: disconnectDbtAccount,
+  snowflake: disconnectSnowflakeAccount,
 };
 
 export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHandler>> = {
@@ -90,9 +108,12 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
   monday: getMondayAccountStatus,
   figma: getFigmaAccountStatus,
   discord: getDiscordAccountStatus,
+  airflow: getAirflowAccountStatus,
+  dbt: getDbtAccountStatus,
+  snowflake: getSnowflakeAccountStatus,
 };
 
-/** The 7 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
+/** The 10 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
  *  version of resourceProviders.ts's PROVIDERS array. `ask-personal` in server.ts narrows
  *  this to connected tools, runs it through the same `selectRelevantSurfaces` router the
  *  org path uses, then feeds whichever come back relevant into `converse`'s `sections` —
@@ -159,6 +180,30 @@ export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
       const conn = await getZendeskAccountConnection(id);
       if (!conn) return null;
       return formatZendeskDigest(await getRecentZendeskActivity(conn.subdomain, conn.email, conn.apiToken, since));
+    },
+  },
+  {
+    surfaceKey: 'airflow', label: 'Airflow',
+    fetchDigest: async (id, since) => {
+      const conn = await getAirflowAccountConnection(id);
+      if (!conn) return null;
+      return formatAirflowDigest(await getRecentAirflowActivity(conn.siteUrl, conn.username, conn.password, since));
+    },
+  },
+  {
+    surfaceKey: 'dbt', label: 'dbt Cloud',
+    fetchDigest: async (id, since) => {
+      const conn = await getDbtAccountConnection(id);
+      if (!conn) return null;
+      return formatDbtDigest(await getRecentDbtActivity(conn.token, conn.accountId, conn.host, since));
+    },
+  },
+  {
+    surfaceKey: 'snowflake', label: 'Snowflake',
+    fetchDigest: async (id, since) => {
+      const conn = await getSnowflakeAccountConnection(id);
+      if (!conn) return null;
+      return formatSnowflakeDigest(await getRecentSnowflakeActivity(conn.account, conn.username, conn.privateKey, conn.warehouse, since));
     },
   },
 ];

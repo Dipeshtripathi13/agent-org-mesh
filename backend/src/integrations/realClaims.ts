@@ -15,6 +15,9 @@ import { getGitlabConnection, formatGitlabDigest, getRecentGitlabActivity } from
 import { getHubspotConnection, formatHubspotDigest, getRecentHubspotActivity } from './hubspot.js';
 import { getZendeskConnection, formatZendeskDigest, getRecentZendeskActivity } from './zendesk.js';
 import { formatCalendarDigest, getRecentCalendarActivity } from './googleCalendar.js';
+import { getAirflowConnection, formatAirflowDigest, getRecentAirflowActivity } from './airflow.js';
+import { getDbtConnection, formatDbtDigest, getRecentDbtActivity } from './dbtCloud.js';
+import { getSnowflakeConnection, formatSnowflakeDigest, getRecentSnowflakeActivity } from './snowflake.js';
 
 /**
  * This is the piece that makes the org mesh's manager-facing "Ask" actually real for one
@@ -459,5 +462,65 @@ export async function ingestCalendarClaim(orgId: number, personId: number, since
     orgId, personId, personName: person.name, surfaceKey: 'calendar', label: 'Google Calendar', kind: 'calendar activity',
     tier: 'T2', externalRef: 'google-calendar-api', digest,
     deterministicText: `Calendar activity: ${activity.length} event${activity.length === 1 ? '' : 's'}${activity[0] ? ` — most recently: "${activity[0].summary}".` : '.'}`,
+  });
+}
+
+function pipelineDeterministicText(label: string, activity: { name: string; status: string }[]): string {
+  const failed = activity.filter((a) => a.status === 'failed');
+  return `${label} activity: ${activity.length} run${activity.length === 1 ? '' : 's'}, ${failed.length} failed`
+    + (failed[0] ? ` — most recently: "${failed[0].name}".` : '.');
+}
+
+/** No-op if this person doesn't have a real, connected Airflow instance — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real Airflow webserver (see airflow.ts's
+ *  module comment). */
+export async function ingestAirflowClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.airflow !== 'connected') return;
+  const conn = await getAirflowConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentAirflowActivity(conn.siteUrl, conn.username, conn.password, since);
+  const digest = formatAirflowDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'airflow', label: 'Airflow', kind: 'DAG run activity',
+    tier: 'T1', externalRef: 'airflow-rest-api', digest,
+    deterministicText: pipelineDeterministicText('Airflow', activity),
+  });
+}
+
+/** No-op if this person doesn't have a real, connected dbt Cloud token — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real account (see dbtCloud.ts's module
+ *  comment). */
+export async function ingestDbtClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.dbt !== 'connected') return;
+  const conn = await getDbtConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentDbtActivity(conn.token, conn.accountId, conn.host, since);
+  const digest = formatDbtDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'dbt', label: 'dbt Cloud', kind: 'job run activity',
+    tier: 'T1', externalRef: 'dbt-cloud-admin-api', digest,
+    deterministicText: pipelineDeterministicText('dbt Cloud', activity),
+  });
+}
+
+/** No-op if this person doesn't have a real, connected Snowflake key pair — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real account (see snowflake.ts's module
+ *  comment). */
+export async function ingestSnowflakeClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.snowflake !== 'connected') return;
+  const conn = await getSnowflakeConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentSnowflakeActivity(conn.account, conn.username, conn.privateKey, conn.warehouse, since);
+  const digest = formatSnowflakeDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'snowflake', label: 'Snowflake', kind: 'query activity',
+    tier: 'T1', externalRef: 'snowflake-sql-api', digest,
+    deterministicText: pipelineDeterministicText('Snowflake', activity),
   });
 }

@@ -56,6 +56,9 @@ import { saveAirtableConnection, getAirtableStatus, disconnectAirtable } from '.
 import { saveMondayConnection, getMondayStatus, disconnectMonday } from './integrations/monday.js';
 import { saveFigmaConnection, getFigmaStatus, disconnectFigma } from './integrations/figma.js';
 import { saveDiscordConnection, getDiscordStatus, disconnectDiscord } from './integrations/discord.js';
+import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './integrations/airflow.js';
+import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
+import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
 import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -1526,6 +1529,9 @@ const CONNECT_HANDLERS: Partial<Record<SurfaceKey, ConnectHandler>> = {
   monday: (id, f) => saveMondayConnection(id, f.token),
   figma: (id, f) => saveFigmaConnection(id, f.token),
   discord: (id, f) => saveDiscordConnection(id, f.token),
+  airflow: (id, f) => saveAirflowConnection(id, f.siteUrl, f.username, f.password),
+  dbt: (id, f) => saveDbtConnection(id, f.token, f.accountId, f.siteUrl?.trim() || null),
+  snowflake: (id, f) => saveSnowflakeConnection(id, f.account, f.username, f.privateKey, f.warehouse?.trim() || null),
 };
 
 const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Promise<void>>> = {
@@ -1541,6 +1547,9 @@ const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Prom
   monday: disconnectMonday,
   figma: disconnectFigma,
   discord: disconnectDiscord,
+  airflow: disconnectAirflow,
+  dbt: disconnectDbt,
+  snowflake: disconnectSnowflake,
 };
 
 const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
@@ -1556,6 +1565,9 @@ const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
   monday: getMondayStatus,
   figma: getFigmaStatus,
   discord: getDiscordStatus,
+  airflow: getAirflowStatus,
+  dbt: getDbtStatus,
+  snowflake: getSnowflakeStatus,
 };
 
 /** No auth needed — same posture as GET /api/runtimes: this is catalog metadata, not

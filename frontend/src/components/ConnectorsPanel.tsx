@@ -4,6 +4,7 @@ import { api, type ConnectorDef } from '../lib/api';
 const CATEGORY_LABEL: Record<string, string> = {
   code: 'Code', docs: 'Docs', 'project-mgmt': 'Project management', support: 'Support',
   crm: 'CRM', comms: 'Comms', calendar: 'Calendar', storage: 'Storage', design: 'Design',
+  'data-eng': 'Data engineering',
 };
 
 // GitHub, Jira, and Calendar already have their own dedicated sections elsewhere on this
@@ -156,14 +157,25 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 {openDef.fields.map((f) => (
                   <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
                     {f.label}{f.optional ? ' (optional)' : ''}
-                    <input
-                      type={f.secret ? 'password' : 'text'}
-                      autoComplete="off"
-                      placeholder={f.placeholder}
-                      value={formValues[f.key] ?? ''}
-                      onChange={(e) => setFormValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                      style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
-                    />
+                    {f.multiline ? (
+                      <textarea
+                        autoComplete="off"
+                        placeholder={f.placeholder}
+                        value={formValues[f.key] ?? ''}
+                        onChange={(e) => setFormValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                        rows={6}
+                        style={{ border: '1px solid var(--rule2)', borderRadius: 2, padding: '6px 8px', fontSize: 12, minWidth: 260, fontFamily: 'var(--mono)', resize: 'vertical' }}
+                      />
+                    ) : (
+                      <input
+                        type={f.secret ? 'password' : 'text'}
+                        autoComplete="off"
+                        placeholder={f.placeholder}
+                        value={formValues[f.key] ?? ''}
+                        onChange={(e) => setFormValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                        style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                      />
+                    )}
                   </label>
                 ))}
               </div>
