@@ -1,0 +1,164 @@
+import type { SurfaceKey } from '../domain/types.js';
+import {
+  saveLinearAccountConnection, getLinearAccountStatus, getLinearAccountConnection, disconnectLinearAccount,
+  getRecentLinearActivity, formatLinearDigest,
+} from './linear.js';
+import {
+  saveNotionAccountConnection, getNotionAccountStatus, getNotionAccountConnection, disconnectNotionAccount,
+  getRecentNotionActivity, formatNotionDigest,
+} from './notion.js';
+import {
+  saveConfluenceAccountConnection, getConfluenceAccountStatus, getConfluenceAccountConnection, disconnectConfluenceAccount,
+  getRecentConfluenceActivity, formatConfluenceDigest,
+} from './confluence.js';
+import {
+  saveAsanaAccountConnection, getAsanaAccountStatus, getAsanaAccountConnection, disconnectAsanaAccount,
+  getRecentAsanaActivity, formatAsanaDigest,
+} from './asana.js';
+import {
+  saveGitlabAccountConnection, getGitlabAccountStatus, getGitlabAccountConnection, disconnectGitlabAccount,
+  getRecentGitlabActivity, formatGitlabDigest,
+} from './gitlab.js';
+import {
+  saveHubspotAccountConnection, getHubspotAccountStatus, getHubspotAccountConnection, disconnectHubspotAccount,
+  getRecentHubspotActivity, formatHubspotDigest,
+} from './hubspot.js';
+import {
+  saveZendeskAccountConnection, getZendeskAccountStatus, getZendeskAccountConnection, disconnectZendeskAccount,
+  getRecentZendeskActivity, formatZendeskDigest,
+} from './zendesk.js';
+import { saveTrelloAccountConnection, getTrelloAccountStatus, disconnectTrelloAccount } from './trello.js';
+import { saveAirtableAccountConnection, getAirtableAccountStatus, disconnectAirtableAccount } from './airtable.js';
+import { saveMondayAccountConnection, getMondayAccountStatus, disconnectMondayAccount } from './monday.js';
+import { saveFigmaAccountConnection, getFigmaAccountStatus, disconnectFigmaAccount } from './figma.js';
+import { saveDiscordAccountConnection, getDiscordAccountStatus, disconnectDiscordAccount } from './discord.js';
+
+/**
+ * The personal (no-org) counterpart to server.ts's CONNECT_HANDLERS/DISCONNECT_HANDLERS/
+ * STATUS_HANDLERS + resourceProviders.ts's PROVIDERS/gatherAll — same generic connector
+ * catalog (connectorCatalog.ts), same tools, just account-keyed instead of person-keyed
+ * since a personal account has no `people` row to attach a surface/claim to at all. GitHub/
+ * Jira/Gmail are deliberately excluded here, same as ConnectorsPanel.tsx's own
+ * HANDLED_ELSEWHERE — they stay org-chart-only by design (see CLAUDE.md's personal-main-
+ * agent paragraph), and Google Calendar rides on Gmail's OAuth token, which personal
+ * accounts don't have, so it's excluded from the personal panel too.
+ */
+
+type AccountConnectHandler = (accountId: number, fields: Record<string, string>) => Promise<{ ok: true; label: string } | { ok: false; error: string }>;
+type AccountStatusHandler = (accountId: number) => Promise<{ connected: boolean; label: string | null }>;
+
+export const ACCOUNT_CONNECT_HANDLERS: Partial<Record<SurfaceKey, AccountConnectHandler>> = {
+  linear: (id, f) => saveLinearAccountConnection(id, f.apiKey),
+  notion: (id, f) => saveNotionAccountConnection(id, f.token),
+  confluence: (id, f) => saveConfluenceAccountConnection(id, f.siteUrl, f.email, f.apiToken),
+  asana: (id, f) => saveAsanaAccountConnection(id, f.token),
+  gitlab: (id, f) => saveGitlabAccountConnection(id, f.token, f.siteUrl?.trim() || null),
+  hubspot: (id, f) => saveHubspotAccountConnection(id, f.token),
+  zendesk: (id, f) => saveZendeskAccountConnection(id, f.siteUrl, f.email, f.apiToken),
+  trello: (id, f) => saveTrelloAccountConnection(id, f.apiKey, f.token),
+  airtable: (id, f) => saveAirtableAccountConnection(id, f.token),
+  monday: (id, f) => saveMondayAccountConnection(id, f.token),
+  figma: (id, f) => saveFigmaAccountConnection(id, f.token),
+  discord: (id, f) => saveDiscordAccountConnection(id, f.token),
+};
+
+export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId: number) => Promise<void>>> = {
+  linear: disconnectLinearAccount,
+  notion: disconnectNotionAccount,
+  confluence: disconnectConfluenceAccount,
+  asana: disconnectAsanaAccount,
+  gitlab: disconnectGitlabAccount,
+  hubspot: disconnectHubspotAccount,
+  zendesk: disconnectZendeskAccount,
+  trello: disconnectTrelloAccount,
+  airtable: disconnectAirtableAccount,
+  monday: disconnectMondayAccount,
+  figma: disconnectFigmaAccount,
+  discord: disconnectDiscordAccount,
+};
+
+export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHandler>> = {
+  linear: getLinearAccountStatus,
+  notion: getNotionAccountStatus,
+  confluence: async (id) => { const s = await getConfluenceAccountStatus(id); return { connected: s.connected, label: s.email }; },
+  asana: getAsanaAccountStatus,
+  gitlab: getGitlabAccountStatus,
+  hubspot: getHubspotAccountStatus,
+  zendesk: async (id) => { const s = await getZendeskAccountStatus(id); return { connected: s.connected, label: s.email }; },
+  trello: getTrelloAccountStatus,
+  airtable: getAirtableAccountStatus,
+  monday: getMondayAccountStatus,
+  figma: getFigmaAccountStatus,
+  discord: getDiscordAccountStatus,
+};
+
+/** The 7 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
+ *  version of resourceProviders.ts's PROVIDERS array. `ask-personal` in server.ts narrows
+ *  this to connected tools, runs it through the same `selectRelevantSurfaces` router the
+ *  org path uses, then feeds whichever come back relevant into `converse`'s `sections` —
+ *  never persisted anywhere but that turn's own answer (and, for the label only,
+ *  `consulted_sources` on the personal_asks row itself). */
+export interface AccountDigestProvider {
+  surfaceKey: SurfaceKey;
+  label: string;
+  fetchDigest(accountId: number, since: Date): Promise<string | null>;
+}
+
+export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
+  {
+    surfaceKey: 'linear', label: 'Linear',
+    fetchDigest: async (id, since) => {
+      const conn = await getLinearAccountConnection(id);
+      if (!conn) return null;
+      return formatLinearDigest(await getRecentLinearActivity(conn.accessToken, since));
+    },
+  },
+  {
+    surfaceKey: 'notion', label: 'Notion',
+    fetchDigest: async (id, since) => {
+      const conn = await getNotionAccountConnection(id);
+      if (!conn) return null;
+      return formatNotionDigest(await getRecentNotionActivity(conn.accessToken, since));
+    },
+  },
+  {
+    surfaceKey: 'confluence', label: 'Confluence',
+    fetchDigest: async (id, since) => {
+      const conn = await getConfluenceAccountConnection(id);
+      if (!conn) return null;
+      return formatConfluenceDigest(await getRecentConfluenceActivity(conn.siteUrl, conn.email, conn.apiToken, since));
+    },
+  },
+  {
+    surfaceKey: 'asana', label: 'Asana',
+    fetchDigest: async (id, since) => {
+      const conn = await getAsanaAccountConnection(id);
+      if (!conn) return null;
+      return formatAsanaDigest(await getRecentAsanaActivity(conn.accessToken, since));
+    },
+  },
+  {
+    surfaceKey: 'gitlab', label: 'GitLab',
+    fetchDigest: async (id, since) => {
+      const conn = await getGitlabAccountConnection(id);
+      if (!conn) return null;
+      return formatGitlabDigest(await getRecentGitlabActivity(conn.accessToken, conn.siteUrl, since));
+    },
+  },
+  {
+    surfaceKey: 'hubspot', label: 'HubSpot',
+    fetchDigest: async (id, since) => {
+      const conn = await getHubspotAccountConnection(id);
+      if (!conn) return null;
+      return formatHubspotDigest(await getRecentHubspotActivity(conn.accessToken, since));
+    },
+  },
+  {
+    surfaceKey: 'zendesk', label: 'Zendesk',
+    fetchDigest: async (id, since) => {
+      const conn = await getZendeskAccountConnection(id);
+      if (!conn) return null;
+      return formatZendeskDigest(await getRecentZendeskActivity(conn.subdomain, conn.email, conn.apiToken, since));
+    },
+  },
+];

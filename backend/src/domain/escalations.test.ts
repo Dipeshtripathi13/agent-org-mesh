@@ -17,7 +17,13 @@ function person(overrides: Partial<Person> = {}): Person {
   return {
     id: 900, name: 'Test Person', title: 'Engineer', team: 'Payments',
     managerId: null, agentDeployed: true,
-    surfaces: { github: 'connected', jira: 'connected', salesforce: 'outOfScope', calendar: 'connected', slack: 'connected', confluence: 'connected', 'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope' },
+    surfaces: {
+      github: 'connected', jira: 'connected', salesforce: 'outOfScope', calendar: 'connected', slack: 'connected', confluence: 'connected',
+      linear: 'outOfScope', notion: 'outOfScope', asana: 'outOfScope', gitlab: 'outOfScope', hubspot: 'outOfScope', zendesk: 'outOfScope',
+      trello: 'outOfScope', airtable: 'outOfScope', monday: 'outOfScope', figma: 'outOfScope', discord: 'outOfScope',
+      microsoft365: 'outOfScope', zoom: 'outOfScope', dropbox: 'outOfScope',
+      'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope',
+    },
     ...overrides,
   };
 }

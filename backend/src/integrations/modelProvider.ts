@@ -37,6 +37,17 @@ export interface ModelProvider {
    *  Self-role chat) ever passes this; cross-person Ask never does. */
   synthesize(personName: string, question: string, sections: ActivitySection[], priorTurns?: ConversationTurn[], credentials?: ProviderCredentials): Promise<string>;
   writeClaim(personName: string, digest: string, credentials?: ProviderCredentials): Promise<string>;
+  /** A plain, ungrounded conversation — this is the personal main agent's "Ask yourself"
+   *  for an account with no organization. Deliberately a separate method from `synthesize`
+   *  rather than "synthesize with an empty sections array": that method's whole contract is
+   *  "never invent beyond the real data given," enforced by throwing when there's none —
+   *  correct there, wrong here, where an open conversation with nothing to ground it is a
+   *  valid, common case. `sections`, when passed, is real digest data from whichever of the
+   *  account's own connected tools (connectorCatalog.ts) the router judged relevant to this
+   *  question — enriches the conversation the same way `synthesize`'s sections do, but
+   *  without that method's hard "answer only from this" constraint, since a personal chat
+   *  with nothing connected — or nothing relevant this turn — should still just answer. */
+  converse(personName: string, question: string, priorTurns?: ConversationTurn[], credentials?: ProviderCredentials, sections?: ActivitySection[]): Promise<string>;
 }
 
 export interface ActivitySection {

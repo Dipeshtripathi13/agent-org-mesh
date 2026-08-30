@@ -39,7 +39,14 @@ export type RequesterRole = (typeof ROLES)[number];
 
 /* ---------- surfaces ---------- */
 
-export type SurfaceKey = 'github' | 'jira' | 'salesforce' | 'calendar' | 'slack' | 'confluence' | 'claude-code' | 'codex' | 'gemini-cli';
+export type SurfaceKey =
+  | 'github' | 'jira' | 'salesforce' | 'calendar' | 'slack' | 'confluence' | 'claude-code' | 'codex' | 'gemini-cli'
+  // Real, live-verified ingestion (connectorCatalog.ts's 'live' tier):
+  | 'linear' | 'notion' | 'asana' | 'gitlab' | 'hubspot' | 'zendesk'
+  // Connect-and-validate live, ingestion not yet wired ('connectable' tier):
+  | 'trello' | 'airtable' | 'monday' | 'figma' | 'discord'
+  // Catalog-listed only — needs a platform-registered OAuth app first ('coming-soon' tier):
+  | 'microsoft365' | 'zoom' | 'dropbox';
 
 /**
  * connected  — live and inside the freshness window
@@ -120,6 +127,17 @@ export interface PersonRuntime {
 export interface OrgMainAgent {
   runtimeKey: string;
   scope: RuntimeScope;
+  addedAt: string;
+  apiKeyEncrypted: string | null;
+  baseUrl: string | null;
+  model: string | null;
+}
+
+/** The personal counterpart to OrgMainAgent, for an account connected to no organization
+ *  at all — set by the account itself, not an admin. Same shape minus `scope`: there's no
+ *  IT/Security approval workflow for your own individual credential. */
+export interface AccountMainAgent {
+  runtimeKey: string;
   addedAt: string;
   apiKeyEncrypted: string | null;
   baseUrl: string | null;

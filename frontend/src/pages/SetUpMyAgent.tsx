@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   api, INGEST_SOURCES,
-  type AgentRuntime, type IngestSource, type IngestToken, type OrgMainAgent, type PersonRuntime, type RuntimeScope,
+  type AccountMainAgent, type AgentRuntime, type IngestSource, type IngestToken, type OrgMainAgent, type PersonRuntime, type RuntimeScope,
 } from '../lib/api';
+import { ConnectorsPanel } from '../components/ConnectorsPanel';
+import { CredentialsFields } from '../components/primitives';
+import { useAuth } from '../lib/AuthContext';
 import { useMe } from '../lib/MeContext';
 
 const SCOPE_LABEL: Record<RuntimeScope, string> = {
@@ -42,7 +45,169 @@ function ScopePill({ scope }: { scope: RuntimeScope }) {
   );
 }
 
+/** The personal counterpart to OrgSetup.tsx's OrgMainAgentPanel — always editable (it's
+ *  your own credential, no admin/owner gate to check), no scope/pending-approval workflow
+ *  (no IT/Security gate makes sense for an individual's own key). Mirrors that component's
+ *  shape closely enough to share CredentialsFields; the runtime picker and submit button
+ *  stay separately written since the two forms diverge on the scope UI. */
+function PersonalMainAgentPanel() {
+  const [catalog, setCatalog] = useState<AgentRuntime[]>([]);
+  const [main, setMain] = useState<AccountMainAgent | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [formRuntime, setFormRuntime] = useState('');
+  const [useOwnCredentials, setUseOwnCredentials] = useState(false);
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formBaseUrl, setFormBaseUrl] = useState('');
+  const [formModel, setFormModel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => api.accountMainAgent().then((d) => { setCatalog(d.catalog); setMain(d.registered); });
+  useEffect(() => { void load(); }, []);
+
+  const byKey = new Map(catalog.map((r) => [r.key, r]));
+  const mainOptions = catalog.filter((r) => r.mainEligible && r.apiFamily !== 'unsupported' && !r.blocked);
+  const showForm = !main || editing;
+  const effectiveRuntime = formRuntime || main?.runtimeKey || mainOptions[0]?.key || '';
+  const formEntry = byKey.get(effectiveRuntime) ?? null;
+  const supportsBaseUrl = formEntry?.apiFamily === 'openai-compatible';
+
+  const openEdit = () => {
+    setFormRuntime(main?.runtimeKey ?? mainOptions[0]?.key ?? '');
+    setUseOwnCredentials(!!(main?.hasCustomApiKey || main?.baseUrl || main?.model));
+    setFormApiKey('');
+    setFormBaseUrl(main?.baseUrl ?? '');
+    setFormModel(main?.model ?? '');
+    setEditing(true);
+  };
+  const submit = async () => {
+    if (!effectiveRuntime) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const credentials = useOwnCredentials
+        ? {
+            apiKey: formApiKey.trim() === '' ? undefined : formApiKey.trim(),
+            baseUrl: supportsBaseUrl ? (formBaseUrl.trim() || null) : null,
+            model: formModel.trim() || null,
+          }
+        : { apiKey: null, baseUrl: null, model: null };
+      await api.setAccountMainAgent(effectiveRuntime, credentials);
+      setEditing(false);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not set your main agent');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="crumb">My agent &middot; set up</div>
+      <h1>Set up my agent</h1>
+      <p className="sub">
+        You're not part of an organization, so this is your own personal main agent — the
+        one that answers in <strong>Ask yourself</strong>. Nobody else can see or use it.
+      </p>
+      <div className="panel" style={{ marginTop: 18 }}>
+        <header>
+          <span className="label">Your main agent</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>just for you</span>
+        </header>
+        <div className="inner">
+          {showForm ? (
+            <>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                {main
+                  ? 'Editing your main agent. New questions will read through it immediately.'
+                  : 'No main agent set yet — nothing will answer in "Ask yourself" until you set one.'}
+              </p>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)', maxWidth: 260 }}>
+                Agent
+                <select
+                  aria-label="Main agent runtime"
+                  value={effectiveRuntime}
+                  onChange={(e) => setFormRuntime(e.target.value)}
+                  style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                >
+                  {mainOptions.map((o) => (
+                    <option key={o.key} value={o.key}>{o.name} — {o.vendor}</option>
+                  ))}
+                </select>
+              </label>
+              {formEntry && (
+                <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '10px 0 0' }}>
+                  <strong>Reads:</strong> {formEntry.reads}. <strong>Hosted:</strong> {formEntry.host}.
+                </p>
+              )}
+              <CredentialsFields
+                useOwnCredentials={useOwnCredentials}
+                setUseOwnCredentials={setUseOwnCredentials}
+                hasCustomApiKey={!!main?.hasCustomApiKey}
+                hasBaseUrlOrModel={!!(main?.baseUrl || main?.model)}
+                supportsBaseUrl={supportsBaseUrl}
+                formApiKey={formApiKey}
+                setFormApiKey={setFormApiKey}
+                formBaseUrl={formBaseUrl}
+                setFormBaseUrl={setFormBaseUrl}
+                formModel={formModel}
+                setFormModel={setFormModel}
+                ownerLabel="you"
+              />
+              <div style={{ display: 'flex', gap: 7, marginTop: 12 }}>
+                <button
+                  disabled={busy || !effectiveRuntime}
+                  onClick={submit}
+                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                >
+                  {main ? 'Save changes' : 'Set main agent'}
+                </button>
+                {main && (
+                  <button className="chip" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="runtime-card" style={{ marginBottom: 0 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{byKey.get(main.runtimeKey)?.name ?? main.runtimeKey}</span>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>{byKey.get(main.runtimeKey)?.vendor}</span>
+                <span className="spacer" />
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>added {main.addedAt}</span>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '6px 0 0' }}>
+                <strong>Reads:</strong> {byKey.get(main.runtimeKey)?.reads}. <strong>Hosted:</strong> {byKey.get(main.runtimeKey)?.host}.
+              </p>
+              <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+                {main.hasCustomApiKey || main.baseUrl || main.model
+                  ? <>Using your own credentials{main.baseUrl ? <> — <strong>{main.baseUrl}</strong></> : ''}{main.model ? <> (model: <strong>{main.model}</strong>)</> : ''}.</>
+                  : "Using the platform's shared key."}
+              </p>
+              <div style={{ marginTop: 9 }}>
+                <button className="chip" disabled={busy} onClick={openEdit}>Edit</button>
+              </div>
+            </div>
+          )}
+          {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
+        </div>
+      </div>
+      <ConnectorsPanel owner={{ kind: 'account' }} />
+    </>
+  );
+}
+
+/** For an account connected to no organization at all, "Set up my agent" is just the
+ *  personal main-agent panel below — none of the rest of this page (personal sub-agents,
+ *  Gmail/GitHub/Jira, ingest tokens) applies, since all of it is keyed by an org-chart
+ *  person id this account doesn't have. See MyAgent.tsx's own module comment for why
+ *  `personal` is derived the same way in both places rather than threaded as a prop. */
 export function SetUpMyAgent() {
+  const { people: identities } = useAuth();
+  return identities.length === 0 ? <PersonalMainAgentPanel /> : <OrgSetUpMyAgent />;
+}
+
+function OrgSetUpMyAgent() {
   const { meId, meOrgId } = useMe();
   const [catalog, setCatalog] = useState<AgentRuntime[]>([]);
   const [registered, setRegistered] = useState<PersonRuntime[]>([]);
@@ -741,6 +906,8 @@ export function SetUpMyAgent() {
           </div>
         </div>
       </div>
+
+      <ConnectorsPanel owner={{ kind: 'person', personId: meId }} />
     </>
   );
 }

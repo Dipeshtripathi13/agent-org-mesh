@@ -1,5 +1,5 @@
 import * as repo from '../db/repo.js';
-import type { Claim, Evidence } from '../domain/types.js';
+import type { Claim, Evidence, SurfaceKey } from '../domain/types.js';
 import { formatClaudeCodeDigest, getClaudeCodeActivitySince } from './claudeCodeActivity.js';
 import { formatIngestedEventsDigest, getEventsSince } from './eventIngestion.js';
 import { getGithubConnection } from './githubConnection.js';
@@ -7,6 +7,14 @@ import { formatGithubDigest, getRecentGithubActivity, type GithubActivityItem } 
 import { getJiraConnection } from './jiraConnection.js';
 import { formatJiraDigest, getRecentJiraActivity, type JiraActivityItem } from './jira.js';
 import { getMainProvider } from './runtimeProvider.js';
+import { getLinearConnection, formatLinearDigest, getRecentLinearActivity } from './linear.js';
+import { getNotionConnection, formatNotionDigest, getRecentNotionActivity } from './notion.js';
+import { getConfluenceConnection, formatConfluenceDigest, getRecentConfluenceActivity } from './confluence.js';
+import { getAsanaConnection, formatAsanaDigest, getRecentAsanaActivity } from './asana.js';
+import { getGitlabConnection, formatGitlabDigest, getRecentGitlabActivity } from './gitlab.js';
+import { getHubspotConnection, formatHubspotDigest, getRecentHubspotActivity } from './hubspot.js';
+import { getZendeskConnection, formatZendeskDigest, getRecentZendeskActivity } from './zendesk.js';
+import { formatCalendarDigest, getRecentCalendarActivity } from './googleCalendar.js';
 
 /**
  * This is the piece that makes the org mesh's manager-facing "Ask" actually real for one
@@ -257,3 +265,199 @@ export const ingestCodexClaim = (orgId: number, personId: number, since: Date = 
   ingestPushedEventsClaim('codex', orgId, personId, since);
 export const ingestGeminiClaim = (orgId: number, personId: number, since: Date = startOfToday()) =>
   ingestPushedEventsClaim('gemini-cli', orgId, personId, since);
+
+/**
+ * The shared tail every `ingest<Tool>Claim` function below reduces to once it already has
+ * a real digest in hand — upsert the real evidence row, ask the org's main agent to draft
+ * the claim's *text* (or fall back to a deterministic one, same "never blocked by a model
+ * being unconfigured" guarantee every other source here has), then upsert the claim.
+ * Extracted here instead of repeating `ingestGithubClaim`'s ~20-line tail eight more
+ * times — the *fetch* half of each function below still differs per tool (different auth
+ * shapes, different APIs), so that half stays written out per tool for real, but the
+ * evidence/claim-writing half doesn't need to.
+ */
+async function finishIngestion(params: {
+  orgId: number;
+  personId: number;
+  personName: string;
+  surfaceKey: SurfaceKey;
+  label: string;
+  kind: string;
+  tier: 'T1' | 'T2' | 'T3';
+  externalRef: string;
+  digest: string;
+  deterministicText: string;
+}): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  const id = `auto-${params.surfaceKey}-${params.personId}-${today}`;
+  const evidence: Evidence = {
+    id,
+    kind: params.kind,
+    title: `${params.label} activity — ${today}`,
+    connector: params.surfaceKey,
+    recordedAt: new Date().toISOString(),
+    excerpt: params.digest.slice(0, 240),
+    note: `Auto-ingested via a credential connected by this person. Read-only, scoped to what ${params.label}'s API returns for them specifically.`,
+    externalRef: params.externalRef,
+  };
+  await repo.upsertEvidence(params.orgId, evidence);
+
+  const { provider } = await getMainProvider(params.orgId);
+  const text = provider?.configured()
+    ? await provider.writeClaim(params.personName, params.digest)
+    : params.deterministicText;
+
+  const claim: Claim = {
+    id,
+    personId: params.personId,
+    tier: params.tier,
+    dataClass: 'Internal',
+    text,
+    evidenceId: evidence.id,
+    sourceSurface: params.surfaceKey,
+    derivedAt: new Date().toISOString(),
+    supersededBy: null,
+  };
+  await repo.upsertClaim(params.orgId, claim);
+}
+
+/** No-op if this person doesn't have a real, connected Linear key — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real workspace (see linear.ts's module
+ *  comment). */
+export async function ingestLinearClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.linear !== 'connected') return;
+  const conn = await getLinearConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentLinearActivity(conn.accessToken, since);
+  const digest = formatLinearDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'linear', label: 'Linear', kind: 'issue activity',
+    tier: 'T1', externalRef: 'linear-graphql-api', digest,
+    deterministicText: `Linear activity: ${activity.length} issue${activity.length === 1 ? '' : 's'} updated${activity[0] ? ` — most recently: ${activity[0].identifier} "${activity[0].title}" (${activity[0].status}).` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have a real, connected Notion integration — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real workspace (see notion.ts's module
+ *  comment). */
+export async function ingestNotionClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.notion !== 'connected') return;
+  const conn = await getNotionConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentNotionActivity(conn.accessToken, since);
+  const digest = formatNotionDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'notion', label: 'Notion', kind: 'page activity',
+    tier: 'T2', externalRef: 'notion-rest-api', digest,
+    deterministicText: `Notion activity: ${activity.length} page${activity.length === 1 ? '' : 's'} edited${activity[0] ? ` — most recently: "${activity[0].title}".` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have real, connected Confluence credentials — same shape
+ *  as ingestJiraClaim (same Atlassian account). UNVERIFIED against a real site (see
+ *  confluence.ts's module comment). */
+export async function ingestConfluenceClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.confluence !== 'connected') return;
+  const conn = await getConfluenceConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentConfluenceActivity(conn.siteUrl, conn.email, conn.apiToken, since);
+  const digest = formatConfluenceDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'confluence', label: 'Confluence', kind: 'page activity',
+    tier: 'T2', externalRef: 'confluence-rest-api', digest,
+    deterministicText: `Confluence activity: ${activity.length} page${activity.length === 1 ? '' : 's'} edited${activity[0] ? ` — most recently: "${activity[0].title}" in ${activity[0].spaceKey}.` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have a real, connected Asana token — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real workspace (see asana.ts's module
+ *  comment). */
+export async function ingestAsanaClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.asana !== 'connected') return;
+  const conn = await getAsanaConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentAsanaActivity(conn.accessToken, since);
+  const digest = formatAsanaDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'asana', label: 'Asana', kind: 'task activity',
+    tier: 'T1', externalRef: 'asana-rest-api', digest,
+    deterministicText: `Asana activity: ${activity.length} task${activity.length === 1 ? '' : 's'} updated${activity[0] ? ` — most recently: "${activity[0].name}".` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have a real, connected GitLab token — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real instance (see gitlab.ts's module
+ *  comment). */
+export async function ingestGitlabClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.gitlab !== 'connected') return;
+  const conn = await getGitlabConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentGitlabActivity(conn.accessToken, conn.siteUrl, since);
+  const digest = formatGitlabDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'gitlab', label: 'GitLab', kind: 'merge request activity',
+    tier: 'T1', externalRef: 'gitlab-rest-api', digest,
+    deterministicText: `GitLab activity: ${activity.length} merge request${activity.length === 1 ? '' : 's'} opened or updated${activity[0] ? ` — most recently: "${activity[0].title}" in ${activity[0].project}.` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have a real, connected HubSpot token — same shape as
+ *  ingestGithubClaim. UNVERIFIED against a real portal (see hubspot.ts's module
+ *  comment). */
+export async function ingestHubspotClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.hubspot !== 'connected') return;
+  const conn = await getHubspotConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentHubspotActivity(conn.accessToken, since);
+  const digest = formatHubspotDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'hubspot', label: 'HubSpot', kind: 'deal activity',
+    tier: 'T1', externalRef: 'hubspot-crm-api', digest,
+    deterministicText: `HubSpot activity: ${activity.length} deal${activity.length === 1 ? '' : 's'} updated${activity[0] ? ` — most recently: "${activity[0].name}" (${activity[0].stage}).` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have real, connected Zendesk credentials — same shape as
+ *  ingestJiraClaim. UNVERIFIED against a real account (see zendesk.ts's module comment). */
+export async function ingestZendeskClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.zendesk !== 'connected') return;
+  const conn = await getZendeskConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentZendeskActivity(conn.subdomain, conn.email, conn.apiToken, since);
+  const digest = formatZendeskDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'zendesk', label: 'Zendesk', kind: 'ticket activity',
+    tier: 'T1', externalRef: 'zendesk-rest-api', digest,
+    deterministicText: `Zendesk activity: ${activity.length} ticket${activity.length === 1 ? '' : 's'} updated${activity[0] ? ` — most recently: "${activity[0].subject}" (${activity[0].status}).` : '.'}`,
+  });
+}
+
+/** No-op if this person doesn't have a Google connection (Gmail's, shared — see
+ *  googleCalendar.ts's module comment). UNVERIFIED against a real account: no real Google
+ *  consent screen has completed against this app yet (same gap as the Gmail bridge). */
+export async function ingestCalendarClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.calendar !== 'connected') return;
+  const activity = await getRecentCalendarActivity(personId, since);
+  const digest = formatCalendarDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'calendar', label: 'Google Calendar', kind: 'calendar activity',
+    tier: 'T2', externalRef: 'google-calendar-api', digest,
+    deterministicText: `Calendar activity: ${activity.length} event${activity.length === 1 ? '' : 's'}${activity[0] ? ` — most recently: "${activity[0].summary}".` : '.'}`,
+  });
+}

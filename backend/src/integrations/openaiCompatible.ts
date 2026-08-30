@@ -125,9 +125,26 @@ async function writeClaim(personName: string, digest: string, credentials?: Prov
   return text.replace(/^["']|["']$/g, '').trim();
 }
 
+/** A plain, ungrounded conversation — see modelProvider.ts's ModelProvider.converse doc
+ *  for why this is a genuinely separate method from synthesize rather than that function
+ *  called with an empty sections array, and for what `sections` means here. */
+async function converse(personName: string, question: string, priorTurns?: ConversationTurn[], credentials?: ProviderCredentials, sections?: ActivitySection[]): Promise<string> {
+  const body = sections && sections.length > 0 ? sections.map((s) => `## ${s.source}\n${s.digest}`).join('\n\n') : null;
+  return callOpenAI([
+    `You are ${personName}'s own personal assistant, answering directly and conversationally.`,
+    'Be concise and helpful.',
+    body ? 'Some of your connected tools returned real, relevant activity below — use it if it helps.' : '',
+    '',
+    formatPriorTurns(priorTurns),
+    wrapUntrustedData('question', question),
+    ...(body ? ['', wrapUntrustedData('connected-tool-data', body)] : []),
+  ].join('\n'), credentials);
+}
+
 export const openaiCompatibleProvider: ModelProvider = {
   configured: openaiConfigured,
   selectRelevantSurfaces,
   synthesize,
   writeClaim,
+  converse,
 };

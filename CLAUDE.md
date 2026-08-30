@@ -18,9 +18,12 @@ Multi-tenant: an organization can have several real admins with different permis
 levels (`Admin → Organizations`, the "admins" panel — owner/admin/viewer, see the auth
 rule below), and one real account (a human, not a role — see the auth rule) can
 administer several organizations *and* be a person in several organizations at once —
-two independent facts about the same login, not two account types. Anyone can self-serve
-create a brand-new organization from scratch (`/auth/signup`, "New here?" on the login
-screen) — no existing admin has to set it up for them first. Everything an org actually
+two independent facts about the same login, not two account types. Signing up
+(`/auth/signup`, "New here?" on the login screen) creates a personal account and a
+one-person "workspace" org for it in the same step — no company name to type, no separate
+admin action required just to start using the product (see the signup/step-up-auth
+paragraph below for the two other shapes this went through before landing here). No
+existing admin has to set anything up for you first. Everything an org actually
 contains — people, claims, evidence, escalations, policy revisions, audit entries, runtime
 registrations — carries an `org_id` and is isolated per org. The connector/runtime
 catalogs (`surfaces_catalog`, `never_ingested`, `runtime_catalog`) are global platform
@@ -70,10 +73,12 @@ product surface, shared by every org.
    itself. `POST /api/agent/ask`'s `requesterId`, every self-service endpoint's `personId`
    (GitHub/Jira/Gmail connections, ingest tokens, sub-agent registration, claim correction —
    the org's one main-agent registration is the one exception, genuinely session-gated via
-   `requireOrgRole` since it moved to an admin-only, org-level setting),
-   and "My agent"'s free identity switcher (`frontend/src/lib/MeContext.tsx`, still open
-   by design) all still take the id a request/the browser hands them at face value, even
-   for a person now linked to a real, logged-in account. Closing that — making those
+   `requireOrgRole` since it moved to an admin-only, org-level setting) all still take the
+   id a request/the browser hands them at face value, even for a person now linked to a
+   real, logged-in account. "My agent" itself is no longer one of these — its identity
+   switcher (`frontend/src/lib/MeContext.tsx`) used to let any logged-in account freely
+   switch to *any* person's view in *any* organization, not just its own; that's closed
+   now, see the MeContext.tsx layout entry below. Closing the rest — making those
    endpoints prefer the session's own identity over a client-asserted one — is real,
    separate work (see "Where to go next"), not something signup/login accomplished by
    existing. Don't write code that treats a client-asserted `personId` as verified just
@@ -90,8 +95,10 @@ backend/src/data/     seed.ts — 40-person org, claims, evidence (source of tru
 backend/src/db/       pool.ts (pg.Pool), repo.ts (Postgres-backed reads/writes the server
                        actually uses — accounts, organizations, people/claims/etc, all
                        org-scoped except the global catalogs and `accounts` itself).
-                       `signUpWithNewOrganization` is the one atomic self-serve-signup
-                       transaction (account + org + first person + owner row together).
+                       `createOrganization` is the one place an org actually gets created
+                       — atomically makes the caller both its owner-admin and its first
+                       person (Owner, top of the chart), whether that's a brand-new
+                       individual's very first org or an existing admin adding another.
 backend/db/schema.sql tables + the mesh_app role + its grants (a full reset every run —
                        see the note at the top of the file; there's no prod data behind it)
 backend/scripts/       migrate.ts, seed-db.ts — run against DATABASE_ADMIN_URL
@@ -113,20 +120,47 @@ frontend/src/lib/AuthContext.tsx  React context for real login — session cooki
                        client-asserted id; exposes `account`, `orgRoles` (this account's
                        owner/admin/viewer role per org id it administers), `people` (this
                        account's own org-chart identities, one per org it's a member of),
-                       `login`/`signUp`/`logout`. `Shell` in App.tsx renders
-                       `pages/Login.tsx` (which itself can hand off to `pages/SignUp.tsx`)
-                       in place of the whole Admin panel whenever there's no session.
-frontend/src/lib/MeContext.tsx  React context for the My-agent panel's "who am I" — a
-                       free identity switcher (org + person) that still works fully
-                       logged-out (rule 7), but now defaults to your own real identity/
-                       identities from AuthContext's `people` the moment you do log in —
-                       a better default, not a lockdown; the switcher itself is unchanged.
-frontend/src/pages/OrgSetup.tsx  Admin → Organizations: create an org (or self-serve via
-                       `pages/SignUp.tsx`), build its chart person by person — optionally
-                       with an email that resolve-or-creates a real login for that person,
-                       the same one-time-temp-password pattern as inviting an org admin
-                       (and ingest tokens before that) — and manage which real accounts
-                       (owner/admin/viewer) administer it.
+                       `login`/`signUp`/`logout`, `adminElevatedUntil` (this session's
+                       step-up state — see the main-agent/step-up-auth paragraph below).
+                       `Shell` in App.tsx renders `pages/Login.tsx` (which itself can hand
+                       off to `pages/SignUp.tsx`) in place of *either* panel's content
+                       whenever there's no session — both "My agent" and Admin require a
+                       real login now; Admin additionally requires step-up (see below).
+frontend/src/lib/MeContext.tsx  React context for the My-agent panel's "who am I" — no
+                       longer a free identity switcher. It used to let any logged-in
+                       account browse into *any* organization (a standing public demo org,
+                       always, plus any real one it happened to administer) and pick *any*
+                       person there, viewing that person's own full self-view as if it were
+                       the account's own — reasonable while this was a closed dev/QA build,
+                       reported live as exactly the alarming thing it was once real
+                       strangers could sign up ("why am I able to see this organization...
+                       I am able to sign in as other person"). Now resolves *only* from
+                       AuthContext's own `people` — the account's real, linked org-chart
+                       identities, nothing else — synchronously every render rather than
+                       via an effect, so there's never a render where `identities` has
+                       arrived but the active one hasn't caught up yet (a real bug found
+                       immediately after the rewrite: that one-render lag let a `0`
+                       sentinel id leak into a real request right after signup). The org
+                       picker only renders at all for genuine multi-org membership (two or
+                       more real identities); there's no person-picker anymore, since
+                       within one org you only ever have exactly one identity — yourself.
+                       Genuinely previewing another role or person is still real, still
+                       supported, still clearly labeled as a simulation rather than a
+                       login: `pages/Preview.tsx` and Admin's `pages/PolicyMatrix.tsx`,
+                       both via `/api/query`'s persist:false preview mode.
+frontend/src/pages/OrgSetup.tsx  Admin → Organizations: create an *additional* org (a
+                       brand-new individual's first org gets created automatically by
+                       signup itself now, see below) — build its chart person by person,
+                       optionally with an email that resolve-or-creates a real login for
+                       that person, the same one-time-temp-password pattern as inviting an
+                       org admin (and ingest tokens before that) — and manage which real
+                       accounts (owner/admin/viewer) administer it.
+frontend/src/pages/SignUp.tsx  Personal account fields only (name/email/password) — the
+                       one-person org it also creates is automatic, not asked for here.
+                       For the now-rare case of a real account connected to no org at all,
+                       `MyAgent.tsx`/`SetUpMyAgent.tsx` branch into a personal mode
+                       in-place (see the personal-main-agent paragraph below) rather than
+                       a separate fallback page — there's no more `NoOrganizationYet.tsx`.
 frontend/src/         React + Vite, no CSS framework
 docker-compose.yml    Postgres 16, host port 5433 (5432 was already taken locally)
 ```
@@ -151,7 +185,8 @@ runtime role) credentials default to the values in `backend/db/schema.sql` /
 `npm run db:seed` prints a real dev login: `jordan@agentorgmesh.local` / `admin-dev-only`
 (owner of the seeded Northbeam org). Not a secret worth protecting — this database is
 thrown away and reseeded by that exact script. To try self-serve signup instead, use
-"New here? Create your organization" on the login screen with any new email.
+"New here? Create your account" on the login screen with any new email — you land in your
+own real, one-person org immediately, no separate org-creation step.
 
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
@@ -170,13 +205,27 @@ thrown away and reseeded by that exact script. To try self-serve signup instead,
   real person's own connections). Tightening these to the same unconditional
   session-preferring treatment `/api/agent/ask` gets is the honest remaining gap — real,
   but these are personal tool connections, not org-wide disclosure, so the blast radius of
-  leaving them as-is is much smaller than what was just closed. "My agent"'s free identity
-  switcher (`MeContext.tsx`) stays deliberately open regardless of login either way — a
-  documented demo affordance, not an oversight, and several real self-service transparency
-  endpoints (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) depend on reaching it
-  without a session; do not blanket-gate those without re-checking every frontend caller
-  first (found the hard way during the same audit — three of six initially-flagged
-  endpoints turned out to be this, not oversights).
+  leaving them as-is is much smaller than what was just closed. "My agent" went through
+  two rounds of tightening after this audit, both found live rather than anticipated in
+  design. First: its identity switcher (`MeContext.tsx`) *used to* stay open regardless of
+  login as a documented demo affordance — no longer, once the marketing site's real "Try
+  it for free" link could send actual strangers here and an anonymous visitor defaulting
+  into a named seeded person's data read exactly like a broken login, not a demo; `App.tsx`'s
+  `Shell` now requires a real login before rendering either panel's content (see the
+  step-up-auth paragraph below). Second, reported by a real user testing the live product
+  right after that shipped: even *logged in*, the same switcher still let any account
+  browse into any organization and pick any person there — closed by rewriting
+  `MeContext.tsx` to resolve only from the account's own real identities, see its own
+  layout entry above. The underlying endpoints it used to call for that free browsing
+  (`/api/org-directory` and a full-roster `/api/org` fetch) are gone now, not just
+  unreached — removed entirely rather than left as unused dead surface.
+  `/api/org`, `/api/policy` GET, and `/api/audit/subject/:id` are still deliberately *not*
+  re-gated server-side for other reasons — they're still real self-service transparency
+  endpoints other legitimate flows reach without a session (do not blanket-gate them
+  without re-checking every frontend caller first; found the hard way during the security
+  audit that three of six initially-flagged endpoints turned out to be this, not
+  oversights) — but this app's own frontend no longer calls any of them anonymously in
+  practice, since nothing that uses them mounts before login anymore.
 
 - **Verify the Gmail self-ask bridge against a real Gmail account.** Same shape of gap as
   Jira/OpenAI below, but for a different reason: Google OAuth itself is already configured
@@ -274,17 +323,146 @@ Escalation triage is built — see `docs/escalation-triage.md` and `domain/escal
 Self-service tool connectors (Claude Code, GitHub, Codex CLI, Gemini CLI all real) are
 built — see `docs/agent-to-agent-communication.md` §13.
 
+**A generic, catalog-driven connector framework replaces one-off per-tool plumbing, and
+grows the org-mode connectable-tool catalog from 2 (GitHub, Jira) to 20.**
+`backend/src/integrations/connectorCatalog.ts`'s `CONNECTOR_CATALOG` is the single source
+of truth — auth shape, required fields, category, and a three-tier `status` — driving both
+backend validation and one generic frontend UI (`ConnectorsPanel.tsx`, org-mode only,
+appended after GitHub/Jira/Gmail in `SetUpMyAgent.tsx`) instead of a bespoke component per
+tool: a "Connect a tool" dropdown grouped by category, a form generated from that
+connector's own field list, and a "Connected tools" card list — all reading the same
+`person.surfaces` state the existing Connected Surfaces panel already shows, so the two
+views can't drift. `GET/POST/DELETE /api/person/:id/connectors[/:key]` are the generic
+endpoints (same `requireSelfIfLoggedIn` gate as GitHub/Jira); connecting calls
+`repo.updatePersonSurface(id, key, 'connected')`, the one call that already makes a
+surface show up everywhere — Connected Surfaces, coverage %, and (this is the point) the
+candidate list `resourceProviders.ts`'s `gatherAll` narrows before asking the org's real
+main agent to pick which connected tools are actually relevant to a given question
+(`selectRelevantSurfaces`) and only then calling `ingest()` on that subset. Nothing new was
+built for "discovery" or "the agent knows what's connected" — that pipeline already existed
+and just gained more real providers to route across. No schema migration was needed: every
+new connector reuses the existing generic `person_oauth_tokens` columns (`site_url`
+doubles as Confluence's site, GitLab's instance, or Zendesk's subdomain).
+
+Three tiers, matching this codebase's established honesty convention (Jira/OpenAI/Gmail
+before their credentials existed) rather than claiming more than what's actually been
+proven: **`'live'` (8 new, genuinely ingest data into claims)** — Linear, Notion,
+Confluence, Asana, GitLab, HubSpot, Zendesk, Google Calendar (the last reuses Gmail's own
+OAuth token, just adds a `calendar.readonly` scope). Each has its own client module
+(`linear.ts`, `notion.ts`, etc., same `validateAndIdentify`/`getRecentActivity`/
+`formatDigest` shape as `github.ts`) and an `ingest<Tool>Claim` in `realClaims.ts`
+registered into `resourceProviders.ts`'s `PROVIDERS`. Live-verified the same way Jira's
+request shapes were — deliberately invalid credentials against each tool's real API,
+confirmed each fails cleanly with a real provider-specific rejection and zero 500s — for
+7 of the 8 (all but Calendar, which needs a live Gmail OAuth round-trip that remains
+unverified for the same pre-existing reason as Gmail itself). No real account was
+available for any of the 8, so — same as Jira/OpenAI/Gmail — a real successful
+connect-then-ask round trip is still unverified; update this note once one happens.
+**`'connectable'` (5 new, connect flow real, ingestion not wired yet)** — Trello, Airtable,
+Monday.com, Figma, Discord; Trello's connect flow is live-verified the same way (real
+rejection, no 500). **`'coming-soon'` (5, genuinely can't connect yet)** — Slack,
+Salesforce, Microsoft 365, Zoom, Dropbox: each needs the platform operator to register a
+developer app with that vendor first, shown disabled in the dropdown rather than a broken
+connect button (live-verified: the option carries a real `disabled` attribute and a
+disabled `<option>` cannot be selected in a live browser). Disconnect is live-verified
+end-to-end at the DB level: `DELETE /api/person/:id/connectors/:key` removes the
+`person_oauth_tokens` row and resets `people.surfaces[key]` back to `'absent'`, so the very
+next `gatherAll` stops treating that tool as a discovery candidate.
+
+**The same connector catalog also reaches a personal (no-org) account — self-set, no
+admin, mirroring how `account_main_agent` already parallels `org_main_agent`.** Found
+live, asked for directly, in the same spirit as the personal-main-agent work above: a
+person with zero linked `people` rows (added as an org admin by email but never a chart
+person, or simply never joined anyone's chart) still gets to plug in Linear, Notion,
+GitLab, and the rest — not just a private chat with nothing behind it. Since a personal
+account has no `people` row to key connections off of at all, this is a second, parallel
+storage table rather than a stretch of the existing one: `account_oauth_tokens` mirrors
+`person_oauth_tokens` exactly (same columns, `account_id` instead of `person_id`), the same
+"same shape, different owner" idiom `account_main_agent`/`personal_asks` already
+established. Every one of the 12 PAT-based connectors (the 7 live-tier tools minus
+Calendar, plus all 5 connectable-tier tools) grew one small additive `<Tool>Account*`
+function alongside its existing person-keyed ones (`genericConnection.ts` grew the same
+account-keyed counterparts) — none of the original, working person-keyed code was touched.
+`ConnectorsPanel.tsx` now takes an `owner: { kind: 'person'; personId } | { kind:
+'account' }` prop instead of a bare `personId`, dispatching to `GET/POST/DELETE
+/api/accounts/me/connectors[/:key]` (gated on nothing but being logged in as yourself,
+same posture as `/api/accounts/me/main-agent`) instead of the person-keyed routes — one
+component, one catalog, either owner. GitHub/Jira stay org-chart-only by design (unchanged
+scope boundary), and Calendar is excluded from the personal panel too since it rides on
+Gmail's own OAuth token, which a personal account doesn't have.
+
+Real discovery reaches personal accounts as well, not just a connected-tools list: a new
+`personalConnectors.ts` module holds `ACCOUNT_DIGEST_PROVIDERS`, the personal counterpart
+to `resourceProviders.ts`'s `PROVIDERS` — except a personal ask has no claims table to
+write into (no `org_id` to hang one off), so nothing here ever becomes a claim. Instead
+`POST /api/agent/ask-personal` runs the same router pattern the org path's Gmail bridge
+already uses: narrow the account's own connected tools to whichever are plausibly relevant
+to this question (`selectRelevantSurfaces`, the same router call, same personal main
+agent), fetch a real digest from each relevant one, and feed the results into *that turn's*
+answer only — never persisted as anything but the label in a new `personal_asks.
+consulted_sources` column (mirroring `audit_log`'s own `consultedSources`, just as its own
+column since there's no snapshot blob here). This needed `ModelProvider.converse()` itself
+to genuinely change, not just its caller: it grew an optional final `sections` parameter
+(both `anthropic.ts` and `openaiCompatible.ts`), enriching the conversation when connected-
+tool data is relevant without adopting `synthesize()`'s hard "answer only from this"
+constraint — a personal chat with nothing connected, or nothing relevant this turn, must
+still just answer normally, which is exactly why `converse` stayed a separate method from
+`synthesize` in the first place. Live-verified end-to-end against a genuinely personal
+account (an org-admin-only login with zero chart identities, created via a real admin
+invite that intentionally never adds a `people` row) rather than assumed from reading the
+code: connect correctly reaches Linear's real API and fails clean on a deliberately invalid
+key (same proof pattern as every other UNVERIFIED connector in this project); with a fake-
+but-present credential inserted directly, the full pipeline was traced live end-to-end — a
+locally-run Ollama personal main agent's router genuinely selected Linear as relevant to
+"What issues are assigned to me in Linear right now?", `fetchDigest` genuinely reached
+Linear's real API, got a real 401, and that single failure was correctly absorbed
+(`Promise.allSettled`, same resilience as `gatherAll`) without breaking the turn or the
+chat; disconnect was confirmed at the DB level (`account_oauth_tokens` row removed,
+`GET .../connectors` immediately reflects `connected: false`). A real successful
+connect-then-ask round trip (a genuine Linear/Notion/etc. account, not a deliberately
+invalid credential) remains unverified for the same honest reason every other new
+connector in this project does — update this note once one happens.
+
 Model-agnostic main agents are built and live-verified against a real local Ollama model —
 one `ModelProvider` adapter each for Claude and for anything OpenAI-compatible (ChatGPT,
 or a self-hosted/open-source model — same adapter, `OPENAI_BASE_URL` is the only knob),
 never hardcoded to one vendor — see `docs/agent-to-agent-communication.md` §15/§15a. The
 main agent is an org-level setting, not a per-person one: one registration
 (`org_main_agent`) shared by everyone in the org, set only by an admin
-(`POST /api/organizations/:orgId/main-agent`, `requireOrgRole` 'admin'). Every person's
-own "Set up my agent" shows it read-only — there is no per-person main-agent registration
-anymore. `person_runtimes` still exists but only ever holds personal sub-agents now
-(Claude Code, GitHub, etc. as status-check tools the org's main agent can query); it lost
-its old main/sub distinction entirely along with it.
+(`POST /api/organizations/:orgId/main-agent`, `requireOrgRole` 'admin'). Anyone who's a
+real person in an org's chart sees this read-only in "Set up my agent" — no per-person
+override within an org. `person_runtimes` still exists but only ever holds personal
+sub-agents now (Claude Code, GitHub, etc. as status-check tools the org's main agent can
+query); it lost its old main/sub distinction entirely along with it.
+
+**An account connected to no organization at all gets a genuinely personal main agent
+instead — self-set, no admin involved, since there's no org to share it with.** Found
+live, asked for directly: "when the user is not part of the organization, he or she
+should be able to setup the main agent by himself... only setting up the organization and
+working with the organization needs the admin access." `account_main_agent` mirrors
+`org_main_agent`'s shape (runtime, optional bring-your-own credentials) minus `scope` —
+no IT/Security approval workflow makes sense for an individual's own key, so it's always
+immediately usable. `GET/POST /api/accounts/me/main-agent` are gated on nothing but being
+logged in as yourself (`currentAccountId`, no `requireOrgRole`, no elevation — this never
+touches org data). The real "Ask yourself" chat is reused as-is, not rebuilt: `MyAgent.tsx`
+and `SetUpMyAgent.tsx` both derive `personal` the same way `App.tsx`'s `Shell` derives
+`hasOwnIdentity` (`useAuth().people.length === 0`) and branch early, skipping every
+org-chart concept — no claims, no coverage panel, no policy engine, no disclosure
+machinery, since none of that has anything to do with a private chat nobody else could
+ever ask about. History lives in a new `personal_asks` table, not `audit_log` — that
+table's `org_id`/`target_person_id` are `NOT NULL REFERENCES`, so it structurally can't
+hold this, and none of its tamper-evident/disclosure properties (rule 2) apply to a chat
+with no one else who could ever be shown it. One real design fix along the way: a personal
+ask has zero "activity sections" to stay grounded in by construction (personal accounts
+have no connected sources in this version — GitHub/Jira/Gmail sub-agents stay org-chart-
+only, a deliberate scope boundary, not an oversight), and the existing `synthesize()`
+method throws when given zero sections on purpose (an org self-ask with nothing connected
+should say so, not hallucinate). Calling it with an empty array for a personal ask threw
+every time — found live testing this exact path. Fixed by adding a genuinely separate
+`ModelProvider.converse()` method (both `anthropic.ts` and `openaiCompatible.ts`) for a
+plain, ungrounded conversation, rather than weakening `synthesize()`'s real "never invent
+beyond the real data given" guarantee for the org path to accommodate a use case that was
+never about grounded summarization in the first place.
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
@@ -326,17 +504,21 @@ authorized; now scoped to only the evidence its own response items reference. Bo
 any person via `persist:false` ("preview" mode) with no relationship check at all;
 `/api/agent/ask` now verifies unconditionally (no real caller ever used the bypass),
 while `/api/query`'s preview requires either a genuine self-preview (`requesterId ===
-targetId`, matching the free-identity-switcher leniency below) or a real org viewer+ role
-— since `PolicyMatrix.tsx`'s admin policy-testing panel and `Preview.tsx`'s self-service
-"what would X role see about me" both depend on bypassing role-*truthfulness* on purpose,
-just not on being a real caller. Three read endpoints
-(`/api/overview`, `/api/escalations` GET, `/api/connections`) were completely
+targetId`) or a real org viewer+ role — since `PolicyMatrix.tsx`'s admin policy-testing
+panel and `Preview.tsx`'s self-service "what would X role see about me" both depend on
+bypassing role-*truthfulness* on purpose, just not on being a real caller. Three read
+endpoints (`/api/overview`, `/api/escalations` GET, `/api/connections`) were completely
 unauthenticated, gated only by a guessable `orgId` query param — now `requireOrgRole`
 'viewer'-gated like `/api/audit` always was. Three siblings that look identical at a
 glance (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) are **deliberately left
-open** — real self-service endpoints (`MeContext.tsx`'s free switcher, `WhoAsked.tsx`,
-`Ask.tsx`, `MyAgent.tsx`, `OrgStructure.tsx`) depend on reaching them without a session,
-per rule 7 below; gating them would break real functionality, not close a gap. Also
+open server-side** — at the time of this audit, real self-service endpoints (`WhoAsked.tsx`,
+`Ask.tsx`, `MyAgent.tsx`, `OrgStructure.tsx`, and `MeContext.tsx`'s then-free switcher)
+depended on reaching them without a session, so gating them would have broken real
+functionality, not closed a gap. That's narrower now than when this was written — "My
+agent" overall requires a real login before any of these pages ever mount (see rule 7 and
+the step-up-auth paragraph below) — but the endpoints themselves stay open rather than
+newly gated purely on principle: re-verify every real caller before changing this, the
+same caution that already caught three false positives once. Also
 fixed: escalation acknowledge/resolve and `/api/agent/conversations` now prefer the
 session's own linked identity over a client-asserted one (the same pattern `/api/agent/
 ask` already used, factored into `sessionPreferredPersonId`); linking an *existing*
@@ -348,21 +530,70 @@ from 30 to 7 days (true idle-timeout/sliding renewal is real, larger follow-up w
 needs `reply`, not just `req`, threaded through every session check to also refresh the
 cookie's own client-side expiry, not only the DB row).
 
-Real per-person accounts, multi-org membership, and self-serve org creation are built —
-one `accounts` table is the login for everyone, admin or employee or both; the same
-account can administer several orgs and be a person in several orgs at once (two
-independent facts, `org_admins` and `people.account_id`, never conflated); anyone can
-create a brand-new organization from scratch with no existing admin (`POST /auth/signup`,
-`repo.ts`'s `signUpWithNewOrganization`, one atomic transaction). Adding someone with an
-email (an org-admin invite, or a person added to a chart) also emails them their one-time
-temp password when `RESEND_API_KEY` is configured (`integrations/resendEmail.ts`) — not
-yet live-verified, see "Where to go next" — and always still shows it once in the
-inviting admin's own UI regardless, so nothing about the invite depends on email working.
-A fresh login also now lands wherever makes sense: someone with an admin role goes to
-Admin, someone who's only ever a person in a chart goes straight to "My agent" instead of
-an empty Admin panel (`App.tsx`'s `Shell`, keyed off a genuine login transition, not just
-having a session on page load). What none of this does yet is change what any individual
-*request* is trusted to say about its own identity — see "Where to go next" and rule 7.
+Real per-person accounts and multi-org membership are built — one `accounts` table is the
+login for everyone, admin or employee or both; the same account can administer several
+orgs and be a person in several orgs at once (two independent facts, `org_admins` and
+`people.account_id`, never conflated). Adding someone with an email (an org-admin invite,
+or a person added to a chart) also emails them their one-time temp password when
+`RESEND_API_KEY` is configured (`integrations/resendEmail.ts`) — not yet live-verified,
+see "Where to go next" — and always still shows it once in the inviting admin's own UI
+regardless, so nothing about the invite depends on email working. A fresh login always
+lands on "My agent" regardless of role — see the step-up-auth paragraph below for why
+Admin stopped being a default landing at all. What none of this does yet is change what
+any individual *request* is trusted to say about its own identity — see "Where to go
+next" and rule 7.
+
+**Self-serve signup creates a personal account *and* a one-person "workspace" org in the
+same step — no separate "create an organization" click, no company name to type.**
+`POST /api/auth/signup` takes just name/email/password; the org name is auto-derived
+(`"<name>'s workspace"`) and the caller becomes both its owner-admin and its first person
+(Owner, top of chart) atomically (`repo.ts`'s `createOrganization`, the one place an org
+actually gets created — also used for an *existing* admin adding an additional org later).
+The new session is elevated immediately on signup (typing your password to sign up already
+proves it — see step-up below), so a brand-new owner can go straight to Admin →
+Organizations and set their own main agent with zero extra friction. Accounts and
+organizations are still decoupled *data-wise* — an account can in principle exist with
+zero orgs (e.g. one only ever linked into someone else's chart by email) — and "My agent"
+still detects that case (`App.tsx`'s `hasOwnIdentity`, `useAuth().people.length === 0`),
+but it's no longer a dead-end fallback: it's a real, working personal main agent and
+"Ask yourself" instead (see the personal-main-agent paragraph below) — no longer the shape
+signup itself produces, but not a lesser experience either. This is the *third*
+iteration of this flow in one day, each found live: bundled signup (one atomic step, but
+skipped straight to an org-creation form with no individual-identity step first, unlike
+every comparable product's onboarding) → fully decoupled, GitHub-style (asked for
+explicitly, but made the common case — one person trying the product — file a company name
+and pass a second re-auth prompt just to start) → this: signup still creates only what's
+needed for *that* account, but does it in one step, because most people trying this out are
+one person, not a company standing up a multi-person chart.
+
+**Step-up authentication ("log in as admin") gates every Admin-scoped action, and a real
+login now gates "My agent" too.** `App.tsx`'s `Shell` no longer shows Admin and "My agent"
+as co-equal tabs — "My agent" is the only thing shown by default. Admin login and logout
+both live under one profile menu (`App.tsx`'s `ProfileMenu`, opened by clicking your own
+name/avatar in the topbar — not a separate row of buttons), same shape as most real
+products' own account menus. Clicking "Admin login" doesn't just switch views: it requires
+a genuine second authentication step, the standard "step-up auth"/"sudo mode" pattern
+(GitHub re-prompts your password before SSH-key/org-settings changes even while logged in;
+AWS separates root from IAM; Stripe/Okta use the term explicitly). A normal login is the
+first factor; `POST /api/auth/step-up` (`pages/AdminStepUp.tsx`) re-verifies that same
+account's password and, only on success, elevates the *existing* session — not a second
+account or cookie — for 15 minutes (`sessions.elevated_until`, `ELEVATION_WINDOW_MS` in
+`server.ts`). A plain login never auto-elevates — only self-serve signup does (see above,
+since it's proving the same password moments earlier) — which is what keeps "log in" and
+"log in as admin" two genuinely separate steps everywhere else. This is enforced
+server-side, not just hidden in the UI: `requireOrgRole` (every Admin-scoped endpoint's
+single shared gate, ~14 call sites) checks elevation and returns `428` if the session
+hasn't stepped up, and the one Admin action with no `orgId` yet to check a role against —
+creating a brand-new organization from inside an already-logged-in session — goes through
+a parallel `requireElevatedSession` check on `POST /api/organizations`. Separately, "My
+agent" itself now also requires a real login before rendering anything (see the
+MeContext.tsx layout entry above for why) — found live when a real "Try it for free" click
+landed on a stranger seeing a named seeded person's data with no login at all, which read
+exactly like a broken login rather than a demo. One more race surfaced and got fixed along
+the way: `MyAgent.tsx`'s own identity-loading effect had no stale-response guard, so a
+brand-new signup flipping from the placeholder demo org to its own real org almost
+instantly could still end up displaying the demo org's data if that slower request happened
+to resolve last — same class of bug, same `cancelled` fix, as `Overview.tsx`'s own guard.
 
 Multi-conversation chat, ChatGPT-style, is real on both "My agent" → "Ask yourself" *and*
 the cross-person **Ask** page — switch between chats, start a new one, and a follow-up

@@ -97,13 +97,20 @@ CREATE INDEX IF NOT EXISTS org_admins_account_idx ON org_admins(account_id);
 -- token lives in an httpOnly cookie and is never persisted anywhere. One session type for
 -- every login, admin or employee or both — which panels/orgs it can act on is resolved
 -- from org_admins and people.account_id at request time, not baked into the session row.
+-- elevated_until: step-up auth. A normal login only ever grants baseline ("My agent")
+-- access; touching anything admin-scoped (org creation, the Admin panel, requireOrgRole-
+-- gated endpoints) additionally requires re-entering the account's password within the
+-- last window via POST /api/auth/step-up, which stamps this column. NULL or expired means
+-- not elevated — checked server-side in requireOrgRole itself, never trusted from the
+-- client, same posture as every other auth boundary in this codebase (CLAUDE.md rule 7).
 CREATE TABLE IF NOT EXISTS sessions (
-  id          uuid PRIMARY KEY,
-  account_id  integer NOT NULL REFERENCES accounts(id),
-  token_hash  text NOT NULL UNIQUE,
-  created_at  timestamptz NOT NULL,
-  expires_at  timestamptz NOT NULL,
-  revoked_at  timestamptz
+  id             uuid PRIMARY KEY,
+  account_id     integer NOT NULL REFERENCES accounts(id),
+  token_hash     text NOT NULL UNIQUE,
+  created_at     timestamptz NOT NULL,
+  expires_at     timestamptz NOT NULL,
+  revoked_at     timestamptz,
+  elevated_until timestamptz
 );
 CREATE INDEX IF NOT EXISTS sessions_account_idx ON sessions(account_id);
 
@@ -311,6 +318,43 @@ CREATE TABLE IF NOT EXISTS org_main_agent (
   model              text
 );
 
+-- The personal counterpart to org_main_agent, for an account connected to no organization
+-- at all — set by the account itself (no admin, no elevation; it's only ever your own
+-- credential). account_id as the primary key makes "one per account" structural, same
+-- reasoning as org_id above. No `scope` column: there's no IT/Security approval workflow
+-- for a personal credential the way there is for an org-wide one — always immediately
+-- usable the moment it's set.
+CREATE TABLE IF NOT EXISTS account_main_agent (
+  account_id         integer PRIMARY KEY REFERENCES accounts(id),
+  runtime_key        text NOT NULL REFERENCES runtime_catalog(key),
+  added_at           date NOT NULL,
+  api_key_encrypted  text,
+  base_url           text,
+  model              text
+);
+
+-- A personal account's own "Ask yourself" history — the counterpart to audit_log for
+-- someone with no org (audit_log's org_id/target_person_id are NOT NULL, so it structurally
+-- can't hold this). Deliberately not audit_log-shaped: no hash chain, no policy_revision_id,
+-- none of the tamper-evident/disclosure properties CLAUDE.md rule 2 protects there — there
+-- is no one else who could ever be shown this, so none of that machinery has anything to do.
+-- Just your own chat history.
+CREATE TABLE IF NOT EXISTS personal_asks (
+  id                 uuid PRIMARY KEY,
+  account_id         integer NOT NULL REFERENCES accounts(id),
+  conversation_id    uuid NOT NULL,
+  question           text NOT NULL,
+  answer             text NOT NULL,
+  created_at         timestamptz NOT NULL,
+  -- Real tools the personal ask-bridge decided to call for this turn (e.g. ["Linear"]) —
+  -- the personal counterpart to audit_log's snapshot.consultedSources, stored as its own
+  -- column since there's no snapshot blob here. Null/empty for every turn asked before
+  -- personal accounts could connect tools at all.
+  consulted_sources  jsonb
+);
+CREATE INDEX IF NOT EXISTS personal_asks_account_idx ON personal_asks(account_id);
+CREATE INDEX IF NOT EXISTS personal_asks_conversation_idx ON personal_asks(conversation_id);
+
 /* ---------- personal OAuth connections ----------
    Not org data — credential state for the real-integration features under "Set up my
    agent" (the daily-summary feature). Plaintext tokens are fine for a single-user local
@@ -330,6 +374,24 @@ CREATE TABLE IF NOT EXISTS person_oauth_tokens (
   site_url        text,
   updated_at      timestamptz NOT NULL,
   PRIMARY KEY (person_id, provider)
+);
+
+/* ---------- personal-account OAuth connections ----------
+   Same shape as person_oauth_tokens above, one level up: an account with no organization
+   has no `people` row to key off of at all (person_oauth_tokens.person_id is NOT NULL),
+   so the 20-tool connector catalog needs its own account-keyed table to reach personal
+   accounts — mirrors how account_main_agent mirrors org_main_agent and personal_asks
+   mirrors audit_log, same "same shape, different owner" idiom throughout this schema. */
+CREATE TABLE IF NOT EXISTS account_oauth_tokens (
+  account_id      integer NOT NULL REFERENCES accounts(id),
+  provider        text NOT NULL,
+  access_token    text NOT NULL,
+  refresh_token   text,
+  expires_at      timestamptz NOT NULL,
+  connected_email text,
+  site_url        text,
+  updated_at      timestamptz NOT NULL,
+  PRIMARY KEY (account_id, provider)
 );
 
 /* ---------- self-service tool connections ----------
@@ -404,8 +466,19 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON person_runtimes TO mesh_app;
 -- ever replaced by setting a new one — UPDATE covers that via ON CONFLICT DO UPDATE).
 GRANT SELECT, INSERT, UPDATE ON org_main_agent TO mesh_app;
 
+-- The personal counterpart: same shape, same reasoning, self-set instead of admin-set.
+GRANT SELECT, INSERT, UPDATE ON account_main_agent TO mesh_app;
+
+-- A personal account's own chat history — fully owned by the account, not append-only
+-- like audit_log (no disclosure/tamper-evidence property applies to your own private
+-- chat with yourself).
+GRANT SELECT, INSERT, UPDATE, DELETE ON personal_asks TO mesh_app;
+
 -- Personal OAuth connections: fully owned by the person, not append-only like audit_log.
 GRANT SELECT, INSERT, UPDATE, DELETE ON person_oauth_tokens TO mesh_app;
+
+-- Same for the account-keyed counterpart (personal, no-org connector connections).
+GRANT SELECT, INSERT, UPDATE, DELETE ON account_oauth_tokens TO mesh_app;
 
 -- Ingest tokens: the app creates and revokes them (revoked_at, not DELETE — a used-then-
 -- revoked token stays visible in its own history). Events are insert-only: a pushed

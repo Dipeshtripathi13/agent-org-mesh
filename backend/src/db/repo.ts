@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { hashEntry, verifyChain } from '../domain/audit.js';
 import { computeEscalationAge } from '../domain/escalations.js';
 import type {
+  AccountMainAgent,
   AgentRuntime,
   AuditEntry,
   Claim,
@@ -256,39 +257,6 @@ export async function listOrganizationsForAccount(accountId: number): Promise<Or
   return rows.map(toOrganization);
 }
 
-/** Northbeam — the seeded, intentionally-public demo org (matches MeContext.tsx's
- *  DEFAULT_ORG). Always included in the identity-switcher directory below regardless of
- *  login, so the "try it without an account" demo experience keeps working exactly as
- *  designed even after the fix this constant is part of. */
-const PUBLIC_DEMO_ORG_ID = 1;
-
-/** Every organization visible to "My agent"'s identity switcher (frontend/src/lib/
- *  MeContext.tsx): the standing public demo org, always, plus whichever real
- *  organizations the logged-in account actually has a connection to — as an admin or as
- *  a linked person. Used to return every organization in the system, completely
- *  unfiltered, on the reasoning that an org's name/slug/headcount was no more sensitive
- *  than the person-level data that panel already showed unauthenticated. That reasoning
- *  held while this was a closed dev/demo build with only seed data behind it — it
- *  stopped holding the moment this went live on a real domain, where the same
- *  unfiltered query let any anonymous visitor enumerate the name of every real
- *  organization anyone had ever signed up, via one unauthenticated request. Scoped now
- *  exactly like getPeopleForAccount/getOrgRolesForAccount — an account with no real
- *  identity anywhere gets just the demo org back, never anyone else's private one. */
-export async function listOrganizationsForIdentitySwitcher(accountId: number | null): Promise<Organization[]> {
-  const { rows } = await pool.query(
-    `SELECT o.*, count(p.id)::int AS people_count
-     FROM organizations o
-     LEFT JOIN people p ON p.org_id = o.id
-     WHERE o.id = $1
-        OR o.id IN (SELECT org_id FROM org_admins WHERE account_id = $2)
-        OR o.id IN (SELECT org_id FROM people WHERE account_id = $2)
-     GROUP BY o.id
-     ORDER BY o.id`,
-    [PUBLIC_DEMO_ORG_ID, accountId],
-  );
-  return rows.map(toOrganization);
-}
-
 export async function getOrganization(id: number): Promise<Organization> {
   const { rows } = await pool.query(
     `SELECT o.*, count(p.id)::int AS people_count
@@ -316,77 +284,41 @@ async function uniqueSlug(client: { query: (...a: any[]) => Promise<any> }, name
   }
 }
 
-/** The creating account becomes this org's sole 'owner' — atomically, so an org can
- *  never briefly exist with no admin able to manage it. Used when an *existing* account
- *  (already logged in as an admin) creates another org from Admin → Organizations —
- *  contrast with signUpWithNewOrganization below, the brand-new-account self-serve path. */
-export async function createOrganization(creatorAccountId: number, name: string): Promise<Organization> {
+/** The creating account becomes this org's sole 'owner' *and* its first person (top of
+ *  the chart, no manager) — atomically, so an org can never briefly exist with no admin
+ *  able to manage it, and the founder can see their own agent immediately rather than
+ *  landing in an org with zero people. Accounts and organizations are otherwise fully
+ *  decoupled (see server.ts's `POST /api/auth/signup`, which no longer bundles an org at
+ *  all): signing up only ever creates an account, and this — reached through its own
+ *  step-up-gated Admin action — is the one, deliberate place an organization gets
+ *  created, whether that's a brand-new individual's very first org or an existing admin
+ *  adding another one. */
+export async function createOrganization(
+  creatorAccountId: number,
+  creatorName: string,
+  name: string,
+): Promise<{ organization: Organization; person: Person }> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const slug = await uniqueSlug(client, name);
     const now = new Date().toISOString();
-    const { rows } = await client.query(
+    const { rows: orgRows } = await client.query(
       `INSERT INTO organizations (slug, name, created_at) VALUES ($1,$2,$3) RETURNING *`,
       [slug, name, now],
     );
-    await client.query(
-      `INSERT INTO org_admins (org_id, account_id, role, added_at) VALUES ($1,$2,'owner',$3)`,
-      [rows[0].id, creatorAccountId, now],
-    );
-    await client.query('COMMIT');
-    return toOrganization({ ...rows[0], people_count: 0 });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-/** Self-serve signup: a brand-new (or previously passwordless) account creates its own
- *  organization from scratch, in one atomic step — no existing admin has to set anything
- *  up for them first. They become both that org's only person (top of the chart, no
- *  manager) and its owner-admin. Mirrors createOrganization's transaction shape, just
- *  with an account + a person row folded into the same transaction. */
-export async function signUpWithNewOrganization(input: {
-  name: string;
-  email: string;
-  passwordHash: string;
-  orgName: string;
-}): Promise<{ account: Account; organization: Organization; person: Person }> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const now = new Date().toISOString();
-
-    const { rows: accountRows } = await client.query(
-      'INSERT INTO accounts (name, email, password_hash) VALUES ($1,$2,$3) RETURNING id, name, email',
-      [input.name, input.email, input.passwordHash],
-    );
-    const account: Account = accountRows[0];
-
-    const slug = await uniqueSlug(client, input.orgName);
-    const { rows: orgRows } = await client.query(
-      'INSERT INTO organizations (slug, name, created_at) VALUES ($1,$2,$3) RETURNING *',
-      [slug, input.orgName, now],
-    );
     const orgId = orgRows[0].id;
-
     await client.query(
       `INSERT INTO org_admins (org_id, account_id, role, added_at) VALUES ($1,$2,'owner',$3)`,
-      [orgId, account.id, now],
+      [orgId, creatorAccountId, now],
     );
-
     const { rows: personRows } = await client.query(
       `INSERT INTO people (org_id, name, title, team, manager_id, agent_deployed, surfaces, account_id)
-       VALUES ($1,$2,$3,$4,NULL,$5,$6,$7) RETURNING *`,
-      [orgId, input.name, 'Owner', 'Leadership', true, JSON.stringify(EMPTY_SURFACES), account.id],
+       VALUES ($1,$2,'Owner','Leadership',NULL,true,$3,$4) RETURNING *`,
+      [orgId, creatorName, JSON.stringify(EMPTY_SURFACES), creatorAccountId],
     );
-
     await client.query('COMMIT');
     return {
-      account,
       organization: toOrganization({ ...orgRows[0], people_count: 1 }),
       person: toPerson(personRows[0]),
     };
@@ -457,16 +389,26 @@ export async function createSession(accountId: number, tokenHash: string, now: s
   );
 }
 
-export async function resolveSession(tokenHash: string, now: string): Promise<{ accountId: number } | null> {
+export async function resolveSession(
+  tokenHash: string,
+  now: string,
+): Promise<{ accountId: number; elevatedUntil: string | null } | null> {
   const { rows } = await pool.query(
-    `SELECT account_id FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
+    `SELECT account_id, elevated_until FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
     [tokenHash, now],
   );
-  return rows.length ? { accountId: rows[0].account_id } : null;
+  return rows.length ? { accountId: rows[0].account_id, elevatedUntil: rows[0].elevated_until } : null;
 }
 
 export async function revokeSession(tokenHash: string, now: string): Promise<void> {
   await pool.query('UPDATE sessions SET revoked_at = $2 WHERE token_hash = $1', [tokenHash, now]);
+}
+
+// Step-up auth: stamped after the account re-enters its password via POST
+// /api/auth/step-up. Short-lived on purpose — re-checked against `now` in requireOrgRole
+// on every admin-scoped request, never cached client-side as a boolean.
+export async function elevateSession(tokenHash: string, until: string): Promise<void> {
+  await pool.query('UPDATE sessions SET elevated_until = $2 WHERE token_hash = $1', [tokenHash, until]);
 }
 
 /* ---------- org chart: people ---------- */
@@ -491,6 +433,9 @@ export async function getOrgIdOfPerson(id: number): Promise<number> {
 const EMPTY_SURFACES: Record<SurfaceKey, SurfaceState> = {
   github: 'absent', jira: 'absent', salesforce: 'absent',
   calendar: 'absent', slack: 'absent', confluence: 'absent',
+  linear: 'absent', notion: 'absent', asana: 'absent', gitlab: 'absent', hubspot: 'absent', zendesk: 'absent',
+  trello: 'absent', airtable: 'absent', monday: 'absent', figma: 'absent', discord: 'absent',
+  microsoft365: 'absent', zoom: 'absent', dropbox: 'absent',
   // Out of scope by default — most people don't have a real sub-agent/token registered.
   'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope',
 };
@@ -521,9 +466,13 @@ export async function createPerson(orgId: number, input: {
  *  which org it's in, since policy.ts/coverage.ts never need one) because this is the
  *  one place identities from *different* orgs are returned side by side and the caller
  *  needs to tell them apart. */
-export async function getPeopleForAccount(accountId: number): Promise<(Person & { orgId: number })[]> {
-  const { rows } = await pool.query('SELECT * FROM people WHERE account_id = $1 ORDER BY org_id, id', [accountId]);
-  return rows.map((row) => ({ ...toPerson(row), orgId: row.org_id }));
+export async function getPeopleForAccount(accountId: number): Promise<(Person & { orgId: number; orgName: string })[]> {
+  const { rows } = await pool.query(
+    `SELECT p.*, o.name AS org_name FROM people p JOIN organizations o ON o.id = p.org_id
+     WHERE p.account_id = $1 ORDER BY p.org_id, p.id`,
+    [accountId],
+  );
+  return rows.map((row) => ({ ...toPerson(row), orgId: row.org_id, orgName: row.org_name }));
 }
 
 /** Refuses to remove anyone still listed as someone else's manager — reassign first. */
@@ -890,6 +839,123 @@ export async function setOrgMainAgent(
   );
 }
 
+function toAccountMainAgent(row: any): AccountMainAgent {
+  return {
+    runtimeKey: row.runtime_key,
+    addedAt: isoDate(row.added_at),
+    apiKeyEncrypted: row.api_key_encrypted ?? null,
+    baseUrl: row.base_url ?? null,
+    model: row.model ?? null,
+  };
+}
+
+export async function getAccountMainAgent(accountId: number): Promise<AccountMainAgent | null> {
+  const { rows } = await pool.query('SELECT * FROM account_main_agent WHERE account_id = $1', [accountId]);
+  return rows[0] ? toAccountMainAgent(rows[0]) : null;
+}
+
+/** The personal counterpart to setOrgMainAgent — self-set by the account itself (see
+ *  server.ts's POST /api/accounts/me/main-agent, gated only on being logged in as
+ *  yourself). No `scope`: a personal credential is always immediately usable. */
+export async function setAccountMainAgent(
+  accountId: number,
+  runtimeKey: string,
+  addedAt: string,
+  apiKeyEncrypted: string | null,
+  baseUrl: string | null,
+  model: string | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO account_main_agent (account_id, runtime_key, added_at, api_key_encrypted, base_url, model)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (account_id) DO UPDATE SET
+       runtime_key = $2, added_at = $3, api_key_encrypted = $4, base_url = $5, model = $6`,
+    [accountId, runtimeKey, addedAt, apiKeyEncrypted, baseUrl, model],
+  );
+}
+
+export interface PersonalAskEntry {
+  id: string;
+  conversationId: string;
+  question: string;
+  answer: string;
+  createdAt: string;
+  consultedSources: string[];
+}
+
+function toPersonalAskEntry(row: any): PersonalAskEntry {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    question: row.question,
+    consultedSources: row.consulted_sources ?? [],
+    answer: row.answer,
+    createdAt: iso(row.created_at),
+  };
+}
+
+/** A personal account's own "Ask yourself" history — the counterpart to audit_log for an
+ *  account with no organization (audit_log's org_id/target_person_id are NOT NULL, so it
+ *  structurally can't hold this). No hash chain, no policy_revision_id: none of
+ *  audit_log's tamper-evident/disclosure properties apply — there is no one else who
+ *  could ever be shown this, it's just your own chat history. */
+export async function insertPersonalAsk(
+  accountId: number,
+  conversationId: string,
+  question: string,
+  answer: string,
+  createdAt: string,
+  consultedSources: string[] = [],
+): Promise<PersonalAskEntry> {
+  const { rows } = await pool.query(
+    `INSERT INTO personal_asks (id, account_id, conversation_id, question, answer, created_at, consulted_sources)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [randomUUID(), accountId, conversationId, question, answer, createdAt, JSON.stringify(consultedSources)],
+  );
+  return toPersonalAskEntry(rows[0]);
+}
+
+export async function getPersonalConversation(accountId: number, conversationId: string): Promise<PersonalAskEntry[]> {
+  const { rows } = await pool.query(
+    'SELECT * FROM personal_asks WHERE account_id = $1 AND conversation_id = $2 ORDER BY created_at, id',
+    [accountId, conversationId],
+  );
+  return rows.map(toPersonalAskEntry);
+}
+
+/** Every one of this account's own personal asks, across all its chats — the frontend
+ *  groups these by conversationId itself, same as it already does with real audit rows
+ *  for the org path (conversations.ts). */
+export async function listPersonalAsks(accountId: number): Promise<PersonalAskEntry[]> {
+  const { rows } = await pool.query(
+    'SELECT * FROM personal_asks WHERE account_id = $1 ORDER BY created_at, id',
+    [accountId],
+  );
+  return rows.map(toPersonalAskEntry);
+}
+
+/** Same grouping shape and reasoning as listConversationsForPair above, just over
+ *  personal_asks instead of audit_log. */
+export async function listPersonalConversations(accountId: number): Promise<ConversationSummary[]> {
+  const { rows } = await pool.query(
+    `SELECT conversation_id, question, created_at FROM personal_asks
+     WHERE account_id = $1 ORDER BY created_at`,
+    [accountId],
+  );
+  const byId = new Map<string, ConversationSummary>();
+  for (const row of rows) {
+    const id = row.conversation_id as string;
+    const existing = byId.get(id);
+    if (existing) {
+      existing.updatedAt = iso(row.created_at);
+      existing.turnCount += 1;
+    } else {
+      byId.set(id, { id, title: row.question, updatedAt: iso(row.created_at), turnCount: 1 });
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
 /* ---------- personal OAuth connections ----------
    Not org data — credential state for the real-integration features. Fully owned by the
    person: unlike audit_log, this can be updated and deleted by them at will. */
@@ -947,6 +1013,44 @@ export async function saveOAuthConnection(personId: number, input: {
 
 export async function deleteOAuthConnection(personId: number, provider: string): Promise<void> {
   await pool.query('DELETE FROM person_oauth_tokens WHERE person_id = $1 AND provider = $2', [personId, provider]);
+}
+
+/** Same three functions, one level up: an account with no organization (no `people` row
+ *  to key off of) connecting a tool from its own personal "Set up my agent" — mirrors
+ *  the person-keyed trio above exactly, just against account_oauth_tokens. */
+export async function getAccountOAuthConnection(accountId: number, provider: string): Promise<OAuthConnection | null> {
+  const { rows } = await pool.query(
+    'SELECT * FROM account_oauth_tokens WHERE account_id = $1 AND provider = $2',
+    [accountId, provider],
+  );
+  return rows.length ? toOAuthConnection(rows[0]) : null;
+}
+
+export async function saveAccountOAuthConnection(accountId: number, input: {
+  provider: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string;
+  connectedEmail: string | null;
+  siteUrl?: string | null;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO account_oauth_tokens
+       (account_id, provider, access_token, refresh_token, expires_at, connected_email, site_url, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (account_id, provider) DO UPDATE SET
+       access_token = EXCLUDED.access_token,
+       refresh_token = COALESCE(EXCLUDED.refresh_token, account_oauth_tokens.refresh_token),
+       expires_at = EXCLUDED.expires_at,
+       connected_email = EXCLUDED.connected_email,
+       site_url = EXCLUDED.site_url,
+       updated_at = EXCLUDED.updated_at`,
+    [accountId, input.provider, input.accessToken, input.refreshToken, input.expiresAt, input.connectedEmail, input.siteUrl ?? null, new Date().toISOString()],
+  );
+}
+
+export async function deleteAccountOAuthConnection(accountId: number, provider: string): Promise<void> {
+  await pool.query('DELETE FROM account_oauth_tokens WHERE account_id = $1 AND provider = $2', [accountId, provider]);
 }
 
 /* ---------- self-service tool connections ----------

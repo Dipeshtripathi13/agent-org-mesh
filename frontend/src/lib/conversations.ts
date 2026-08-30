@@ -60,6 +60,31 @@ export function turnFromAuditEntry(entry: RawEntry): ThreadTurn {
   };
 }
 
+export type RawPersonalEntry = Awaited<ReturnType<typeof api.personalAsks>>['entries'][number];
+
+/** The personal counterpart to turnFromAuditEntry, for an account with no organization.
+ *  A personal ask was never about disclosure — no claims, no policy engine, no coverage —
+ *  so `items`/`withheldCount`/`coverage` are left at their "nothing to show" defaults
+ *  rather than faked; MyAgent.tsx's turn renderer skips those sub-sections whenever
+ *  `items` is empty and `coverage.text` is blank. `consultedSources` is real, though: the
+ *  personal ask-bridge's own router decision (server.ts's ask-personal), same meaning as
+ *  the org path's own consultedSources. */
+export function turnFromPersonalEntry(entry: RawPersonalEntry): ThreadTurn {
+  return {
+    id: entry.id,
+    question: entry.question,
+    result: {
+      answer: entry.answer,
+      items: [],
+      withheldCount: 0,
+      coverage: { text: '' },
+      consultedSources: entry.consultedSources ?? [],
+    },
+    error: null,
+    busy: false,
+  };
+}
+
 /** `now` is injectable so tests don't race the real clock. */
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const ms = now - new Date(iso).getTime();

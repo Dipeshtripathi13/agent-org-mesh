@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { relativeTime, turnFromAuditEntry, type RawEntry } from './conversations';
+import { relativeTime, turnFromAuditEntry, turnFromPersonalEntry, type RawEntry, type RawPersonalEntry } from './conversations';
 import type { ResponseItem } from './api';
 
 /**
@@ -92,6 +92,45 @@ describe('turnFromAuditEntry', () => {
 
   it('defaults consultedSources to an empty array for a pre-feature row that never had it', () => {
     const turn = turnFromAuditEntry(entry({}));
+    expect(turn.result?.consultedSources).toEqual([]);
+  });
+});
+
+describe('turnFromPersonalEntry', () => {
+  const personalEntry: RawPersonalEntry = {
+    id: 'ask-1',
+    conversationId: 'chat-1',
+    question: 'What have I been working on?',
+    answer: 'You shipped the retry handler.',
+    createdAt: '2026-08-19T12:00:00.000Z',
+    consultedSources: [],
+  };
+
+  it('carries the question and plain-text answer straight through', () => {
+    const turn = turnFromPersonalEntry(personalEntry);
+    expect(turn.id).toBe('ask-1');
+    expect(turn.question).toBe('What have I been working on?');
+    expect(turn.result?.answer).toBe('You shipped the retry handler.');
+    expect(turn.busy).toBe(false);
+    expect(turn.error).toBeNull();
+  });
+
+  it('leaves items/withheldCount/coverage at their "nothing to show" defaults', () => {
+    const turn = turnFromPersonalEntry(personalEntry);
+    expect(turn.result?.items).toEqual([]);
+    expect(turn.result?.withheldCount).toBe(0);
+    expect(turn.result?.coverage).toEqual({ text: '' });
+    expect(turn.result?.consultedSources).toEqual([]);
+  });
+
+  it('carries real consultedSources through — the personal ask-bridge\'s own connected-tool picks', () => {
+    const turn = turnFromPersonalEntry({ ...personalEntry, consultedSources: ['Linear', 'Notion'] });
+    expect(turn.result?.consultedSources).toEqual(['Linear', 'Notion']);
+  });
+
+  it('defaults consultedSources to an empty array for a pre-feature row that never had it', () => {
+    const { consultedSources: _omit, ...withoutField } = personalEntry;
+    const turn = turnFromPersonalEntry(withoutField as RawPersonalEntry);
     expect(turn.result?.consultedSources).toEqual([]);
   });
 });

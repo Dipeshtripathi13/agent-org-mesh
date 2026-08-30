@@ -130,10 +130,28 @@ export async function answerFromActivity(personName: string, question: string, s
   ].join('\n'), credentials);
 }
 
+/** A plain, ungrounded conversation — no "answer only from the data below" constraint, so
+ *  it still works with nothing connected. See modelProvider.ts's ModelProvider.converse
+ *  doc for why this is a genuinely separate method from answerFromActivity rather than
+ *  that function called with an empty sections array, and for what `sections` means here. */
+export async function converseFreely(personName: string, question: string, priorTurns?: ConversationTurn[], credentials?: ProviderCredentials, sections?: ActivitySection[]): Promise<string> {
+  const body = sections && sections.length > 0 ? sections.map((s) => `## ${s.source}\n${s.digest}`).join('\n\n') : null;
+  return callClaude([
+    `You are ${personName}'s own personal assistant, answering directly and conversationally.`,
+    'Be concise and helpful.',
+    body ? 'Some of your connected tools returned real, relevant activity below — use it if it helps.' : '',
+    '',
+    formatPriorTurns(priorTurns),
+    wrapUntrustedData('question', question),
+    ...(body ? ['', wrapUntrustedData('connected-tool-data', body)] : []),
+  ].join('\n'), credentials);
+}
+
 /** Anthropic's ModelProvider implementation — a thin wrapper, no logic duplicated. */
 export const anthropicProvider: ModelProvider = {
   configured: anthropicConfigured,
   selectRelevantSurfaces,
   synthesize: answerFromActivity,
   writeClaim: writeActivityClaim,
+  converse: converseFreely,
 };

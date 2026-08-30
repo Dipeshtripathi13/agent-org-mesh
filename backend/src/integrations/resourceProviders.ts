@@ -1,6 +1,10 @@
 import * as repo from '../db/repo.js';
 import type { SurfaceKey } from '../domain/types.js';
-import { ingestClaudeCodeClaim, ingestCodexClaim, ingestGeminiClaim, ingestGithubClaim, ingestJiraClaim } from './realClaims.js';
+import {
+  ingestClaudeCodeClaim, ingestCodexClaim, ingestGeminiClaim, ingestGithubClaim, ingestJiraClaim,
+  ingestLinearClaim, ingestNotionClaim, ingestConfluenceClaim, ingestAsanaClaim, ingestGitlabClaim,
+  ingestHubspotClaim, ingestZendeskClaim, ingestCalendarClaim,
+} from './realClaims.js';
 import { getMainProvider } from './runtimeProvider.js';
 
 /**
@@ -8,12 +12,19 @@ import { getMainProvider } from './runtimeProvider.js';
  * surface a person has plugs in here as a ResourceProvider. `gatherAll` runs every
  * connected provider for that person in parallel and lets each one upsert its own real
  * Claim — the existing claims pipeline (respond() in policy.ts) picks the results up
- * exactly like any seeded claim, unmodified.
+ * exactly like any seeded claim, unmodified. Adding a 14th real provider is exactly this:
+ * one more line here, once its own client module and `ingest<Tool>Claim` function exist
+ * (realClaims.ts) — this array, `selectRelevantSurfaces`'s routing, and everything
+ * downstream needs no other change per tool.
  *
- * claude-code, github, codex, and gemini-cli are real and live-verified. jira is real but
- * UNVERIFIED — built the same way, no real instance to test against as of 2026-08-17 (see
- * CLAUDE.md). Gmail is deliberately NOT a provider here — it stays personal-only (the
- * "Ask Claude" box), never a manager-visible org claim. See the design doc §8 for why.
+ * claude-code, github, codex, and gemini-cli are real and live-verified. jira, linear,
+ * notion, confluence, asana, gitlab, hubspot, zendesk, and calendar are real but
+ * UNVERIFIED — built the same way, no real account/instance to test against yet (see
+ * CLAUDE.md's connector catalog paragraph). Gmail is deliberately NOT a provider here —
+ * it stays personal-only (the "Ask yourself" box), never a manager-visible org claim. See
+ * the design doc §8 for why. Trello/Airtable/Monday/Figma/Discord are connectable
+ * (connectorCatalog.ts) but have no ResourceProvider yet — ingestion deliberately
+ * deferred, see connectorCatalog.ts's own module comment.
  */
 export interface ResourceProvider {
   surfaceKey: SurfaceKey;
@@ -26,6 +37,14 @@ export const PROVIDERS: ResourceProvider[] = [
   { surfaceKey: 'codex', ingest: ingestCodexClaim },
   { surfaceKey: 'gemini-cli', ingest: ingestGeminiClaim },
   { surfaceKey: 'jira', ingest: ingestJiraClaim },
+  { surfaceKey: 'linear', ingest: ingestLinearClaim },
+  { surfaceKey: 'notion', ingest: ingestNotionClaim },
+  { surfaceKey: 'confluence', ingest: ingestConfluenceClaim },
+  { surfaceKey: 'asana', ingest: ingestAsanaClaim },
+  { surfaceKey: 'gitlab', ingest: ingestGitlabClaim },
+  { surfaceKey: 'hubspot', ingest: ingestHubspotClaim },
+  { surfaceKey: 'zendesk', ingest: ingestZendeskClaim },
+  { surfaceKey: 'calendar', ingest: ingestCalendarClaim },
 ];
 
 const startOfToday = () => {

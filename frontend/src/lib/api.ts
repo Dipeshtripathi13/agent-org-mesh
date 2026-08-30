@@ -90,6 +90,35 @@ export interface OrgMainAgent {
   baseUrl: string | null;
   model: string | null;
 }
+/** The personal counterpart to OrgMainAgent, for an account connected to no organization
+ *  at all — set by the account itself, no admin involved. Same shape minus `scope`. */
+export interface AccountMainAgent {
+  runtimeKey: string;
+  addedAt: string;
+  hasCustomApiKey: boolean;
+  baseUrl: string | null;
+  model: string | null;
+}
+/** One entry in the plug-and-play connector catalog (backend's connectorCatalog.ts) —
+ *  drives ConnectorsPanel's dropdown and per-tool connect form entirely from data. */
+export interface ConnectorField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  secret?: boolean;
+  optional?: boolean;
+}
+export type ConnectorCategory = 'code' | 'docs' | 'project-mgmt' | 'support' | 'crm' | 'comms' | 'calendar' | 'storage' | 'design';
+export interface ConnectorDef {
+  key: string;
+  name: string;
+  category: ConnectorCategory;
+  authType: 'pat' | 'pat-with-site' | 'oauth-google' | 'coming-soon';
+  fields: ConnectorField[];
+  status: 'live' | 'connectable' | 'coming-soon';
+  helpText: string;
+}
+
 /** The one real login identity in this app — a human, not a role. The same account can
  *  administer one or more orgs (org_admins) and/or be linked from one or more `people`
  *  rows (an org-chart identity, one per org) at the same time. */
@@ -101,7 +130,7 @@ export type OrgRole = 'owner' | 'admin' | 'viewer';
 export interface OrgAdmin { accountId: number; name: string; email: string; role: OrgRole; addedAt: string; }
 /** One of an account's own org-chart identities — `orgId` rides outside `Person` itself
  *  since this is the one place identities from different orgs appear side by side. */
-export type MyIdentity = Person & { orgId: number };
+export type MyIdentity = Person & { orgId: number; orgName: string };
 export type OrgPlan = 'starter' | 'business' | 'enterprise';
 export interface Organization {
   id: number; slug: string; name: string; createdAt: string; plan: OrgPlan; peopleCount: number;
@@ -134,15 +163,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  authMe: () => req<{ account: Account | null; orgRoles: Record<number, OrgRole>; people: MyIdentity[] }>('/auth/me'),
+  authMe: () =>
+    req<{ account: Account | null; orgRoles: Record<number, OrgRole>; people: MyIdentity[]; adminElevatedUntil: string | null }>('/auth/me'),
   login: (email: string, password: string) =>
     req<{ account: Account }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  /** Self-serve: creates the account, a brand-new organization, and this account's first
-   *  person-identity (top of that org's chart) in one atomic step — no existing admin
-   *  required. Logs in immediately on success. */
-  signUp: (name: string, email: string, password: string, organizationName: string) =>
+  /** Step-up ("log in as admin") — re-verifies the already-logged-in account's own
+   *  password and elevates its existing session for a short window. Not a second account
+   *  or a second cookie, just proof-of-you-again before anything Admin-scoped unlocks. */
+  stepUp: (password: string) =>
+    req<{ adminElevatedUntil: string }>('/auth/step-up', { method: 'POST', body: JSON.stringify({ password }) }),
+  /** Self-serve: creates a personal account *and* a one-person "workspace" organization
+   *  for it in the same step (auto-named, no company name required up front) — logs in
+   *  immediately, already elevated, so the new owner can set up their own main agent with
+   *  no extra re-auth prompt. `createOrganization` below still exists separately for
+   *  adding an *additional* org later. */
+  signUp: (name: string, email: string, password: string) =>
     req<{ account: Account; organization: Organization; person: Person }>('/auth/signup', {
-      method: 'POST', body: JSON.stringify({ name, email, password, organizationName }),
+      method: 'POST', body: JSON.stringify({ name, email, password }),
     }),
   logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -163,11 +200,11 @@ export const api = {
 
   /** Admin-scoped — only orgs the logged-in account administers (empty when logged out). */
   organizations: () => req<{ organizations: Organization[] }>('/organizations'),
-  /** Unfiltered — every org, regardless of login. Only for MeContext's identity
-   *  switcher; the Admin panel should always use `organizations()` above instead. */
-  orgDirectory: () => req<{ organizations: Organization[] }>('/org-directory'),
+  /** Also makes the caller this org's first person (Owner, top of the chart) — accounts
+   *  and orgs are fully decoupled (see auth.signUp above), so this is the one place an
+   *  org actually gets created, for a brand-new individual or an existing admin alike. */
   createOrganization: (name: string) =>
-    req<{ organization: Organization }>('/organizations', { method: 'POST', body: JSON.stringify({ name }) }),
+    req<{ organization: Organization; person: Person }>('/organizations', { method: 'POST', body: JSON.stringify({ name }) }),
   addPerson: (orgId: number, person: NewPerson) =>
     req<{ person: Person; tempPassword: string | null; emailSent: boolean }>(`/organizations/${orgId}/people`, { method: 'POST', body: JSON.stringify(person) }),
   removePerson: (orgId: number, personId: number) =>
@@ -201,6 +238,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ targetId, role, question, window, persist, requesterId, conversationId }),
     }),
+  /** The personal counterpart to agentAsk, for an account with no organization — no
+   *  targetId/role/requesterId, since the requester is always the target. */
+  askPersonal: (question: string, conversationId?: string) =>
+    req<{ answer: string; conversationId: string; consultedSources: string[] }>('/agent/ask-personal', {
+      method: 'POST',
+      body: JSON.stringify({ question, conversationId }),
+    }),
   audit: (orgId: number) => req<{
     entries: {
       id: string; question: string; requesterRole: string; targetPersonId: number;
@@ -220,6 +264,14 @@ export const api = {
   listConversations: (requesterId: number, targetId: number) => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
   }>(`/agent/conversations?requesterId=${requesterId}&targetId=${targetId}`),
+  /** The personal counterparts to auditForSubject/listConversations, scoped to the
+   *  logged-in account's own personal asks rather than an org-chart person id. */
+  personalAsks: () => req<{
+    entries: { id: string; conversationId: string; question: string; answer: string; createdAt: string; consultedSources: string[] }[];
+  }>('/accounts/me/asks'),
+  personalConversations: () => req<{
+    conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
+  }>('/accounts/me/conversations'),
   escalations: (orgId: number) => req<{ escalations: Escalation[] }>(`/escalations?orgId=${orgId}`),
   acknowledgeEscalation: (id: string, actorPersonId: number) =>
     req<{ escalation: Escalation }>(`/escalations/${id}/acknowledge`, {
@@ -272,6 +324,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ runtimeKey, scope, ...credentials }),
     }),
+  /** The personal counterpart to orgMainAgent/setOrgMainAgent, for an account with no
+   *  organization — self-service, no `scope` (no approval workflow for your own
+   *  credential). */
+  accountMainAgent: () =>
+    req<{ catalog: AgentRuntime[]; registered: AccountMainAgent | null }>('/accounts/me/main-agent'),
+  setAccountMainAgent: (
+    runtimeKey: string,
+    credentials?: { apiKey?: string | null; baseUrl?: string | null; model?: string | null },
+  ) =>
+    req<{ registered: AccountMainAgent }>('/accounts/me/main-agent', {
+      method: 'POST',
+      body: JSON.stringify({ runtimeKey, ...credentials }),
+    }),
   disconnectRuntime: (personId: number, runtimeKey: string) =>
     req<{ registered: PersonRuntime[] }>(`/person/${personId}/runtimes/${runtimeKey}`, {
       method: 'DELETE',
@@ -306,6 +371,29 @@ export const api = {
     }),
   disconnectJira: (personId: number) =>
     req<{ ok: true }>(`/person/${personId}/jira`, { method: 'DELETE' }),
+
+  /** The generic plug-and-play framework for every connector beyond GitHub/Jira/Gmail —
+   *  one catalog, one connect/disconnect/status shape, driving ConnectorsPanel's dropdown
+   *  and dynamic per-tool form entirely from data instead of one component per tool. */
+  connectorsCatalog: () => req<{ catalog: ConnectorDef[] }>('/connectors/catalog'),
+  personConnectors: (personId: number) =>
+    req<{ statuses: Record<string, { connected: boolean; label: string | null }> }>(`/person/${personId}/connectors`),
+  connectConnector: (personId: number, key: string, fields: Record<string, string>) =>
+    req<{ connected: true; label: string }>(`/person/${personId}/connectors/${key}`, {
+      method: 'POST', body: JSON.stringify(fields),
+    }),
+  disconnectConnector: (personId: number, key: string) =>
+    req<{ ok: true }>(`/person/${personId}/connectors/${key}`, { method: 'DELETE' }),
+  /** Same three, account-keyed instead of person-keyed — for a personal (no-org) account's
+   *  own "Set up my agent." Same catalog (connectorsCatalog above is shared by both). */
+  accountConnectors: () =>
+    req<{ statuses: Record<string, { connected: boolean; label: string | null }> }>('/accounts/me/connectors'),
+  connectAccountConnector: (key: string, fields: Record<string, string>) =>
+    req<{ connected: true; label: string }>(`/accounts/me/connectors/${key}`, {
+      method: 'POST', body: JSON.stringify(fields),
+    }),
+  disconnectAccountConnector: (key: string) =>
+    req<{ ok: true }>(`/accounts/me/connectors/${key}`, { method: 'DELETE' }),
 
   ingestTokens: (personId: number) => req<{ tokens: IngestToken[] }>(`/person/${personId}/ingest-tokens`),
   createIngestToken: (personId: number, label: string) =>

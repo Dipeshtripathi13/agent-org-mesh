@@ -22,12 +22,12 @@ import {
 } from './domain/coverage.js';
 import { encryptSecret } from './domain/crypto.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
-import type { ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
+import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
 import * as repo from './db/repo.js';
 import type { OrgRole } from './db/repo.js';
 import { anthropicConfigured, summarizeDailyActivity } from './integrations/anthropic.js';
 import { rawActivityDigest } from './integrations/modelProvider.js';
-import { getMainProvider } from './integrations/runtimeProvider.js';
+import { getMainProvider, getPersonalMainProvider } from './integrations/runtimeProvider.js';
 import { isSafeExternalUrl } from './integrations/urlSafety.js';
 import { formatClaudeCodeDigest, getTodaysClaudeCodeActivity, PROJECT_ROOT } from './integrations/claudeCodeActivity.js';
 import { askClaudeCli, claudeCliAvailable } from './integrations/claudeCli.js';
@@ -42,6 +42,21 @@ import { generateToken, listTokens, resolveToken, revokeToken } from './integrat
 import { allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll } from './integrations/resourceProviders.js';
 import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
+import { CONNECTOR_CATALOG } from './integrations/connectorCatalog.js';
+import { getGenericConnectionStatus } from './integrations/genericConnection.js';
+import { saveLinearConnection, getLinearStatus, disconnectLinear } from './integrations/linear.js';
+import { saveNotionConnection, getNotionStatus, disconnectNotion } from './integrations/notion.js';
+import { saveConfluenceConnection, getConfluenceStatus, disconnectConfluence } from './integrations/confluence.js';
+import { saveAsanaConnection, getAsanaStatus, disconnectAsana } from './integrations/asana.js';
+import { saveGitlabConnection, getGitlabStatus, disconnectGitlab } from './integrations/gitlab.js';
+import { saveHubspotConnection, getHubspotStatus, disconnectHubspot } from './integrations/hubspot.js';
+import { saveZendeskConnection, getZendeskStatus, disconnectZendesk } from './integrations/zendesk.js';
+import { saveTrelloConnection, getTrelloStatus, disconnectTrello } from './integrations/trello.js';
+import { saveAirtableConnection, getAirtableStatus, disconnectAirtable } from './integrations/airtable.js';
+import { saveMondayConnection, getMondayStatus, disconnectMonday } from './integrations/monday.js';
+import { saveFigmaConnection, getFigmaStatus, disconnectFigma } from './integrations/figma.js';
+import { saveDiscordConnection, getDiscordStatus, disconnectDiscord } from './integrations/discord.js';
+import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -124,11 +139,25 @@ const SESSION_COOKIE = 'aom_session';
 // proportionate fix for now (a 4x-shorter fixed exposure window).
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-async function setSessionCookie(reply: { setCookie: (...a: any[]) => void }, accountId: number): Promise<void> {
+/** `elevate: true` is only for self-serve signup (see its own call site below): creating
+ *  a brand-new organization is itself the act of typing this exact account's password
+ *  moments earlier, so treating that as already having proven it once — skipping an
+ *  immediate, redundant step-up prompt seconds later — is a real judgment call, not a
+ *  loophole. A plain login never passes this; that's what keeps "log in" and "log in as
+ *  admin" two genuinely separate steps everywhere else. */
+async function setSessionCookie(
+  reply: { setCookie: (...a: any[]) => void },
+  accountId: number,
+  opts?: { elevate?: boolean },
+): Promise<void> {
   const token = generateSessionToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
-  await repo.createSession(accountId, hashSessionToken(token), now.toISOString(), expiresAt.toISOString());
+  const tokenHash = hashSessionToken(token);
+  await repo.createSession(accountId, tokenHash, now.toISOString(), expiresAt.toISOString());
+  if (opts?.elevate) {
+    await repo.elevateSession(tokenHash, new Date(now.getTime() + ELEVATION_WINDOW_MS).toISOString());
+  }
   reply.setCookie(SESSION_COOKIE, token, {
     path: '/', httpOnly: true, sameSite: 'lax', secure: isProduction, expires: expiresAt,
   });
@@ -138,22 +167,45 @@ async function setSessionCookie(reply: { setCookie: (...a: any[]) => void }, acc
  *  cookie's hash, never from anything a request body or query string claims. Returns
  *  null (never throws) so every route decides its own 401 vs. "treat as logged out"
  *  response shape. */
-async function currentAccountId(req: { cookies: Record<string, string | undefined> }): Promise<number | null> {
+async function currentSession(
+  req: { cookies: Record<string, string | undefined> },
+): Promise<{ accountId: number; elevatedUntil: string | null } | null> {
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return null;
-  const session = await repo.resolveSession(hashSessionToken(token), new Date().toISOString());
+  return repo.resolveSession(hashSessionToken(token), new Date().toISOString());
+}
+
+async function currentAccountId(req: { cookies: Record<string, string | undefined> }): Promise<number | null> {
+  const session = await currentSession(req);
   return session?.accountId ?? null;
 }
 
 const ROLE_RANK: Record<OrgRole, number> = { viewer: 1, admin: 2, owner: 3 };
 
-type OrgRoleCheck = { ok: true; accountId: number } | { ok: false; code: 401 | 403; error: string };
+// Step-up auth (a.k.a. "sudo mode"): a normal login is enough to answer questions about
+// yourself in "My agent", but every Admin-panel-scoped action — creating an organization,
+// managing admins/people, editing policy, reading the audit log — additionally requires
+// having re-entered the account's password within this window (POST /api/auth/step-up).
+// 15 minutes mirrors GitHub's own sudo-mode default; short on purpose, since re-elevating
+// is one password prompt away and a stale elevation is exactly what a stolen-cookie
+// attacker would want to inherit for free.
+const ELEVATION_WINDOW_MS = 15 * 60 * 1000;
+
+function isElevated(elevatedUntil: string | null): boolean {
+  return elevatedUntil != null && new Date(elevatedUntil).getTime() > Date.now();
+}
+
+type OrgRoleCheck = { ok: true; accountId: number } | { ok: false; code: 401 | 403 | 428; error: string };
 
 /** Resolves the session, then checks its role for this specific org is at least
- *  `minRole`. Returns a discriminated result rather than mutating `reply` and having
- *  callers re-read its status code back out — every call site sets its own reply.code
- *  from `result.code` and returns `{ error: result.error }` directly. Mirrors
- *  verifyRequesterRole's shape below (the analogous check for a *person's* claimed
+ *  `minRole`, AND that the session is currently elevated (see ELEVATION_WINDOW_MS above)
+ *  — every one of this function's call sites is an Admin-panel action, so this is the one
+ *  place that requirement needs to live for all of them to inherit it. Returns a
+ *  discriminated result rather than mutating `reply` and having callers re-read its status
+ *  code back out — every call site sets its own reply.code from `result.code` and returns
+ *  `{ error: result.error }` directly. 428 ("Precondition Required") is what the frontend
+ *  watches for to distinguish "re-enter your password" from a genuine, unrecoverable 403.
+ *  Mirrors verifyRequesterRole's shape below (the analogous check for a *person's* claimed
  *  org-chart role on /api/agent/ask). */
 async function requireOrgRole(
   req: { cookies: Record<string, string | undefined> },
@@ -161,11 +213,26 @@ async function requireOrgRole(
   minRole: OrgRole,
   deniedMessage: string,
 ): Promise<OrgRoleCheck> {
-  const accountId = await currentAccountId(req);
-  if (accountId == null) return { ok: false, code: 401, error: 'log in first' };
-  const role = await repo.getOrgRole(orgId, accountId);
+  const session = await currentSession(req);
+  if (session == null) return { ok: false, code: 401, error: 'log in first' };
+  const role = await repo.getOrgRole(orgId, session.accountId);
   if (role == null || ROLE_RANK[role] < ROLE_RANK[minRole]) return { ok: false, code: 403, error: deniedMessage };
-  return { ok: true, accountId };
+  if (!isElevated(session.elevatedUntil)) return { ok: false, code: 428, error: 'admin re-authentication required' };
+  return { ok: true, accountId: session.accountId };
+}
+
+/** Same elevation check as requireOrgRole, for the one Admin action that has no orgId yet
+ *  to check a role against: creating a brand-new organization from inside an already-
+ *  logged-in session (Admin → Organizations → New organization — distinct from
+ *  POST /api/auth/signup's self-serve "New here?" path, which is intentionally not
+ *  elevation-gated since there's no existing session to elevate). */
+async function requireElevatedSession(
+  req: { cookies: Record<string, string | undefined> },
+): Promise<OrgRoleCheck> {
+  const session = await currentSession(req);
+  if (session == null) return { ok: false, code: 401, error: 'log in first' };
+  if (!isElevated(session.elevatedUntil)) return { ok: false, code: 428, error: 'admin re-authentication required' };
+  return { ok: true, accountId: session.accountId };
 }
 
 /** Resolves which personId a request should be trusted to act as, in `orgId`: the
@@ -211,19 +278,28 @@ app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 mi
   return { account: { id: account.id, name: account.name, email: account.email } };
 });
 
-/** Self-serve org creation — the "team can set up their own org" path, no existing admin
- *  required. Rejects emails that already have a real (password-holding) account rather
- *  than doing something ambiguous with them; someone re-using an email should log in
- *  instead, possibly to then get invited into a *second* org for real multi-org
- *  membership. See repo.ts's signUpWithNewOrganization for the atomic account+org+
- *  person+owner sequence this wraps. */
+/** Self-serve signup — creates a personal account *and* a one-person organization for it,
+ *  in the same step, so a brand-new signup can start using the product (set up its own
+ *  main agent, ask itself questions) immediately, with nothing left to configure first.
+ *  Accounts and organizations are still fully decoupled data-wise (an account can exist
+ *  with zero orgs — e.g. one only ever added to someone else's chart by email — and
+ *  `POST /api/organizations` still exists for creating an *additional* org later), but
+ *  requiring a separate, deliberate "create an organization" click right after signup
+ *  turned out to be the wrong shape for the common case: most people trying this out are
+ *  one person, not a company standing up a multi-person chart, and they shouldn't have to
+ *  name a company just to try it. The org name is auto-derived (`"<name>'s workspace"`,
+ *  renameable later like any org) rather than asked for here. The new session is elevated
+ *  immediately (`{ elevate: true }`) — typing your password to sign up already proves it,
+ *  same reasoning as every other "you just authenticated, don't ask again immediately"
+ *  case in this codebase — so the owner can go straight to Admin → Organizations and set
+ *  their own main agent with no extra re-auth prompt. Rejects emails that already have a
+ *  real (password-holding) account rather than doing something ambiguous with them;
+ *  someone re-using an email should log in instead. */
 app.post('/api/auth/signup', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (req, reply) => {
-  const { name, email, password, organizationName } = req.body as {
-    name?: string; email?: string; password?: string; organizationName?: string;
-  };
-  if (!name?.trim() || !email?.trim() || !password || !organizationName?.trim()) {
+  const { name, email, password } = req.body as { name?: string; email?: string; password?: string };
+  if (!name?.trim() || !email?.trim() || !password) {
     reply.code(400);
-    return { error: 'name, email, password, and an organization name are required' };
+    return { error: 'name, email, and password are required' };
   }
   if (password.length < 8) {
     reply.code(400);
@@ -235,14 +311,11 @@ app.post('/api/auth/signup', { config: { rateLimit: { max: 5, timeWindow: '15 mi
     reply.code(409);
     return { error: 'an account already exists for this email — log in instead' };
   }
-  const { account, organization, person } = await repo.signUpWithNewOrganization({
-    name: name.trim(),
-    email: normalizedEmail,
-    passwordHash: hashPassword(password),
-    orgName: organizationName.trim(),
-  });
+  const trimmedName = name.trim();
+  const account = await repo.insertAccount(trimmedName, normalizedEmail, hashPassword(password));
+  const { organization, person } = await repo.createOrganization(account.id, trimmedName, `${trimmedName}'s workspace`);
   await repo.insertInitialRevision(organization.id, structuredClone(DEFAULT_GRID));
-  await setSessionCookie(reply, account.id);
+  await setSessionCookie(reply, account.id, { elevate: true });
   return { account, organization, person };
 });
 
@@ -254,14 +327,40 @@ app.post('/api/auth/logout', async (req, reply) => {
 });
 
 app.get('/api/auth/me', async (req) => {
-  const accountId = await currentAccountId(req);
-  if (accountId == null) return { account: null, orgRoles: {}, people: [] };
+  const session = await currentSession(req);
+  if (session == null) return { account: null, orgRoles: {}, people: [], adminElevatedUntil: null };
   const [account, orgRoles, people] = await Promise.all([
-    repo.getAccount(accountId),
-    repo.getOrgRolesForAccount(accountId),
-    repo.getPeopleForAccount(accountId),
+    repo.getAccount(session.accountId),
+    repo.getOrgRolesForAccount(session.accountId),
+    repo.getPeopleForAccount(session.accountId),
   ]);
-  return { account, orgRoles, people };
+  return { account, orgRoles, people, adminElevatedUntil: isElevated(session.elevatedUntil) ? session.elevatedUntil : null };
+});
+
+// Step-up ("log in as admin"): re-verifies the already-logged-in account's own password
+// and, only on success, elevates its existing session for ELEVATION_WINDOW_MS. Not a
+// second, separate login — same session cookie, same account, no new identity — which is
+// exactly what makes this a real second factor of "are you still you" rather than a
+// second copy of the first factor. Rate-limited like login/change-password so a stolen
+// session cookie can't be used to grind the account's own password.
+app.post('/api/auth/step-up', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
+  const token = req.cookies[SESSION_COOKIE];
+  const accountId = await currentAccountId(req);
+  if (accountId == null || !token) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { password } = req.body as { password?: string };
+  const account = await repo.getAccount(accountId);
+  const full = account ? await repo.getAccountByEmail(account.email) : null;
+  const ok = full?.passwordHash && verifyPassword(password ?? '', full.passwordHash);
+  if (!ok) {
+    reply.code(401);
+    return { error: 'incorrect password' };
+  }
+  const until = new Date(Date.now() + ELEVATION_WINDOW_MS);
+  await repo.elevateSession(hashSessionToken(token), until.toISOString());
+  return { adminElevatedUntil: until.toISOString() };
 });
 
 // Rate-limited the same way login is (10/15min) — found during a security audit: this
@@ -294,34 +393,27 @@ app.get('/api/organizations', async (req) => {
   return { organizations: accountId == null ? [] : await repo.listOrganizationsForAccount(accountId) };
 });
 
-/** Feeds "My agent"'s identity switcher (MeContext.tsx) — the demo org plus whatever
- *  real orgs the caller's own session is actually connected to (see
- *  listOrganizationsForIdentitySwitcher's own comment for why this is no longer every
- *  org, unfiltered). Deliberately separate from the admin-scoped listing above rather
- *  than reusing it with a flag — the two have different authorization stories and
- *  shouldn't share a code path that could later grow a bug where one accidentally
- *  inherits the other's filtering. */
-app.get('/api/org-directory', async (req) => {
-  const accountId = await currentAccountId(req);
-  return { organizations: await repo.listOrganizationsForIdentitySwitcher(accountId) };
-});
-
 app.post('/api/organizations', async (req, reply) => {
-  const accountId = await currentAccountId(req);
-  if (accountId == null) {
-    reply.code(401);
-    return { error: 'log in first' };
+  const check = await requireElevatedSession(req);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
   }
   const { name } = req.body as { name: string };
   if (!name?.trim()) {
     reply.code(400);
     return { error: 'name is required' };
   }
-  const org = await repo.createOrganization(accountId, name.trim());
+  const creator = await repo.getAccount(check.accountId);
+  // The creator becomes this org's first person too (Owner, top of the chart), not just
+  // its admin — otherwise a brand-new individual (accounts and orgs are fully decoupled
+  // now, see /api/auth/signup) would create an org and land in it with nobody in the
+  // chart, including themselves.
+  const { organization, person } = await repo.createOrganization(check.accountId, creator!.name, name.trim());
   // Every organization needs a policy revision to exist before anyone can be asked about —
   // seed it with the platform default grid, exactly like the very first org was seeded.
-  await repo.insertInitialRevision(org.id, structuredClone(DEFAULT_GRID));
-  return { organization: org };
+  await repo.insertInitialRevision(organization.id, structuredClone(DEFAULT_GRID));
+  return { organization, person };
 });
 
 /* ---------- org access: real multi-admin RBAC ----------
@@ -912,9 +1004,9 @@ function sanitizeOrgMainAgent(registered: OrgMainAgent | null) {
 }
 
 /** Read the org's one main/aggregator agent — no auth gate, same as the sub-agent GET
- *  above, since "My agent"'s free identity switcher (MeContext.tsx, CLAUDE.md rule 7)
- *  needs to show this even when nobody's logged in. Setting it is a separate,
- *  admin-gated endpoint just below. */
+ *  above. Org name/slug/main-agent choice was never treated as sensitive on its own (an
+ *  orgId is not guessable-to-useful without already being a member); setting it is the
+ *  real boundary, a separate, admin-gated endpoint just below. */
 app.get('/api/organizations/:orgId/main-agent', async (req) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getOrgMainAgent(orgId)]);
@@ -1000,6 +1092,82 @@ app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
   const addedAt = new Date().toISOString().slice(0, 10);
   await repo.setOrgMainAgent(orgId, runtimeKey, scope, addedAt, apiKeyEncrypted, resolvedBaseUrl, resolvedModel);
   return { registered: sanitizeOrgMainAgent(await repo.getOrgMainAgent(orgId)) };
+});
+
+function sanitizeAccountMainAgent(registered: AccountMainAgent | null) {
+  if (!registered) return null;
+  return {
+    runtimeKey: registered.runtimeKey,
+    addedAt: registered.addedAt,
+    hasCustomApiKey: registered.apiKeyEncrypted !== null,
+    baseUrl: registered.baseUrl,
+    model: registered.model,
+  };
+}
+
+/** Read your own personal main agent — the counterpart to the org GET above, for an
+ *  account with no organization. Session-gated only (must be logged in as yourself); no
+ *  org role to check, since this never touches org data. */
+app.get('/api/accounts/me/main-agent', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getAccountMainAgent(accountId)]);
+  return { catalog, registered: sanitizeAccountMainAgent(registered) };
+});
+
+/** Set or switch your own personal main agent — the counterpart to the admin-gated org
+ *  endpoint above, minus the admin gate: this only ever touches your own account's row,
+ *  so being logged in as yourself is the whole authorization story. Same eligibility
+ *  check (mainEligible, a real ModelProvider adapter), same encrypt-before-write and
+ *  SSRF-guarded baseUrl as the org version — no `scope`/approval workflow, since there's
+ *  no IT/Security gate for your own individual credential. */
+app.post('/api/accounts/me/main-agent', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { runtimeKey, apiKey, baseUrl, model } = req.body as {
+    runtimeKey: string;
+    apiKey?: string | null;
+    baseUrl?: string | null;
+    model?: string | null;
+  };
+  const checked = await checkCatalogEntry(runtimeKey, reply);
+  if ('error' in checked) return checked;
+  if (!checked.entry.mainEligible || checked.entry.apiFamily === 'unsupported') {
+    reply.code(400);
+    return { error: `"${checked.entry.name}" can't be a main agent — connect it as a sub-agent instead` };
+  }
+  const existing = await repo.getAccountMainAgent(accountId);
+  let apiKeyEncrypted = existing?.apiKeyEncrypted ?? null;
+  if (apiKey !== undefined) {
+    if (!apiKey) {
+      apiKeyEncrypted = null;
+    } else {
+      try {
+        apiKeyEncrypted = encryptSecret(apiKey);
+      } catch {
+        reply.code(500);
+        return { error: 'this server is not configured to store a custom credential right now — contact your platform admin' };
+      }
+    }
+  }
+  if (baseUrl) {
+    const safety = await isSafeExternalUrl(baseUrl);
+    if (!safety.ok) {
+      reply.code(400);
+      return { error: `endpoint URL rejected: ${safety.reason}` };
+    }
+  }
+  const resolvedBaseUrl = baseUrl === undefined ? (existing?.baseUrl ?? null) : (baseUrl || null);
+  const resolvedModel = model === undefined ? (existing?.model ?? null) : (model || null);
+  const addedAt = new Date().toISOString().slice(0, 10);
+  await repo.setAccountMainAgent(accountId, runtimeKey, addedAt, apiKeyEncrypted, resolvedBaseUrl, resolvedModel);
+  return { registered: sanitizeAccountMainAgent(await repo.getAccountMainAgent(accountId)) };
 });
 
 /** Register a sub-agent — always a personal tool, never connected to org surfaces.
@@ -1315,6 +1483,222 @@ app.delete('/api/person/:id/jira', async (req, reply) => {
   if (before.surfaces.jira === 'connected') {
     await repo.updatePersonSurface(id, 'jira', 'absent');
   }
+  return { ok: true };
+});
+
+/* ---------- generic connector catalog ----------
+   The plug-and-play framework for every tool beyond GitHub/Jira/Gmail (which keep their
+   own bespoke, working endpoints above/below, untouched): one catalog (connectorCatalog.ts)
+   drives one generic connect/disconnect/status flow instead of a bespoke route set per
+   tool. Adding a 21st connector with simple PAT/token auth is: one catalog entry, one
+   client module (linear.ts's shape), one line in each dispatch table below — never a new
+   endpoint. */
+
+type ConnectHandler = (personId: number, fields: Record<string, string>) => Promise<{ ok: true; label: string } | { ok: false; error: string }>;
+type StatusHandler = (personId: number) => Promise<{ connected: boolean; label: string | null }>;
+
+const CONNECT_HANDLERS: Partial<Record<SurfaceKey, ConnectHandler>> = {
+  linear: (id, f) => saveLinearConnection(id, f.apiKey),
+  notion: (id, f) => saveNotionConnection(id, f.token),
+  confluence: (id, f) => saveConfluenceConnection(id, f.siteUrl, f.email, f.apiToken),
+  asana: (id, f) => saveAsanaConnection(id, f.token),
+  gitlab: (id, f) => saveGitlabConnection(id, f.token, f.siteUrl?.trim() || null),
+  hubspot: (id, f) => saveHubspotConnection(id, f.token),
+  zendesk: (id, f) => saveZendeskConnection(id, f.siteUrl, f.email, f.apiToken),
+  trello: (id, f) => saveTrelloConnection(id, f.apiKey, f.token),
+  airtable: (id, f) => saveAirtableConnection(id, f.token),
+  monday: (id, f) => saveMondayConnection(id, f.token),
+  figma: (id, f) => saveFigmaConnection(id, f.token),
+  discord: (id, f) => saveDiscordConnection(id, f.token),
+};
+
+const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Promise<void>>> = {
+  linear: disconnectLinear,
+  notion: disconnectNotion,
+  confluence: disconnectConfluence,
+  asana: disconnectAsana,
+  gitlab: disconnectGitlab,
+  hubspot: disconnectHubspot,
+  zendesk: disconnectZendesk,
+  trello: disconnectTrello,
+  airtable: disconnectAirtable,
+  monday: disconnectMonday,
+  figma: disconnectFigma,
+  discord: disconnectDiscord,
+};
+
+const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
+  linear: getLinearStatus,
+  notion: getNotionStatus,
+  confluence: async (id) => { const s = await getConfluenceStatus(id); return { connected: s.connected, label: s.email }; },
+  asana: getAsanaStatus,
+  gitlab: getGitlabStatus,
+  hubspot: getHubspotStatus,
+  zendesk: async (id) => { const s = await getZendeskStatus(id); return { connected: s.connected, label: s.email }; },
+  trello: getTrelloStatus,
+  airtable: getAirtableStatus,
+  monday: getMondayStatus,
+  figma: getFigmaStatus,
+  discord: getDiscordStatus,
+};
+
+/** No auth needed — same posture as GET /api/runtimes: this is catalog metadata, not
+ *  anyone's connection state. */
+app.get('/api/connectors/catalog', async () => ({ catalog: CONNECTOR_CATALOG }));
+
+/** Status for every connector at once — the ConnectorsPanel's one fetch on load. GitHub/
+ *  Jira/Gmail keep their own status endpoints (already called separately by SetUpMyAgent's
+ *  existing sections); Calendar has no connection of its own and mirrors Gmail's. */
+app.get('/api/person/:id/connectors', async (req, reply) => {
+  const id = Number((req.params as { id: string }).id);
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const statuses: Record<string, { connected: boolean; label: string | null }> = {};
+  for (const def of CONNECTOR_CATALOG) {
+    if (def.key === 'github' || def.key === 'jira') continue;
+    if (def.status === 'coming-soon') {
+      statuses[def.key] = { connected: false, label: null };
+      continue;
+    }
+    if (def.key === 'calendar') {
+      const gmail = await getGmailStatus(id);
+      statuses[def.key] = { connected: gmail.connected, label: gmail.email };
+      continue;
+    }
+    const handler = STATUS_HANDLERS[def.key];
+    statuses[def.key] = handler ? await handler(id) : { connected: false, label: null };
+  }
+  return { statuses };
+});
+
+app.post('/api/person/:id/connectors/:key', async (req, reply) => {
+  const id = Number((req.params as { id: string }).id);
+  const key = (req.params as { key: string }).key as SurfaceKey;
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const def = CONNECTOR_CATALOG.find((c) => c.key === key);
+  if (!def) {
+    reply.code(404);
+    return { error: 'unknown connector' };
+  }
+  if (def.status === 'coming-soon') {
+    reply.code(400);
+    return { error: `${def.name} isn't configured on this platform yet — it needs a developer app registered by the operator first.` };
+  }
+  const handler = CONNECT_HANDLERS[key];
+  if (!handler) {
+    reply.code(400);
+    return { error: `${def.name} can't be connected from here.` };
+  }
+  const fields = (req.body ?? {}) as Record<string, string>;
+  for (const f of def.fields) {
+    if (!f.optional && !fields[f.key]?.trim()) {
+      reply.code(400);
+      return { error: `${f.label} is required` };
+    }
+  }
+  const result = await handler(id, fields);
+  if (!result.ok) {
+    reply.code(400);
+    return { error: result.error };
+  }
+  await repo.updatePersonSurface(id, key, 'connected');
+  return { connected: true, label: result.label };
+});
+
+app.delete('/api/person/:id/connectors/:key', async (req, reply) => {
+  const id = Number((req.params as { id: string }).id);
+  const key = (req.params as { key: string }).key as SurfaceKey;
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const handler = DISCONNECT_HANDLERS[key];
+  if (handler) await handler(id);
+  const before = await repo.getPerson(id);
+  if (before.surfaces[key] === 'connected') {
+    await repo.updatePersonSurface(id, key, 'absent');
+  }
+  return { ok: true };
+});
+
+/* ---------- generic connector catalog: personal (no-org) account variant ----------
+   Same catalog, same ConnectorsPanel component, same three-endpoint shape as the
+   person-keyed routes just above — but scoped to the logged-in account itself (no :id
+   param at all, same posture as GET/POST /api/accounts/me/main-agent) since a personal
+   account has no `people` row to key off of. GitHub/Jira/Calendar are excluded the same
+   way ConnectorsPanel.tsx's own HANDLED_ELSEWHERE excludes them from the dropdown. */
+app.get('/api/accounts/me/connectors', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const statuses: Record<string, { connected: boolean; label: string | null }> = {};
+  for (const def of CONNECTOR_CATALOG) {
+    if (def.key === 'github' || def.key === 'jira' || def.key === 'calendar') continue;
+    if (def.status === 'coming-soon') {
+      statuses[def.key] = { connected: false, label: null };
+      continue;
+    }
+    const handler = ACCOUNT_STATUS_HANDLERS[def.key];
+    statuses[def.key] = handler ? await handler(accountId) : { connected: false, label: null };
+  }
+  return { statuses };
+});
+
+app.post('/api/accounts/me/connectors/:key', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const key = (req.params as { key: string }).key as SurfaceKey;
+  const def = CONNECTOR_CATALOG.find((c) => c.key === key);
+  if (!def || def.key === 'github' || def.key === 'jira' || def.key === 'calendar') {
+    reply.code(404);
+    return { error: 'unknown connector' };
+  }
+  if (def.status === 'coming-soon') {
+    reply.code(400);
+    return { error: `${def.name} isn't configured on this platform yet — it needs a developer app registered by the operator first.` };
+  }
+  const handler = ACCOUNT_CONNECT_HANDLERS[key];
+  if (!handler) {
+    reply.code(400);
+    return { error: `${def.name} can't be connected from here.` };
+  }
+  const fields = (req.body ?? {}) as Record<string, string>;
+  for (const f of def.fields) {
+    if (!f.optional && !fields[f.key]?.trim()) {
+      reply.code(400);
+      return { error: `${f.label} is required` };
+    }
+  }
+  const result = await handler(accountId, fields);
+  if (!result.ok) {
+    reply.code(400);
+    return { error: result.error };
+  }
+  return { connected: true, label: result.label };
+});
+
+app.delete('/api/accounts/me/connectors/:key', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const key = (req.params as { key: string }).key as SurfaceKey;
+  const handler = ACCOUNT_DISCONNECT_HANDLERS[key];
+  if (handler) await handler(accountId);
   return { ok: true };
 });
 
@@ -1843,6 +2227,126 @@ app.get('/api/agent/conversations', async (req) => {
   // letting anyone read any two people's chat history by guessing both ids.
   const requesterId = await sessionPreferredPersonId(req, orgId, claimedRequesterId != null ? Number(claimedRequesterId) : undefined);
   return { conversations: await repo.listConversationsForPair(requesterId ?? 0, targetIdNum) };
+});
+
+/** The personal counterpart to POST /api/agent/ask, for an account with no organization.
+ *  Deliberately much smaller than the org path: no targetId/role/requesterId (the
+ *  requester *is* the target, always — there's no relationship to verify), no claims, no
+ *  policy engine, no coverage — none of that has anything to do with a private chat
+ *  nobody else could ever ask about. Same "never hard-fail" shape as the org ask: a
+ *  missing or unreachable provider degrades to a real, textual answer explaining why,
+ *  never a thrown error that would skip persisting the turn. */
+app.post('/api/agent/ask-personal', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const body = req.body as { question?: string; conversationId?: string };
+  if (!body.question?.trim()) {
+    reply.code(400);
+    return { error: 'question is required' };
+  }
+  const question = body.question.trim();
+
+  let priorTurns: { question: string; answer: string }[] | undefined;
+  if (body.conversationId) {
+    const turns = await repo.getPersonalConversation(accountId, body.conversationId);
+    priorTurns = turns.map((t) => ({ question: t.question, answer: t.answer }));
+  }
+
+  const [account, { provider, runtimeName, configEnvVar }] = await Promise.all([
+    repo.getAccount(accountId),
+    getPersonalMainProvider(accountId),
+  ]);
+
+  // Personal counterpart to gatherAll()'s router (resourceProviders.ts): narrow the
+  // account's own connected tools (connectorCatalog.ts, account-keyed since a personal
+  // account has no `people` row) to whichever are plausibly relevant to this question,
+  // then fetch a real digest from each — fed into *this turn's* converse() call only,
+  // never persisted anywhere but the answer and this row's own consulted_sources column.
+  // Same fail-open shape as the org path's Gmail bridge: any failure here just means the
+  // chat continues ungrounded, never a hard error.
+  const consultedSources: string[] = [];
+  const sections: { source: string; digest: string }[] = [];
+  if (provider?.configured()) {
+    try {
+      const statuses = await Promise.all(
+        ACCOUNT_DIGEST_PROVIDERS.map((p) => ACCOUNT_STATUS_HANDLERS[p.surfaceKey]?.(accountId)),
+      );
+      const connectedProviders = ACCOUNT_DIGEST_PROVIDERS.filter((_, i) => statuses[i]?.connected);
+      if (connectedProviders.length > 0) {
+        const surfaces = await repo.getSurfaces();
+        const candidates = connectedProviders.map((p) => ({
+          surfaceKey: p.surfaceKey as string,
+          reads: surfaces.find((s) => s.key === p.surfaceKey)?.reads ?? p.surfaceKey,
+        }));
+        const relevant = await provider.selectRelevantSurfaces(question, candidates);
+        const toRun = connectedProviders.filter((p) => relevant.has(p.surfaceKey));
+        const since = new Date();
+        since.setUTCHours(0, 0, 0, 0);
+        const results = await Promise.allSettled(toRun.map((p) => p.fetchDigest(accountId, since)));
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled' && r.value) {
+            sections.push({ source: toRun[i].label, digest: r.value });
+            consultedSources.push(toRun[i].label);
+          } else if (r.status === 'rejected') {
+            // One connector failing (a revoked token, a real provider outage) never blocks
+            // the rest — same Promise.allSettled resilience as gatherAll(), logged the same
+            // way rather than surfaced to the user.
+            app.log.error({ err: r.reason, tool: toRun[i].label }, 'personal connector digest fetch failed');
+          }
+        });
+      }
+    } catch (err) {
+      app.log.error({ err }, 'personal connector digest bridge failed — continuing ungrounded');
+    }
+  }
+
+  let answer: string;
+  if (provider?.configured()) {
+    try {
+      // converse, not synthesize — a personal ask has no "answer only from this" contract
+      // the way an org self-ask does (see modelProvider.ts's ModelProvider.converse doc);
+      // `sections`, when non-empty, just enriches an otherwise-plain conversation.
+      answer = await provider.converse(account!.name, question, priorTurns, undefined, sections);
+    } catch (err) {
+      app.log.error({ err }, 'personal ask synthesis failed');
+      answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this — try again in a moment.`;
+    }
+  } else {
+    const whoMissing = runtimeName && configEnvVar
+      ? `No ${configEnvVar} configured for your personal main agent (${runtimeName})`
+      : 'No personal main agent is set yet';
+    answer = `${whoMissing} — connect one in "Set up my agent," then ask again.`;
+  }
+
+  const conversationId = body.conversationId ?? randomUUID();
+  await repo.insertPersonalAsk(accountId, conversationId, question, answer, new Date().toISOString(), consultedSources);
+  return { answer, conversationId, consultedSources };
+});
+
+/** Every one of your own personal asks — the counterpart to /api/audit/subject/:id,
+ *  scoped to the logged-in account rather than an org-chart person id. Session-gated
+ *  (unlike that one): a personal ask has no org-wide transparency story to serve the way
+ *  "who asked about me" does, it's just your own private history. */
+app.get('/api/accounts/me/asks', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return { entries: await repo.listPersonalAsks(accountId) };
+});
+
+/** Chats for your own personal asks — the counterpart to GET /api/agent/conversations. */
+app.get('/api/accounts/me/conversations', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return { conversations: await repo.listPersonalConversations(accountId) };
 });
 
 /* ---------- serve the built frontend (production only) ----------

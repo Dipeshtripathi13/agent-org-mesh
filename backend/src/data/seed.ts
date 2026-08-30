@@ -57,6 +57,104 @@ export const SURFACES: Surface[] = [
     doesNotRead: 'Spaces without an explicit grant',
   },
   {
+    key: 'linear',
+    name: 'Linear',
+    feedsTier: 'T1',
+    reads: 'Issues assigned to you and their status',
+    doesNotRead: 'Issues in projects you have no membership in',
+  },
+  {
+    key: 'notion',
+    name: 'Notion',
+    feedsTier: 'T2',
+    reads: 'Pages you authored or last edited, shared with the integration',
+    doesNotRead: 'Any page the workspace integration was not explicitly granted',
+  },
+  {
+    key: 'asana',
+    name: 'Asana',
+    feedsTier: 'T1',
+    reads: 'Tasks assigned to you and their status',
+    doesNotRead: 'Tasks in projects you are not a member of',
+  },
+  {
+    key: 'gitlab',
+    name: 'GitLab',
+    feedsTier: 'T1',
+    reads: 'Merge requests and reviews, same shape as GitHub',
+    doesNotRead: 'File contents are never stored',
+  },
+  {
+    key: 'hubspot',
+    name: 'HubSpot',
+    feedsTier: 'T1',
+    reads: 'Deals and activity you own',
+    doesNotRead: 'Contact personal details',
+  },
+  {
+    key: 'zendesk',
+    name: 'Zendesk',
+    feedsTier: 'T1',
+    reads: 'Tickets assigned to you and their status',
+    doesNotRead: 'Customer contact details',
+  },
+  {
+    key: 'trello',
+    name: 'Trello',
+    feedsTier: 'T2',
+    reads: 'Cards assigned to you on boards you belong to',
+    doesNotRead: 'Boards you are not a member of',
+  },
+  {
+    key: 'airtable',
+    name: 'Airtable',
+    feedsTier: 'T2',
+    reads: 'Records in bases the connection was granted access to',
+    doesNotRead: 'Any base not explicitly shared with the connection',
+  },
+  {
+    key: 'monday',
+    name: 'Monday.com',
+    feedsTier: 'T2',
+    reads: 'Items assigned to you and their status',
+    doesNotRead: 'Boards you are not a member of',
+  },
+  {
+    key: 'figma',
+    name: 'Figma',
+    feedsTier: 'T2',
+    reads: 'Comments and file activity on files shared with you',
+    doesNotRead: 'File contents beyond comment threads',
+  },
+  {
+    key: 'discord',
+    name: 'Discord',
+    feedsTier: 'T3',
+    reads: 'Public channels the connected bot can see — signals only',
+    doesNotRead: 'Direct messages, ever, for anyone',
+  },
+  {
+    key: 'microsoft365',
+    name: 'Microsoft 365',
+    feedsTier: 'T2',
+    reads: 'Outlook calendar and Teams activity',
+    doesNotRead: 'Email contents, ever',
+  },
+  {
+    key: 'zoom',
+    name: 'Zoom',
+    feedsTier: 'T2',
+    reads: 'Meeting attendance and scheduling metadata',
+    doesNotRead: 'Recordings or transcripts',
+  },
+  {
+    key: 'dropbox',
+    name: 'Dropbox',
+    feedsTier: 'T2',
+    reads: 'File and folder activity in shared spaces',
+    doesNotRead: 'File contents are never stored',
+  },
+  {
     key: 'claude-code',
     name: 'Claude Code',
     feedsTier: 'T2',
@@ -159,6 +257,14 @@ export const PEOPLE: Person[] = RAW.map(([id, name, title, managerId, team, code
   // real self-service token connects one (see EMPTY_SURFACES in repo.ts for new people).
   surfaces.codex = 'outOfScope';
   surfaces['gemini-cli'] = 'outOfScope';
+  // The 14 newer connectors (linear.ts and friends) are real, self-service-connectable
+  // tools too, but nobody in this seeded 40-person demo has actually connected one —
+  // 'absent' matches how salesforce/calendar/slack/confluence already default for anyone
+  // who hasn't connected them, not 'outOfScope' (which means "doesn't apply to this
+  // role," untrue here — any of these genuinely could apply, none happen to be wired up
+  // for this fictional roster).
+  (['linear', 'notion', 'asana', 'gitlab', 'hubspot', 'zendesk', 'trello', 'airtable', 'monday', 'figma', 'discord', 'microsoft365', 'zoom', 'dropbox'] as const)
+    .forEach((key) => { surfaces[key] = 'absent'; });
   return { id, name, title, team, managerId, agentDeployed: !NO_AGENT.has(id), surfaces };
 });
 
