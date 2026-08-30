@@ -333,6 +333,41 @@ CREATE TABLE IF NOT EXISTS account_main_agent (
   model              text
 );
 
+-- The personal counterpart to person_runtimes — a sub-agent (Claude Code, Codex CLI,
+-- Gemini CLI) registered by an account with no organization at all, same "never touches
+-- org surfaces" meaning, just nothing to attach an org_id to.
+CREATE TABLE IF NOT EXISTS account_runtimes (
+  account_id   integer NOT NULL REFERENCES accounts(id),
+  runtime_key  text NOT NULL REFERENCES runtime_catalog(key),
+  scope        text NOT NULL,
+  added_at     date NOT NULL,
+  PRIMARY KEY (account_id, runtime_key)
+);
+
+-- The personal counterpart to ingest_tokens/ingested_events (see that pair's own comment
+-- above self-service tool connections) — a personal account's own bearer token for
+-- POST /api/ingest/:source, and the raw pushed activity it authenticates.
+CREATE TABLE IF NOT EXISTS account_ingest_tokens (
+  id            uuid PRIMARY KEY,
+  account_id    integer NOT NULL REFERENCES accounts(id),
+  token_hash    text NOT NULL UNIQUE,
+  label         text NOT NULL,
+  created_at    timestamptz NOT NULL,
+  last_used_at  timestamptz,
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS account_ingest_tokens_account_idx ON account_ingest_tokens(account_id);
+
+CREATE TABLE IF NOT EXISTS account_ingested_events (
+  id           uuid PRIMARY KEY,
+  account_id   integer NOT NULL REFERENCES accounts(id),
+  source       text NOT NULL,
+  kind         text NOT NULL,
+  summary      text NOT NULL,
+  occurred_at  timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_ingested_events_account_source_idx ON account_ingested_events(account_id, source, occurred_at);
+
 -- A personal account's own "Ask yourself" history — the counterpart to audit_log for
 -- someone with no org (audit_log's org_id/target_person_id are NOT NULL, so it structurally
 -- can't hold this). Deliberately not audit_log-shaped: no hash chain, no policy_revision_id,
@@ -461,6 +496,7 @@ GRANT SELECT, INSERT, UPDATE ON claims TO mesh_app;
 
 -- Runtime registrations: full self-service lifecycle.
 GRANT SELECT, INSERT, UPDATE, DELETE ON person_runtimes TO mesh_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON account_runtimes TO mesh_app;
 
 -- The org's one main agent: admin-set, admin-changeable, never deleted outright (only
 -- ever replaced by setting a new one — UPDATE covers that via ON CONFLICT DO UPDATE).
@@ -485,6 +521,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON account_oauth_tokens TO mesh_app;
 -- observation is never edited or removed after the fact.
 GRANT SELECT, INSERT, UPDATE ON ingest_tokens TO mesh_app;
 GRANT SELECT, INSERT ON ingested_events TO mesh_app;
+GRANT SELECT, INSERT, UPDATE ON account_ingest_tokens TO mesh_app;
+GRANT SELECT, INSERT ON account_ingested_events TO mesh_app;
 
 -- Policy revisions: append a new row, never touch an old one.
 GRANT SELECT, INSERT ON policy_revisions TO mesh_app;

@@ -373,6 +373,34 @@ export const api = {
   disconnectJira: (personId: number) =>
     req<{ ok: true }>(`/person/${personId}/jira`, { method: 'DELETE' }),
 
+  /** Same shape as the person-keyed GitHub/Jira/runtimes/ingest-tokens above, for a
+   *  personal (no-org) account's own "Set up my agent" — found live, asked for directly:
+   *  these tools "should be there along with" the generic connector catalog. */
+  accountGithubStatus: () => req<{ connected: boolean; login: string | null }>('/accounts/me/github/status'),
+  connectAccountGithub: (token: string) =>
+    req<{ connected: true; login: string }>('/accounts/me/github', { method: 'POST', body: JSON.stringify({ token }) }),
+  disconnectAccountGithub: () => req<{ ok: true }>('/accounts/me/github', { method: 'DELETE' }),
+
+  accountJiraStatus: () =>
+    req<{ connected: boolean; email: string | null; siteUrl: string | null }>('/accounts/me/jira/status'),
+  connectAccountJira: (siteUrl: string, email: string, apiToken: string) =>
+    req<{ connected: true; displayName: string }>('/accounts/me/jira', {
+      method: 'POST', body: JSON.stringify({ siteUrl, email, apiToken }),
+    }),
+  disconnectAccountJira: () => req<{ ok: true }>('/accounts/me/jira', { method: 'DELETE' }),
+
+  accountRuntimes: () => req<{ catalog: AgentRuntime[]; registered: PersonRuntime[] }>('/accounts/me/runtimes'),
+  registerAccountRuntime: (runtimeKey: string) =>
+    req<{ registered: PersonRuntime[] }>('/accounts/me/runtimes', { method: 'POST', body: JSON.stringify({ runtimeKey }) }),
+  disconnectAccountRuntime: (runtimeKey: string) =>
+    req<{ registered: PersonRuntime[] }>(`/accounts/me/runtimes/${runtimeKey}`, { method: 'DELETE' }),
+
+  accountIngestTokens: () => req<{ tokens: IngestToken[] }>('/accounts/me/ingest-tokens'),
+  createAccountIngestToken: (label: string) =>
+    req<{ id: string; token: string }>('/accounts/me/ingest-tokens', { method: 'POST', body: JSON.stringify({ label }) }),
+  revokeAccountIngestToken: (tokenId: string) =>
+    req<{ tokens: IngestToken[] }>(`/accounts/me/ingest-tokens/${tokenId}`, { method: 'DELETE' }),
+
   /** The generic plug-and-play framework for every connector beyond GitHub/Jira/Gmail —
    *  one catalog, one connect/disconnect/status shape, driving ConnectorsPanel's dropdown
    *  and dynamic per-tool form entirely from data instead of one component per tool. */

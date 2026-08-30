@@ -4,6 +4,7 @@ import {
   type AccountMainAgent, type AgentRuntime, type IngestSource, type IngestToken, type OrgMainAgent, type PersonRuntime, type RuntimeScope,
 } from '../lib/api';
 import { ConnectorsPanel } from '../components/ConnectorsPanel';
+import { PersonalToolsPanel } from '../components/PersonalToolsPanel';
 import { CredentialsFields } from '../components/primitives';
 import { useAuth } from '../lib/AuthContext';
 import { useMe } from '../lib/MeContext';
@@ -12,11 +13,11 @@ const SCOPE_LABEL: Record<RuntimeScope, string> = {
   full: 'Full scope', narrow: 'Narrowed scope', pending: 'Awaiting approval',
 };
 
-const SOURCE_LABEL: Record<IngestSource, string> = {
+export const SOURCE_LABEL: Record<IngestSource, string> = {
   'claude-code': 'Claude Code', codex: 'Codex CLI', 'gemini-cli': 'Gemini CLI',
 };
 
-function ingestSnippet(source: IngestSource, url: string, token: string): { file: string; snippet: string } {
+export function ingestSnippet(source: IngestSource, url: string, token: string): { file: string; snippet: string } {
   const curl = `curl -s -X POST ${url} -H 'Authorization: Bearer ${token}' -H 'Content-Type: application/json' -d @-`;
   if (source === 'claude-code') {
     return {
@@ -37,7 +38,7 @@ function ingestSnippet(source: IngestSource, url: string, token: string): { file
   };
 }
 
-function ScopePill({ scope }: { scope: RuntimeScope }) {
+export function ScopePill({ scope }: { scope: RuntimeScope }) {
   return (
     <span className={`pill pill-${scope}`}>
       <i />{SCOPE_LABEL[scope]}
@@ -192,6 +193,7 @@ function PersonalMainAgentPanel() {
           {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
         </div>
       </div>
+      <PersonalToolsPanel />
       <ConnectorsPanel owner={{ kind: 'account' }} />
     </>
   );

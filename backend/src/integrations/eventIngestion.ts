@@ -68,6 +68,20 @@ export async function getEventsSince(personId: number, source: string, since: Da
   return repo.getIngestedEventsSince(personId, source, since);
 }
 
+// Account-keyed counterparts — a personal (no-org) account's own pushed activity.
+export async function recordAccountEvent(accountId: number, source: string, event: NormalizedEvent): Promise<void> {
+  await repo.insertAccountIngestedEvent(crypto.randomUUID(), accountId, {
+    source,
+    kind: event.kind,
+    summary: event.summary,
+    occurredAt: event.occurredAt,
+  });
+}
+
+export async function getAccountEventsSince(accountId: number, source: string, since: Date): Promise<IngestedEvent[]> {
+  return repo.getAccountIngestedEventsSince(accountId, source, since);
+}
+
 /** Renders a plain bullet list of pushed events — the digest realClaims.ts's
  *  ingestPushedEventsClaim (codex/gemini-cli's real claim pipeline) turns into a claim. */
 export function formatIngestedEventsDigest(events: IngestedEvent[]): string | null {

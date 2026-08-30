@@ -1,4 +1,11 @@
 import type { SurfaceKey } from '../domain/types.js';
+import * as repo from '../db/repo.js';
+import { getGithubAccountConnection, getGithubAccountStatus } from './githubConnection.js';
+import { getRecentGithubActivity, formatGithubDigest } from './github.js';
+import { getJiraAccountConnection, getJiraAccountStatus } from './jiraConnection.js';
+import { getRecentJiraActivity, formatJiraDigest } from './jira.js';
+import { getAccountEventsSince, formatIngestedEventsDigest } from './eventIngestion.js';
+import { getClaudeCodeActivitySince, formatClaudeCodeDigest } from './claudeCodeActivity.js';
 import {
   saveLinearAccountConnection, getLinearAccountStatus, getLinearAccountConnection, disconnectLinearAccount,
   getRecentLinearActivity, formatLinearDigest,
@@ -111,6 +118,28 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
   airflow: getAirflowAccountStatus,
   dbt: getDbtAccountStatus,
   snowflake: getSnowflakeAccountStatus,
+  github: async (id) => { const s = await getGithubAccountStatus(id); return { connected: s.connected, label: s.login }; },
+  jira: async (id) => { const s = await getJiraAccountStatus(id); return { connected: s.connected, label: s.email }; },
+  // codex/gemini-cli have no credential to check and aren't real runtime_catalog entries
+  // (org mode's own "Register another agent" can't register them either — that dropdown
+  // is a separate, orthogonal concept from ingest sources, see eventIngestion.ts) —
+  // "connected" for the ask-personal digest bridge means at least one real event has ever
+  // been pushed, the same signal that flips a person's surface to 'connected' in org mode.
+  codex: async (id) => ({ connected: (await getAccountEventsSince(id, 'codex', new Date(0))).length > 0, label: null }),
+  'gemini-cli': async (id) => ({ connected: (await getAccountEventsSince(id, 'gemini-cli', new Date(0))).length > 0, label: null }),
+  // claude-code: org mode only ever triggers its local-transcript scan once
+  // person.surfaces['claude-code'] is actually 'connected' (realClaims.ts's
+  // ingestClaudeCodeClaim checks this explicitly, never unconditionally) — registered as
+  // a sub-agent or had at least one real event pushed, the same two paths that flip that
+  // surface in org mode. Matching that gate here, not scanning on every single ask
+  // regardless of whether this account has ever touched Claude Code at all.
+  'claude-code': async (id) => {
+    const [registered, pushed] = await Promise.all([
+      repo.getAccountRuntimes(id),
+      getAccountEventsSince(id, 'claude-code', new Date(0)),
+    ]);
+    return { connected: registered.some((r) => r.runtimeKey === 'claude-code') || pushed.length > 0, label: null };
+  },
 };
 
 /** The 10 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
@@ -205,5 +234,41 @@ export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
       if (!conn) return null;
       return formatSnowflakeDigest(await getRecentSnowflakeActivity(conn.account, conn.username, conn.privateKey, conn.warehouse, since));
     },
+  },
+  // GitHub/Jira have their own dedicated connect panel (not the generic catalog), same as
+  // org mode, but still belong in the ask-personal discovery bridge like everything else
+  // connected.
+  {
+    surfaceKey: 'github', label: 'GitHub',
+    fetchDigest: async (id, since) => {
+      const conn = await getGithubAccountConnection(id);
+      if (!conn) return null;
+      return formatGithubDigest(await getRecentGithubActivity(conn.token, conn.login, since));
+    },
+  },
+  {
+    surfaceKey: 'jira', label: 'Jira',
+    fetchDigest: async (id, since) => {
+      const conn = await getJiraAccountConnection(id);
+      if (!conn) return null;
+      return formatJiraDigest(await getRecentJiraActivity(conn.siteUrl, conn.email, conn.apiToken, since));
+    },
+  },
+  // Codex CLI and Gemini CLI are pure event-push sources — no credential to fetch with,
+  // just whatever's already landed in account_ingested_events via a real ingest token.
+  {
+    surfaceKey: 'codex', label: 'Codex CLI',
+    fetchDigest: async (id, since) => formatIngestedEventsDigest(await getAccountEventsSince(id, 'codex', since)),
+  },
+  {
+    surfaceKey: 'gemini-cli', label: 'Gemini CLI',
+    fetchDigest: async (id, since) => formatIngestedEventsDigest(await getAccountEventsSince(id, 'gemini-cli', since)),
+  },
+  // Claude Code merges the same local-transcript scan every caller shares (this demo's
+  // own machine) with whatever this account has itself pushed — see
+  // claudeCodeActivity.ts's own module comment on that local-read limitation.
+  {
+    surfaceKey: 'claude-code', label: 'Claude Code',
+    fetchDigest: async (id, since) => formatClaudeCodeDigest(await getClaudeCodeActivitySince(since, undefined, id)),
   },
 ];

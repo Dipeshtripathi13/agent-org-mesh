@@ -34,11 +34,11 @@ import { askClaudeCli, claudeCliAvailable } from './integrations/claudeCli.js';
 import { disconnectGmail, getGmailStatus, getValidGmailAccessToken, saveGmailConnection } from './integrations/gmailConnection.js';
 import { formatGmailDigest, getEmailsSince } from './integrations/gmail.js';
 import { buildAuthUrl, exchangeCode, googleConfigured } from './integrations/googleOAuth.js';
-import { disconnectGithub, getGithubStatus, saveGithubConnection } from './integrations/githubConnection.js';
-import { disconnectJira, getJiraStatus, saveJiraConnection } from './integrations/jiraConnection.js';
-import { normalizeIngestPayload, recordEvent } from './integrations/eventIngestion.js';
+import { disconnectGithub, getGithubStatus, saveGithubConnection, disconnectGithubAccount, getGithubAccountStatus, saveGithubAccountConnection } from './integrations/githubConnection.js';
+import { disconnectJira, getJiraStatus, saveJiraConnection, disconnectJiraAccount, getJiraAccountStatus, saveJiraAccountConnection } from './integrations/jiraConnection.js';
+import { normalizeIngestPayload, recordEvent, recordAccountEvent } from './integrations/eventIngestion.js';
 import { runEscalationChecks } from './integrations/escalationEngine.js';
-import { generateToken, listTokens, resolveToken, revokeToken } from './integrations/ingestTokens.js';
+import { generateToken, listTokens, resolveToken, revokeToken, generateAccountToken, listAccountTokens, revokeAccountToken, resolveAccountToken } from './integrations/ingestTokens.js';
 import { allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll } from './integrations/resourceProviders.js';
 import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
@@ -1730,6 +1730,159 @@ app.delete('/api/accounts/me/connectors/:key', async (req, reply) => {
   return { ok: true };
 });
 
+/* ---------- personal account: GitHub, Jira, sub-agents, ingest tokens ----------
+   The rest of what OrgSetUpMyAgent gets, made reachable for an account with no
+   organization at all — found live, reported directly: these tools "should be there
+   along with the previous ones" (GitHub/Jira/Claude Code/Codex/Gemini CLI), not just the
+   generic connector catalog. Same underlying save/status/disconnect functions as the
+   org-mode routes just above (githubConnection.ts/jiraConnection.ts's own Account
+   variants), gated the same way every other /api/accounts/me/* route is — logged in as
+   yourself, nothing else, since there's no org role to check. */
+
+app.post('/api/accounts/me/github', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { token } = req.body as { token?: string };
+  if (!token?.trim()) {
+    reply.code(400);
+    return { error: 'token is required' };
+  }
+  const result = await saveGithubAccountConnection(accountId, token.trim());
+  if (!result.ok) {
+    reply.code(400);
+    return { error: result.error };
+  }
+  return { connected: true, login: result.login };
+});
+app.get('/api/accounts/me/github/status', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return getGithubAccountStatus(accountId);
+});
+app.delete('/api/accounts/me/github', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  await disconnectGithubAccount(accountId);
+  return { ok: true };
+});
+
+app.post('/api/accounts/me/jira', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { siteUrl, email, apiToken } = req.body as { siteUrl?: string; email?: string; apiToken?: string };
+  if (!siteUrl?.trim() || !email?.trim() || !apiToken?.trim()) {
+    reply.code(400);
+    return { error: 'siteUrl, email, and apiToken are all required' };
+  }
+  const result = await saveJiraAccountConnection(accountId, siteUrl.trim(), email.trim(), apiToken.trim());
+  if (!result.ok) {
+    reply.code(400);
+    return { error: result.error };
+  }
+  return { connected: true, displayName: result.displayName };
+});
+app.get('/api/accounts/me/jira/status', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return getJiraAccountStatus(accountId);
+});
+app.delete('/api/accounts/me/jira', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  await disconnectJiraAccount(accountId);
+  return { ok: true };
+});
+
+app.get('/api/accounts/me/runtimes', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getAccountRuntimes(accountId)]);
+  return { catalog, registered };
+});
+app.post('/api/accounts/me/runtimes', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { runtimeKey } = req.body as { runtimeKey: string };
+  const checked = await checkCatalogEntry(runtimeKey, reply);
+  if ('error' in checked) return checked;
+  const existing = await repo.getAccountRuntimes(accountId);
+  if (existing.some((r) => r.runtimeKey === runtimeKey)) {
+    reply.code(409);
+    return { error: 'already registered' };
+  }
+  const scope: RuntimeScope = checked.entry.approved ? 'full' : 'pending';
+  const addedAt = new Date().toISOString().slice(0, 10);
+  await repo.insertAccountRuntime(accountId, runtimeKey, scope, addedAt);
+  return { registered: await repo.getAccountRuntimes(accountId) };
+});
+app.delete('/api/accounts/me/runtimes/:key', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const key = (req.params as { key: string }).key;
+  await repo.deleteAccountRuntime(accountId, key);
+  return { registered: await repo.getAccountRuntimes(accountId) };
+});
+
+app.post('/api/accounts/me/ingest-tokens', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { label } = req.body as { label?: string };
+  if (!label?.trim()) {
+    reply.code(400);
+    return { error: 'label is required' };
+  }
+  const created = await generateAccountToken(accountId, label.trim());
+  return { id: created.id, token: created.token };
+});
+app.get('/api/accounts/me/ingest-tokens', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return { tokens: await listAccountTokens(accountId) };
+});
+app.delete('/api/accounts/me/ingest-tokens/:tokenId', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const tokenId = (req.params as { tokenId: string }).tokenId;
+  await revokeAccountToken(accountId, tokenId);
+  return { tokens: await listAccountTokens(accountId) };
+});
+
 /* ---------- self-service: connect your own tool ----------
    The general, non-hardcoded mechanism (docs/agent-to-agent-communication.md §13): a
    person generates a token here, pastes it into their own tool's native hook/telemetry
@@ -1783,7 +1936,10 @@ app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req, reply) => {
 /** The receiving end. Auth is Bearer-token only — the :source path segment says which tool
  *  is talking, the token says who it's talking for. Unrecognized tool-call shapes (most
  *  hook firings — anything outside NARRATIVE_TOOLS) are accepted and silently dropped, not
- *  errored, since a hook fires on every single tool call. */
+ *  errored, since a hook fires on every single tool call. Tries a person's token first,
+ *  then a personal account's — the two token spaces are disjoint (one hashed value can
+ *  never match both tables), so trying both costs one extra lookup only on the account
+ *  path, never a real ambiguity. */
 app.post('/api/ingest/:source', async (req, reply) => {
   const source = (req.params as { source: string }).source;
   if (!INGEST_SOURCES.includes(source)) {
@@ -1797,7 +1953,8 @@ app.post('/api/ingest/:source', async (req, reply) => {
     return { error: 'missing bearer token' };
   }
   const resolved = await resolveToken(token);
-  if (!resolved) {
+  const resolvedAccount = resolved ? null : await resolveAccountToken(token);
+  if (!resolved && !resolvedAccount) {
     reply.code(401);
     return { error: 'invalid or revoked token' };
   }
@@ -1807,15 +1964,22 @@ app.post('/api/ingest/:source', async (req, reply) => {
     reply.code(202);
     return { recorded: false };
   }
-  await recordEvent(resolved.personId, source, normalized);
 
-  // The first real pushed event IS the self-service act of connecting the surface — same
-  // principle as GitHub's PAT-save flipping its surface, just triggered by real activity
-  // arriving instead of a credential being validated (a token alone doesn't prove
-  // anything is actually being pushed yet; a landed event does).
-  const person = await repo.getPerson(resolved.personId);
-  if (person.surfaces[source as SurfaceKey] !== 'connected') {
-    await repo.updatePersonSurface(resolved.personId, source as SurfaceKey, 'connected');
+  if (resolved) {
+    await recordEvent(resolved.personId, source, normalized);
+    // The first real pushed event IS the self-service act of connecting the surface —
+    // same principle as GitHub's PAT-save flipping its surface, just triggered by real
+    // activity arriving instead of a credential being validated (a token alone doesn't
+    // prove anything is actually being pushed yet; a landed event does).
+    const person = await repo.getPerson(resolved.personId);
+    if (person.surfaces[source as SurfaceKey] !== 'connected') {
+      await repo.updatePersonSurface(resolved.personId, source as SurfaceKey, 'connected');
+    }
+  } else if (resolvedAccount) {
+    // A personal account has no `surfaces` state to flip — connected-ness for it is
+    // derived purely from whether any events exist, same as every other account-scoped
+    // digest provider (personalConnectors.ts).
+    await recordAccountEvent(resolvedAccount.accountId, source, normalized);
   }
 
   reply.code(202);

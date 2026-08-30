@@ -807,6 +807,32 @@ export async function deletePersonRuntime(personId: number, runtimeKey: string):
   await pool.query('DELETE FROM person_runtimes WHERE person_id = $1 AND runtime_key = $2', [personId, runtimeKey]);
 }
 
+/** Same trio, account-keyed instead of person-keyed — a sub-agent registered by an
+ *  account with no organization at all. */
+export async function getAccountRuntimes(accountId: number): Promise<PersonRuntime[]> {
+  const { rows } = await pool.query(
+    'SELECT * FROM account_runtimes WHERE account_id = $1 ORDER BY added_at',
+    [accountId],
+  );
+  return rows.map(toPersonRuntime);
+}
+
+export async function insertAccountRuntime(
+  accountId: number,
+  runtimeKey: string,
+  scope: RuntimeScope,
+  addedAt: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO account_runtimes (account_id, runtime_key, scope, added_at) VALUES ($1,$2,$3,$4)`,
+    [accountId, runtimeKey, scope, addedAt],
+  );
+}
+
+export async function deleteAccountRuntime(accountId: number, runtimeKey: string): Promise<void> {
+  await pool.query('DELETE FROM account_runtimes WHERE account_id = $1 AND runtime_key = $2', [accountId, runtimeKey]);
+}
+
 export async function getOrgMainAgent(orgId: number): Promise<OrgMainAgent | null> {
   const { rows } = await pool.query('SELECT * FROM org_main_agent WHERE org_id = $1', [orgId]);
   return rows[0] ? toOrgMainAgent(rows[0]) : null;
@@ -1133,6 +1159,74 @@ export async function getIngestedEventsSince(personId: number, source: string, s
   const { rows } = await pool.query(
     `SELECT * FROM ingested_events WHERE person_id = $1 AND source = $2 AND occurred_at >= $3 ORDER BY occurred_at`,
     [personId, source, since.toISOString()],
+  );
+  return rows.map((r) => ({ source: r.source, kind: r.kind, summary: r.summary, occurredAt: iso(r.occurred_at) }));
+}
+
+/** Same shape as the ingest-token/ingested-event pair above, account-keyed instead of
+ *  person-keyed — a personal (no-org) account's own bearer token for POST
+ *  /api/ingest/:source and the raw activity it authenticates. */
+export interface AccountIngestToken {
+  id: string;
+  accountId: number;
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+}
+
+function toAccountIngestToken(row: any): AccountIngestToken {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    label: row.label,
+    createdAt: iso(row.created_at),
+    lastUsedAt: row.last_used_at ? iso(row.last_used_at) : null,
+    revoked: row.revoked_at != null,
+  };
+}
+
+export async function insertAccountIngestToken(id: string, accountId: number, tokenHash: string, label: string): Promise<AccountIngestToken> {
+  const { rows } = await pool.query(
+    `INSERT INTO account_ingest_tokens (id, account_id, token_hash, label, created_at) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [id, accountId, tokenHash, label, new Date().toISOString()],
+  );
+  return toAccountIngestToken(rows[0]);
+}
+
+export async function listAccountIngestTokens(accountId: number): Promise<AccountIngestToken[]> {
+  const { rows } = await pool.query('SELECT * FROM account_ingest_tokens WHERE account_id = $1 ORDER BY created_at DESC', [accountId]);
+  return rows.map(toAccountIngestToken);
+}
+
+export async function revokeAccountIngestToken(accountId: number, tokenId: string): Promise<void> {
+  await pool.query(
+    'UPDATE account_ingest_tokens SET revoked_at = $3 WHERE id = $1 AND account_id = $2 AND revoked_at IS NULL',
+    [tokenId, accountId, new Date().toISOString()],
+  );
+}
+
+export async function resolveAccountIngestToken(tokenHash: string): Promise<{ accountId: number } | null> {
+  const { rows } = await pool.query(
+    'SELECT account_id FROM account_ingest_tokens WHERE token_hash = $1 AND revoked_at IS NULL',
+    [tokenHash],
+  );
+  if (rows.length === 0) return null;
+  await pool.query('UPDATE account_ingest_tokens SET last_used_at = $2 WHERE token_hash = $1', [tokenHash, new Date().toISOString()]);
+  return { accountId: rows[0].account_id };
+}
+
+export async function insertAccountIngestedEvent(id: string, accountId: number, event: IngestedEvent): Promise<void> {
+  await pool.query(
+    `INSERT INTO account_ingested_events (id, account_id, source, kind, summary, occurred_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [id, accountId, event.source, event.kind, event.summary, event.occurredAt],
+  );
+}
+
+export async function getAccountIngestedEventsSince(accountId: number, source: string, since: Date): Promise<IngestedEvent[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM account_ingested_events WHERE account_id = $1 AND source = $2 AND occurred_at >= $3 ORDER BY occurred_at`,
+    [accountId, source, since.toISOString()],
   );
   return rows.map((r) => ({ source: r.source, kind: r.kind, summary: r.summary, occurredAt: iso(r.occurred_at) }));
 }

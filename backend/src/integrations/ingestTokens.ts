@@ -35,3 +35,24 @@ export async function revokeToken(personId: number, tokenId: string): Promise<vo
 export async function resolveToken(rawToken: string): Promise<{ personId: number } | null> {
   return repo.resolveIngestToken(hashToken(rawToken));
 }
+
+// Same four functions, account-keyed instead of person-keyed — a personal (no-org)
+// account generating its own token for the same self-service push pattern.
+export async function generateAccountToken(accountId: number, label: string): Promise<{ id: string; token: string }> {
+  const id = crypto.randomUUID();
+  const token = `aom_${crypto.randomBytes(24).toString('base64url')}`;
+  await repo.insertAccountIngestToken(id, accountId, hashToken(token), label);
+  return { id, token };
+}
+
+export async function listAccountTokens(accountId: number) {
+  return repo.listAccountIngestTokens(accountId);
+}
+
+export async function revokeAccountToken(accountId: number, tokenId: string): Promise<void> {
+  await repo.revokeAccountIngestToken(accountId, tokenId);
+}
+
+export async function resolveAccountToken(rawToken: string): Promise<{ accountId: number } | null> {
+  return repo.resolveAccountIngestToken(hashToken(rawToken));
+}

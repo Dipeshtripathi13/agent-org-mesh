@@ -482,6 +482,58 @@ connect-then-ask round trip (a genuine Linear/Notion/etc. account, not a deliber
 invalid credential) remains unverified for the same honest reason every other new
 connector in this project does — update this note once one happens.
 
+**GitHub, Jira, and sub-agent registration (Claude Code/Codex CLI/Gemini CLI) reach
+personal accounts too, not just the generic connector catalog.** Found live, reported
+directly, right after the connector catalog first extended to personal accounts: "the
+data engineering tool should be there along with the previous tools like claude, claude
+code, codex, jira, github... I cannot see the ones that were previously there." Real gap,
+not a misunderstanding — `PersonalMainAgentPanel` had never gotten GitHub/Jira/sub-agent
+sections at all, and the generic catalog's own `HANDLED_ELSEWHERE` exclusion (GitHub/Jira/
+Calendar assumed to have "their own dedicated section elsewhere on this page") was true
+for org mode and false for personal mode, so those three tools were structurally
+unreachable there — worse than merely hidden. `PersonalToolsPanel.tsx` is a new,
+genuinely separate component (not the org-mode page's `owner` prop threaded through,
+unlike `ConnectorsPanel`) — that page's GitHub/Jira/sub-agent state is deeply intertwined
+with org-only concepts (the org main agent, per-sub-agent live query), so extracting it
+cleanly would have meant rewriting working code for no functional gain; a smaller,
+purpose-built component covering just connect/status/disconnect/token-generation was the
+lower-risk path, sharing only the pure `SOURCE_LABEL`/`ingestSnippet` helpers (exported
+from `SetUpMyAgent.tsx`) rather than any stateful logic.
+
+The real new backend piece is Codex CLI/Gemini CLI's event-push mechanism, which had no
+account-scoped counterpart at all: `account_runtimes`, `account_ingest_tokens`, and
+`account_ingested_events` mirror `person_runtimes`/`ingest_tokens`/`ingested_events`
+exactly, and `POST /api/ingest/:source` now tries a person's token first, then an
+account's — the two token spaces are disjoint (one hashed value can never match both
+tables), so this costs one extra lookup only on the account path, never a real ambiguity.
+GitHub/Jira reuse their own existing `githubConnection.ts`/`jiraConnection.ts` client
+modules, each growing the same `save/get/disconnect...AccountConnection` trio every other
+connector's account variant already has. `claudeCodeActivity.ts` gained an `accountId`
+parameter alongside its existing `personId` one, merging an account's own pushed events
+into the same local-transcript scan every caller already shares.
+
+One real bug found and fixed live, twice, in the same sitting: the first version of the
+personal digest bridge's Codex CLI/Gemini CLI/Claude Code "connected" check looked at
+whether the account had *registered* that runtime (`account_runtimes`) — but `codex` and
+`gemini-cli` were never real `runtime_catalog` entries at all (confirmed this is also true
+of org mode's own "Register another agent" dropdown, not something new this broke), so
+that check could never be true and those two tools would never surface. The second bug
+was closer to home: Claude Code's status check was set to unconditionally `connected:
+true` ("always worth trying"), which turned out to mean *every* personal ask for *every*
+account would attempt `claudeCodeActivity.ts`'s local-transcript scan regardless of
+whether that account had ever touched Claude Code — caught live when this exact session's
+own 254MB same-day transcript (this file's own conversation, still growing) made one real
+`ask-personal` call hang for minutes. Org mode never had this problem because
+`ingestClaudeCodeClaim` only scans once `person.surfaces['claude-code']` is actually
+`'connected'` — set at registration or first pushed event, never unconditionally. Fixed to
+check the same two real signals for a personal account (`account_runtimes` registration
+or at least one real pushed event), matching org mode's actual gate instead of a stricter-
+sounding comment that didn't match what the code did. Live-verified end-to-end afterward,
+fast (no hang): a real ingest token generated, a real event pushed through
+`/api/ingest/codex`, and a real `ask-personal` call whose router genuinely selected
+"Codex CLI" as relevant and answered from the real pushed activity — `consultedSources`
+confirmed it, not just the answer text.
+
 Model-agnostic main agents are built and live-verified against a real local Ollama model —
 one `ModelProvider` adapter each for Claude and for anything OpenAI-compatible (ChatGPT,
 or a self-hosted/open-source model — same adapter, `OPENAI_BASE_URL` is the only knob),

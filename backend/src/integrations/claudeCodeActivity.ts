@@ -3,7 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { getEventsSince } from './eventIngestion.js';
+import { getEventsSince, getAccountEventsSince } from './eventIngestion.js';
 
 /**
  * Real signal, not simulated: Claude Code writes a .jsonl transcript per session under
@@ -46,8 +46,10 @@ const startOfToday = () => {
  *  box, the per-sub-agent status query) keep behaving exactly as before. Pass an older
  *  `since` (e.g. seven days back) for a wider window, like a weekly manager report.
  *  `personId`, when passed, additionally merges in pushed events for this person — see
- *  the module comment above. */
-export async function getClaudeCodeActivitySince(since: Date = startOfToday(), personId?: number): Promise<ClaudeCodeActivity> {
+ *  the module comment above. `accountId` is the same idea for a personal (no-org)
+ *  account's own pushed events — never both at once, since an org-chart person and a
+ *  personal account are two different kinds of caller. */
+export async function getClaudeCodeActivitySince(since: Date = startOfToday(), personId?: number, accountId?: number): Promise<ClaudeCodeActivity> {
   const files = new Set<string>();
   const actions: string[] = [];
   let sessionCount = 0;
@@ -116,6 +118,14 @@ export async function getClaudeCodeActivitySince(since: Date = startOfToday(), p
       else actions.push(e.summary);
     }
   }
+  if (accountId != null) {
+    const pushed = await getAccountEventsSince(accountId, 'claude-code', since);
+    for (const e of pushed) {
+      pushedCount += 1;
+      if (e.kind === 'file') files.add(e.summary);
+      else actions.push(e.summary);
+    }
+  }
 
   return {
     // Real activity was found either on this machine or pushed from wherever it actually
@@ -132,7 +142,7 @@ export async function getClaudeCodeActivitySince(since: Date = startOfToday(), p
 }
 
 /** Kept as a convenience alias — same as calling with no `since` argument. */
-export const getTodaysClaudeCodeActivity = (personId?: number) => getClaudeCodeActivitySince(undefined, personId);
+export const getTodaysClaudeCodeActivity = (personId?: number, accountId?: number) => getClaudeCodeActivitySince(undefined, personId, accountId);
 
 export function formatClaudeCodeDigest(activity: ClaudeCodeActivity): string | null {
   if (!activity.available || (activity.actions.length === 0 && activity.filesTouched.length === 0)) return null;
