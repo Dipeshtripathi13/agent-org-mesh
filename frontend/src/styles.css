@@ -100,6 +100,26 @@ input:focus, select:focus, textarea:focus {
 .tabs button + button { border-left: 1px solid var(--rule2); }
 .tabs button[aria-pressed='true'] { background: var(--accent); color: #fff; }
 
+/* Profile trigger + dropdown — "Admin login" (or "My agent" back-link) and "Log out"
+   live here now, one menu instead of scattered topbar buttons. See App.tsx's ProfileMenu. */
+.profile-menu { position: relative; }
+button.whoami {
+  border: 1px solid transparent; border-radius: 2px; background: none; cursor: pointer;
+  padding: 3px 6px; transition: background-color var(--ease), border-color var(--ease);
+}
+button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--accent-bg); border-color: var(--accent-border); }
+.profile-dropdown {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 160px;
+  background: var(--panel); border: 1px solid var(--rule2); border-radius: 2px;
+  box-shadow: var(--shadow-2); padding: 4px; display: flex; flex-direction: column;
+}
+.profile-dropdown button {
+  text-align: left; padding: 7px 9px; font-size: 12px; border: 0; background: none;
+  color: var(--ink2); border-radius: 2px; cursor: pointer;
+}
+.profile-dropdown button:hover { background: var(--accent-bg); color: var(--accent-hover); }
+.profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 4px; padding-top: 9px; }
+
 .org-switcher {
   height: 32px; border: 1px solid var(--rule2); border-radius: 2px; background: #fff;
   font-size: 12px; padding: 0 8px; color: var(--ink); max-width: 200px;

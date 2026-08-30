@@ -14,12 +14,18 @@ export function Overview() {
     // Cleared at the start of every attempt, not just set on failure — orgId briefly
     // starts at 1 (OrgContext's placeholder default) before the real org list loads for
     // whoever's logged in, so this effect's very first run can 403 against an org the
-    // account has no role on. Without clearing here, that transient failure stuck
-    // forever: the follow-up fetch against the *correct* orgId would succeed, set real
-    // data, and still render the error underneath it — first thing a brand-new self-serve
-    // signup saw was "Couldn't load the overview," even though it had, a moment later.
+    // account has no role on. `cancelled` additionally guards against that first, failing
+    // request's promise settling *after* the follow-up request for the real orgId already
+    // has — without it, a slow 403 arriving late could still stomp good data with an error
+    // right after it rendered, which is exactly what a brand-new self-serve signup saw:
+    // the two org?orgId=1 attempts (StrictMode's dev double-invoke) racing the real
+    // org?orgId=N one, sometimes resolving last.
+    let cancelled = false;
     setError(null);
-    api.overview(orgId).then(setData).catch((e) => setError(String(e)));
+    api.overview(orgId)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(String(e)); });
+    return () => { cancelled = true; };
   }, [orgId]);
 
   if (error) return <p className="sub">Couldn&rsquo;t load the overview. Is the API running?</p>;

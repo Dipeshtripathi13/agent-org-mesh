@@ -3,6 +3,7 @@ import { api } from './lib/api';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { MeProvider, useMe } from './lib/MeContext';
 import { OrgProvider, useOrg } from './lib/OrgContext';
+import { AdminStepUp } from './pages/AdminStepUp';
 import { Ask } from './pages/Ask';
 import { AuditLog } from './pages/AuditLog';
 import { Connections } from './pages/Connections';
@@ -68,48 +69,119 @@ function OrgSwitcher() {
   );
 }
 
-/** Who "My agent" acts as — switchable to any person in any organization, for testing. */
+/** Which of *your own* org-chart identities "My agent" is showing — only relevant, and
+ *  only rendered, when the account is a real person in more than one organization. No
+ *  person-picker anymore: within a given org you only ever have exactly one identity
+ *  (yourself), so there's nothing left to switch there. See MeContext's own module
+ *  comment for why this used to (and no longer does) let you browse into anyone else's. */
 function MeSwitcher() {
-  const { meId, meOrgId, people, organizations, setMeOrg, setMeId } = useMe();
-  if (organizations.length === 0) return null;
+  const { meOrgId, identities, setMeOrg } = useMe();
+  if (identities.length < 2) return null;
   return (
-    <>
-      <select
-        aria-label="Switch organization (My agent)"
-        value={meOrgId}
-        onChange={(e) => setMeOrg(Number(e.target.value))}
-        className="org-switcher"
-      >
-        {organizations.map((o) => (
-          <option key={o.id} value={o.id}>{o.name}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Switch person (My agent)"
-        value={meId}
-        onChange={(e) => setMeId(Number(e.target.value))}
-        className="org-switcher"
-      >
-        {people.map((p) => (
-          <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>
-        ))}
-      </select>
-    </>
+    <select
+      aria-label="Switch organization (My agent)"
+      value={meOrgId}
+      onChange={(e) => setMeOrg(Number(e.target.value))}
+      className="org-switcher"
+    >
+      {identities.map((p) => (
+        <option key={p.orgId} value={p.orgId}>{p.orgName}</option>
+      ))}
+    </select>
   );
 }
 
-function Topbar({ panel, switchPanel }: { panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void }) {
+/** The account's own profile trigger, folded into one menu instead of scattering "Admin"
+ *  and "Log out" as separate topbar buttons — click your name to either step up into
+ *  Admin (or head back to "My agent") and to log out, same shape as most real products'
+ *  own account menus (a profile picture/name in the corner that opens both "switch
+ *  context" and "sign out"). Closes on an outside click or Escape; a fresh click anywhere
+ *  else in the menu also closes it after acting. */
+function ProfileMenu({
+  panel, switchPanel, name, subtitle, logout,
+}: {
+  panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; name: string; subtitle: string; logout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="profile-menu" ref={ref}>
+      <button
+        type="button"
+        className="whoami"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <i className="avatar-dot" aria-hidden="true">{name.charAt(0)}</i>
+        <span className="whoami-text">
+          <strong>{name}</strong>
+          <span className="whoami-title">{subtitle}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="profile-dropdown" role="menu">
+          {panel === 'admin' ? (
+            <button type="button" role="menuitem" onClick={() => { switchPanel('me'); setOpen(false); }}>
+              &larr; My agent
+            </button>
+          ) : (
+            <button type="button" role="menuitem" onClick={() => { switchPanel('admin'); setOpen(false); }}>
+              Admin login
+            </button>
+          )}
+          <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); logout(); }}>
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Topbar({
+  panel, switchPanel, hasOwnIdentity,
+}: {
+  panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; hasOwnIdentity: boolean;
+}) {
   const { meId } = useMe();
   const { account, logout } = useAuth();
   const [who, setWho] = useState<{ name: string; subtitle: string } | null>(null);
+  // MeSwitcher (when it renders at all) only ever lists the account's own real
+  // identities now — see MeContext's module comment — so there's no separate "wrong to
+  // show on the empty state" concern left here; it's just meaningless with no identity.
+  const showMeSwitcher = panel === 'me' && account && hasOwnIdentity;
 
+  // Nothing here — the panel switcher, org/person switchers, whoami, logout — is
+  // meaningful before a real login. Fetching even the display name of "who" pre-login
+  // would mean quietly reading a real person's data before anyone proved they're allowed
+  // to; gating the effect itself, not just what renders from it, keeps that from
+  // happening at all.
   useEffect(() => {
+    if (!account) { setWho(null); return; }
     if (panel === 'admin') {
-      setWho(account ? { name: account.name, subtitle: 'Platform admin' } : null);
+      setWho({ name: account.name, subtitle: 'Platform admin' });
+    } else if (!hasOwnIdentity) {
+      setWho(null);
     } else {
       api.person(meId).then((d) => setWho({ name: d.person.name, subtitle: d.person.title }));
     }
-  }, [panel, meId, account]);
+  }, [panel, meId, account, hasOwnIdentity]);
 
   const now = useClock();
   const clock = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -118,29 +190,20 @@ function Topbar({ panel, switchPanel }: { panel: 'admin' | 'me'; switchPanel: (p
   return (
     <header className="topbar">
       <span className="brand">Agent Org Mesh</span>
-      <div className="tabs">
-        <button aria-pressed={panel === 'admin'} onClick={() => switchPanel('admin')}>Admin</button>
-        <button aria-pressed={panel === 'me'} onClick={() => switchPanel('me')}>My agent</button>
-      </div>
       {panel === 'admin' && account && <OrgSwitcher />}
-      {panel === 'me' && <MeSwitcher />}
+      {showMeSwitcher && <MeSwitcher />}
       <span className="spacer" />
       <span className="clock">{date} &middot; {clock}</span>
-      {who && (
-        <span className="whoami">
-          <i className="avatar-dot" aria-hidden="true">{who.name.charAt(0)}</i>
-          <span className="whoami-text">
-            <strong>{who.name}</strong>
-            <span className="whoami-title">{who.subtitle}</span>
-          </span>
-        </span>
-      )}
-      {panel === 'admin' && account && (
-        <button className="btn btn-secondary" style={{ height: 28, fontSize: 11, padding: '0 10px' }} onClick={() => void logout()}>
-          Log out
-        </button>
-      )}
       <span className="readonly"><i className="dot-live" />Read-only &middot; no write scope</span>
+      {account && (
+        <ProfileMenu
+          panel={panel}
+          switchPanel={switchPanel}
+          name={who?.name ?? account.name}
+          subtitle={who?.subtitle ?? 'Account'}
+          logout={() => void logout()}
+        />
+      )}
     </header>
   );
 }
@@ -156,7 +219,10 @@ interface Route { panel: Panel; screen: string; }
  *  blank page — never a hard failure over a bad URL. */
 function parsePath(pathname: string): Route {
   const [panelSeg, screenSeg] = pathname.split('/').filter(Boolean);
-  const panel: Panel = panelSeg === 'me' ? 'me' : 'admin';
+  // "My agent" is the only thing shown by default — an unrecognized or root path (or a
+  // stale bookmark from before this changed) lands there, never on Admin. Admin is only
+  // ever reached by an explicit /admin/... path, via the topbar's own entry point.
+  const panel: Panel = panelSeg === 'admin' ? 'admin' : 'me';
   const nav = panel === 'admin' ? ADMIN : MINE;
   const screen = nav.some((n) => n.key === screenSeg) ? screenSeg! : nav[0].key;
   return { panel, screen };
@@ -168,8 +234,25 @@ function pathFor(route: Route): string {
 
 function Shell() {
   const [{ panel, screen }, setRoute] = useState<Route>(() => parsePath(window.location.pathname));
-  const { account, orgRoles, people, loading: authLoading } = useAuth();
-  const nav = panel === 'admin' ? ADMIN : MINE;
+  const { account, orgRoles, people: myIdentities, adminElevatedUntil, loading: authLoading } = useAuth();
+  // Two genuinely different facts, kept separate rather than conflated into one "zero
+  // orgs" flag: whether this account administers any org at all (drives what Admin's
+  // sidebar can show), and whether it's a real person in any org's chart at all (drives
+  // whether "My agent" has an identity of its own to show — see MeContext's own comment
+  // for why it's no longer allowed to fall back to browsing someone else's).
+  const hasAdminRole = Object.keys(orgRoles).length > 0;
+  const hasOwnIdentity = myIdentities.length > 0;
+  // Only "Organizations" is reachable in Admin until an org actually exists — the other
+  // screens all assume one (an org switcher, an orgId to query), and would otherwise be a
+  // wall of broken-looking screens on someone's very first visit. Same reasoning on the
+  // "My agent" side: without an org-chart identity, only "My agent" (now a personal Ask
+  // yourself) and "Set up my agent" (a personal main agent) apply — What it knows,
+  // Preview, Ask, Who asked about me, and Org structure are all org-structure/disclosure
+  // concepts a personal-only account has nothing to show for.
+  const nav =
+    panel === 'admin' ? (hasAdminRole ? ADMIN : ADMIN.filter((n) => n.key === 'organizations'))
+    : hasOwnIdentity ? MINE
+    : MINE.filter((n) => n.key === 'mine' || n.key === 'setup');
   const active = nav.find((n) => n.key === screen) ?? nav[0];
 
   /** The one place that ever touches history — every navigation in the app (tab switch,
@@ -202,56 +285,49 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const switchPanel = (p: Panel) => go({ panel: p, screen: p === 'admin' ? 'overview' : 'mine' });
+  const switchPanel = (p: Panel) =>
+    go({ panel: p, screen: p === 'admin' ? (hasAdminRole ? 'overview' : 'organizations') : 'mine' });
   const setScreen = (key: string) => go({ panel, screen: key });
 
-  /** Where a fresh login lands, when it isn't obvious. Someone with an admin role
-   *  somewhere stays on the Admin panel they just signed into — that's what they came
-   *  for. Someone who's only ever a person in an org chart (no admin role anywhere) gets
-   *  sent to "My agent" instead of an empty, slightly baffling Admin panel — a better
-   *  default, not a lockdown; nothing stops them clicking back to Admin themselves.
-   *  Guarded so this only fires on a genuine logged-out → logged-in transition, never on
-   *  a page refresh that happens to already have a session (which must respect whatever
-   *  the URL already says, deep-link/refresh-preserves-place). */
-  const authKnown = useRef(false);
-  const wasLoggedIn = useRef(false);
-  useEffect(() => {
-    if (authLoading) return;
-    if (!authKnown.current) {
-      authKnown.current = true;
-      wasLoggedIn.current = !!account;
-      return;
-    }
-    const justLoggedIn = !!account && !wasLoggedIn.current;
-    wasLoggedIn.current = !!account;
-    if (justLoggedIn && panel === 'admin' && Object.keys(orgRoles).length === 0 && people.length > 0) {
-      switchPanel('me');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, authLoading]);
-
-  // The Admin panel is real, session-gated content — "My agent" stays fully open (see
-  // MeContext's own comment: a real per-person login now exists too, but the free
-  // identity switcher is a deliberate, documented demo affordance that isn't removed by
-  // it — see CLAUDE.md rule 7). While the session check is still in flight, show neither
-  // the login form nor admin content, so a real session never flashes a login prompt
-  // first and an absent one never flashes real org data before redirecting.
-  const adminGate = panel !== 'admin' ? 'open' : authLoading ? 'checking' : account ? 'open' : 'locked';
+  // Both panels now require a real login first — "My agent" no longer works fully
+  // logged-out. That reverses what used to be a deliberate, documented demo affordance
+  // (a free identity switcher defaulting to a seeded Northbeam employee, reachable by
+  // anyone with zero auth): fine for internal testing, but once real strangers can land
+  // here via the marketing site's "Try it for free" link, showing a named person's data
+  // to nobody-in-particular reads exactly like a broken login, not a demo. Admin is
+  // additionally two-factor: the same login below ("locked") is the first factor, and a
+  // fresh re-entry of the same password (AdminStepUp, "stepup") is the second — neither
+  // is skippable by navigating around it, since every Admin-scoped endpoint re-checks the
+  // session's own elevation server-side regardless (requireOrgRole in server.ts).
+  // Re-evaluated every tick of useClock so a session that elevated 15 minutes ago and is
+  // still sitting on an Admin screen falls back to the re-auth prompt on its own, without
+  // needing a failed request first.
+  const now = useClock();
+  const isAdminElevated = !!adminElevatedUntil && new Date(adminElevatedUntil).getTime() > now.getTime();
+  const gate =
+    authLoading ? 'checking'
+    : !account ? 'locked'
+    : panel === 'admin' && !isAdminElevated ? 'stepup'
+    : 'open';
 
   return (
     <div className="app">
-      <Topbar panel={panel} switchPanel={switchPanel} />
+      <Topbar panel={panel} switchPanel={switchPanel} hasOwnIdentity={hasOwnIdentity} />
 
-      {adminGate === 'checking' ? (
+      {gate === 'checking' ? (
         <div className="body" />
-      ) : adminGate === 'locked' ? (
+      ) : gate === 'locked' ? (
         <div className="body">
           <Login />
+        </div>
+      ) : gate === 'stepup' ? (
+        <div className="body">
+          <AdminStepUp />
         </div>
       ) : (
         <div className="body">
           <nav className="sidebar">
-            <h2>{panel === 'admin' ? 'Admin · IT & exec' : 'My agent · employee'}</h2>
+            <h2>{panel === 'admin' ? 'Admin · IT & exec' : hasOwnIdentity ? 'My agent · employee' : 'My agent · personal'}</h2>
             <div className="navlist">
               {nav.map((n) => (
                 <button

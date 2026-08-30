@@ -1,70 +1,60 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { api, type Organization, type Person } from './api';
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import type { MyIdentity } from './api';
 import { useAuth } from './AuthContext';
 
 interface MeContextValue {
   meId: number;
   meOrgId: number;
-  /** Full roster of meOrgId — the picker's source, and how pages look up "me" by id. */
-  people: Person[];
-  organizations: Organization[];
+  /** Every real org-chart identity this account is actually linked to — never anyone
+   *  else's, never another organization's. Multi-org membership means more than one
+   *  entry; switching between them (via setMeOrg) is the only "switching" this context
+   *  does now. */
+  identities: MyIdentity[];
   setMeOrg: (orgId: number) => void;
-  setMeId: (personId: number) => void;
 }
 
 const MeContext = createContext<MeContextValue | null>(null);
 
-// Diego Okonjo, Northbeam — the original demo subject, and the fallback for anyone not
-// logged in with a real identity of their own. Anyone can still switch away from this —
-// see the login-aware default below, which changes only where the switcher *starts*.
-const DEFAULT_ORG = 1;
-const DEFAULT_ME = 11;
-
+/** "My agent" used to be a free identity switcher — any logged-in account could browse
+ *  into *any* organization (a standing public demo org, always, plus any real one it
+ *  happened to administer) and pick *any* person there, viewing that person's own full
+ *  self-view (their connected surfaces, their own ask-yourself chat history) as if it
+ *  were their own account. That was a reasonable dev/QA convenience while this was a
+ *  closed internal build with only seed data behind it; it stopped being reasonable the
+ *  moment real people could sign up and land in "My agent" only to discover they could
+ *  browse into a stranger's organization and pick any employee's name off a list — found
+ *  live, reported as exactly the alarming thing it was ("why am I able to see this
+ *  organization... I am able to sign in as other person"). "My agent" now shows *only*
+ *  the identities the logged-in account is actually linked to (`people.account_id` in the
+ *  database, `AuthContext`'s own `people`) — nothing else is reachable from here. Genuinely
+ *  previewing what another role or person would see is still real, still supported, and
+ *  still clearly labeled as a simulation rather than a login: `Preview.tsx` (self-service,
+ *  "what would X role see about me") and Admin's `PolicyMatrix.tsx` (an admin testing the
+ *  policy grid), both via `/api/query`'s persist:false preview mode. */
 export function MeProvider({ children }: { children: ReactNode }) {
-  const { account, people: myIdentities } = useAuth();
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [meOrgId, setMeOrgId] = useState(DEFAULT_ORG);
-  const [meId, setMeId] = useState(DEFAULT_ME);
-  const [people, setPeople] = useState<Person[]>([]);
-
-  // Not the admin-scoped api.organizations() — this switcher still works logged out
-  // (CLAUDE.md rule 7), which that endpoint never has. But orgDirectory() itself is no
-  // longer "every org on the platform, unfiltered" the way it originally was: it's the
-  // public demo org plus whatever real orgs the current session is actually connected
-  // to — see listOrganizationsForIdentitySwitcher's own comment for why that changed.
-  useEffect(() => { api.orgDirectory().then((d) => setOrganizations(d.organizations)); }, [account]);
-
-  // Logging in as yourself (a real account linked to at least one org-chart identity)
-  // moves "My agent" to *you* by default, instead of the anonymous demo default above —
-  // still just a default, not a lockdown: the free switcher a few lines down keeps
-  // working exactly as before, this only changes where it starts. Keyed on account?.id
-  // via a ref (not a dependency) so it fires once per login/logout transition and never
-  // fights a manual switch made afterward on the same login.
-  const appliedForAccount = useRef<number | null | undefined>(undefined);
-  useEffect(() => {
-    if (account?.id === appliedForAccount.current) return;
-    appliedForAccount.current = account?.id ?? null;
-    if (account && myIdentities.length > 0) {
-      setMeOrgId(myIdentities[0].orgId);
-      setMeId(myIdentities[0].id);
-    }
-  }, [account, myIdentities]);
-
-  // Single fetch on every org change (including the initial mount) — this used to be a
-  // second, redundant api.org() call inside setMeOrg alongside this same effect, firing
-  // two identical requests on every switch. Also defaults meId to the new roster's first
-  // person only when the current one genuinely isn't in it, rather than unconditionally.
-  useEffect(() => {
-    void api.org(meOrgId).then((d) => {
-      setPeople(d.people);
-      setMeId((current) => (d.people.some((p) => p.id === current) ? current : (d.people[0]?.id ?? current)));
-    });
-  }, [meOrgId]);
-
-  const setMeOrg = (orgId: number) => setMeOrgId(orgId);
+  const { people: identities } = useAuth();
+  // An explicit manual switch (multi-org membership only) — everything else is resolved
+  // synchronously below, every render, straight from `identities`. A derived-via-effect
+  // version of this used to lag one render behind a fresh `identities` update (the effect
+  // hadn't run yet), and in that gap `meId` fell back to a `0` sentinel that leaked into a
+  // real request (`GET /person/0`) right after signup, when `identities` goes from empty
+  // to populated almost instantly. Resolving inline avoids that gap entirely — there's no
+  // render where `identities` has arrived but `active` hasn't caught up yet.
+  const [manualOrgId, setManualOrgId] = useState<number | null>(null);
+  const active =
+    (manualOrgId != null ? identities.find((p) => p.orgId === manualOrgId) : undefined)
+    ?? identities[0]
+    ?? null;
 
   return (
-    <MeContext.Provider value={{ meId, meOrgId, people, organizations, setMeOrg, setMeId }}>
+    <MeContext.Provider
+      value={{
+        meId: active?.id ?? 0,
+        meOrgId: active?.orgId ?? 0,
+        identities,
+        setMeOrg: setManualOrgId,
+      }}
+    >
       {children}
     </MeContext.Provider>
   );

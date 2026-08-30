@@ -1,27 +1,31 @@
 import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 
-/** Self-serve org creation — no existing admin required. One atomic step server-side
- *  (backend/src/db/repo.ts's signUpWithNewOrganization): creates the account, a brand
- *  new organization, and this account's first person-identity (top of that org's chart)
- *  all at once, then logs in immediately. */
+/** Self-serve account creation — just name/email/password, no company name to type.
+ *  `POST /api/auth/signup` (server.ts) creates the account *and* a one-person "workspace"
+ *  org for it atomically in the same step (repo.ts's `createOrganization`, the org name
+ *  auto-derived as "<name>'s workspace") — who you are and what org you administer are
+ *  still two decoupled facts (an account can in principle exist with zero orgs, e.g. one
+ *  only ever linked into someone else's chart by email), but signup itself always
+ *  produces both, since most people trying this out are one person, not a company
+ *  standing up a multi-person chart. See MeContext's "zero orgs" empty state on "My agent"
+ *  for the now-rare case a real account ends up with none. */
 export function SignUp({ onBack }: { onBack: () => void }) {
   const { signUp } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [organizationName, setOrganizationName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!name.trim() || !email.trim() || !password || !organizationName.trim()) return;
+    if (!name.trim() || !email.trim() || !password) return;
     setBusy(true);
     setError(null);
     try {
-      await signUp(name.trim(), email.trim(), password, organizationName.trim());
+      await signUp(name.trim(), email.trim(), password);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not create your organization');
+      setError(e instanceof Error ? e.message : 'could not create your account');
     } finally {
       setBusy(false);
     }
@@ -47,24 +51,23 @@ export function SignUp({ onBack }: { onBack: () => void }) {
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
       <div className="panel" style={{ width: '100%', maxWidth: 380, marginTop: 0 }}>
-        <header><span className="label">Create your organization</span></header>
+        <header><span className="label">Create your account</span></header>
         <div className="inner">
           <p className="sub" style={{ marginTop: 0, marginBottom: 16 }}>
-            No existing admin needed — this creates a brand-new organization with you as
-            its owner and its first person, in one step.
+            No company name needed — you'll land in your own real, one-person workspace
+            immediately, ready to use.
           </p>
           <div style={{ display: 'grid', gap: 10 }}>
             {field('Your name', name, setName, 'text', 'name')}
             {field('Email', email, setEmail, 'email', 'username')}
             {field('Password', password, setPassword, 'password', 'new-password')}
-            {field('Organization name', organizationName, setOrganizationName)}
             <button
               className="btn btn-primary"
               onClick={submit}
-              disabled={busy || !name.trim() || !email.trim() || !password || !organizationName.trim()}
+              disabled={busy || !name.trim() || !email.trim() || !password}
               style={{ width: '100%', marginTop: 4 }}
             >
-              {busy ? 'Creating…' : 'Create organization'}
+              {busy ? 'Creating…' : 'Create account'}
             </button>
           </div>
           {error && (

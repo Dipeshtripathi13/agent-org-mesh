@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type AgentRuntime, type OrgAdmin, type OrgMainAgent, type OrgRole, type Person } from '../lib/api';
+import { CredentialsFields } from '../components/primitives';
 import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
 
@@ -11,6 +12,7 @@ const SCOPE_LABEL: Record<'full' | 'narrow' | 'pending', string> = {
 
 function OrganizationList() {
   const { orgId, organizations, setOrgId, refresh } = useOrg();
+  const { refresh: refreshAuth } = useAuth();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,12 @@ function OrganizationList() {
     try {
       const { organization } = await api.createOrganization(name.trim());
       setName('');
-      await refresh();
+      // Creating an org also makes the caller its first person now (see api.ts's own
+      // comment) — AuthContext's orgRoles/people are what App.tsx's Shell uses to decide
+      // whether "My agent" still shows the empty "no organization yet" state and whether
+      // Admin's sidebar is still limited to just this screen, so both need a refresh, not
+      // just OrgContext's own org list.
+      await Promise.all([refresh(), refreshAuth()]);
       setOrgId(organization.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not create organization');
@@ -611,69 +618,20 @@ function OrgMainAgentPanel() {
                 pending regardless of the scope chosen above.
               </p>
             )}
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--rule2)' }}>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  type="button"
-                  className="chip"
-                  aria-pressed={!useOwnCredentials}
-                  onClick={() => setUseOwnCredentials(false)}
-                >
-                  Use the shared platform key
-                </button>
-                <button
-                  type="button"
-                  className="chip"
-                  aria-pressed={useOwnCredentials}
-                  onClick={() => setUseOwnCredentials(true)}
-                >
-                  Use our own credentials
-                </button>
-              </div>
-              {useOwnCredentials ? (
-                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10 }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
-                    API key
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      value={formApiKey}
-                      onChange={(e) => setFormApiKey(e.target.value)}
-                      placeholder={main?.hasCustomApiKey ? '•••• already set — leave blank to keep it' : 'sk-...'}
-                      style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
-                    />
-                  </label>
-                  {supportsBaseUrl && (
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
-                      Endpoint URL
-                      <input
-                        type="text"
-                        value={formBaseUrl}
-                        onChange={(e) => setFormBaseUrl(e.target.value)}
-                        placeholder="https://api.openai.com/v1"
-                        style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
-                      />
-                    </label>
-                  )}
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
-                    Model
-                    <input
-                      type="text"
-                      value={formModel}
-                      onChange={(e) => setFormModel(e.target.value)}
-                      placeholder={supportsBaseUrl ? 'gpt-4o-mini' : 'claude-sonnet-5'}
-                      style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 160 }}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
-                  {main?.hasCustomApiKey || main?.baseUrl || main?.model
-                    ? 'Saving will clear this org\'s own credentials and switch back to the platform default.'
-                    : "This org uses the platform's shared key — no credentials to enter."}
-                </p>
-              )}
-            </div>
+            <CredentialsFields
+              useOwnCredentials={useOwnCredentials}
+              setUseOwnCredentials={setUseOwnCredentials}
+              hasCustomApiKey={!!main?.hasCustomApiKey}
+              hasBaseUrlOrModel={!!(main?.baseUrl || main?.model)}
+              supportsBaseUrl={supportsBaseUrl}
+              formApiKey={formApiKey}
+              setFormApiKey={setFormApiKey}
+              formBaseUrl={formBaseUrl}
+              setFormBaseUrl={setFormBaseUrl}
+              formModel={formModel}
+              setFormModel={setFormModel}
+              ownerLabel="this org"
+            />
             <div style={{ display: 'flex', gap: 7, marginTop: 12 }}>
               <button
                 disabled={busy || !effectiveRuntime}

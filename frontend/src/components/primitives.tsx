@@ -79,3 +79,83 @@ export function RefusalGlossary() {
     </p>
   );
 }
+
+/** The "bring your own provider credentials" block shared by OrgSetup.tsx's
+ *  OrgMainAgentPanel and SetUpMyAgent.tsx's personal main-agent panel — same fields
+ *  (API key, optional endpoint URL, optional model), same tri-state semantics (blank key
+ *  input means "leave the already-stored one untouched" when one exists), just pointed at
+ *  whichever registration (org or personal) is being edited. `ownerLabel` is interpolated
+ *  into the two messages that need to say *whose* credential this is ("this org" / "you"). */
+export function CredentialsFields({
+  useOwnCredentials, setUseOwnCredentials, hasCustomApiKey, hasBaseUrlOrModel, supportsBaseUrl,
+  formApiKey, setFormApiKey, formBaseUrl, setFormBaseUrl, formModel, setFormModel, ownerLabel,
+}: {
+  useOwnCredentials: boolean;
+  setUseOwnCredentials: (v: boolean) => void;
+  hasCustomApiKey: boolean;
+  hasBaseUrlOrModel: boolean;
+  supportsBaseUrl: boolean;
+  formApiKey: string;
+  setFormApiKey: (v: string) => void;
+  formBaseUrl: string;
+  setFormBaseUrl: (v: string) => void;
+  formModel: string;
+  setFormModel: (v: string) => void;
+  ownerLabel: string;
+}) {
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--rule2)' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="button" className="chip" aria-pressed={!useOwnCredentials} onClick={() => setUseOwnCredentials(false)}>
+          Use the shared platform key
+        </button>
+        <button type="button" className="chip" aria-pressed={useOwnCredentials} onClick={() => setUseOwnCredentials(true)}>
+          Use {ownerLabel === 'you' ? 'my' : "our"} own credentials
+        </button>
+      </div>
+      {useOwnCredentials ? (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+            API key
+            <input
+              type="password"
+              autoComplete="off"
+              value={formApiKey}
+              onChange={(e) => setFormApiKey(e.target.value)}
+              placeholder={hasCustomApiKey ? '•••• already set — leave blank to keep it' : 'sk-...'}
+              style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+            />
+          </label>
+          {supportsBaseUrl && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+              Endpoint URL
+              <input
+                type="text"
+                value={formBaseUrl}
+                onChange={(e) => setFormBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+              />
+            </label>
+          )}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+            Model
+            <input
+              type="text"
+              value={formModel}
+              onChange={(e) => setFormModel(e.target.value)}
+              placeholder={supportsBaseUrl ? 'gpt-4o-mini' : 'claude-sonnet-5'}
+              style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 160 }}
+            />
+          </label>
+        </div>
+      ) : (
+        <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+          {hasCustomApiKey || hasBaseUrlOrModel
+            ? `Saving will clear ${ownerLabel === 'you' ? 'your' : "this org's"} own credentials and switch back to the platform default.`
+            : `${ownerLabel === 'you' ? 'You use' : 'This org uses'} the platform's shared key — no credentials to enter.`}
+        </p>
+      )}
+    </div>
+  );
+}

@@ -12,9 +12,19 @@ interface AuthContextValue {
    *  one of these. Empty for an account that's never been added to (or signed up into)
    *  any org's chart, e.g. an admin-only account. */
   people: MyIdentity[];
+  /** Step-up state ("log in as admin") — set only after a real POST /auth/step-up
+   *  re-verifies this account's own password; null/expired means the Admin panel is
+   *  locked behind a re-auth prompt even though the account is already logged in. This is
+   *  convenience for the UI only — every Admin-scoped endpoint re-checks the session's
+   *  own elevation server-side regardless (requireOrgRole in server.ts), so a stale or
+   *  spoofed value here can't grant real access. */
+  adminElevatedUntil: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string, organizationName: string) => Promise<void>;
+  /** Personal account only — no organization. See MeContext's "zero orgs" empty state for
+   *  what a freshly signed-up account sees next. */
+  signUp: (name: string, email: string, password: string) => Promise<void>;
+  stepUp: (password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -25,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [orgRoles, setOrgRoles] = useState<Record<number, OrgRole>>({});
   const [people, setPeople] = useState<MyIdentity[]>([]);
+  const [adminElevatedUntil, setAdminElevatedUntil] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
@@ -32,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccount(d.account);
     setOrgRoles(d.orgRoles);
     setPeople(d.people);
+    setAdminElevatedUntil(d.adminElevatedUntil);
   };
 
   useEffect(() => {
@@ -43,9 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refresh();
   };
 
-  const signUp = async (name: string, email: string, password: string, organizationName: string) => {
-    await api.signUp(name, email, password, organizationName);
+  const signUp = async (name: string, email: string, password: string) => {
+    await api.signUp(name, email, password);
     await refresh();
+  };
+
+  const stepUp = async (password: string) => {
+    const d = await api.stepUp(password);
+    setAdminElevatedUntil(d.adminElevatedUntil);
   };
 
   const logout = async () => {
@@ -53,10 +70,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccount(null);
     setOrgRoles({});
     setPeople([]);
+    setAdminElevatedUntil(null);
   };
 
   return (
-    <AuthContext.Provider value={{ account, orgRoles, people, loading, login, signUp, logout, refresh }}>
+    <AuthContext.Provider value={{ account, orgRoles, people, adminElevatedUntil, loading, login, signUp, stepUp, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );
