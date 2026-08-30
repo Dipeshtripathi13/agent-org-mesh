@@ -722,10 +722,24 @@ type SelfCheck = { ok: true } | { ok: false; code: 403; error: string };
  *  that fails closed is the one that's an actual regression risk: the session *does* have
  *  a real, linked identity in this org, and it doesn't match `id` — that's a genuinely
  *  logged-in person trying to touch a *different* real person's connections, which is
- *  exactly what this exists to stop. */
+ *  exactly what this exists to stop.
+ *
+ *  One more case fails closed now, narrowly: the no-session case above stays open, but
+ *  only for its actual intended target — a seeded person with no login of their own to
+ *  require. A person who *does* have a real, linked account (`people.account_id`) must not
+ *  have their own connections touched by a totally anonymous caller who never logged in as
+ *  anyone; that was a real gap this function's "no session at all" branch used to leave
+ *  wide open regardless of whether `id` itself was ever loggable-into. Found while
+ *  reviewing CLAUDE.md's own "Where to go next" note on this function. */
 async function requireSelfIfLoggedIn(req: { cookies: Record<string, string | undefined> }, id: number): Promise<SelfCheck> {
   const sessionAccountId = await currentAccountId(req);
-  if (sessionAccountId == null) return { ok: true };
+  if (sessionAccountId == null) {
+    const target = await repo.getPerson(id);
+    if (target.accountId != null) {
+      return { ok: false, code: 403, error: 'log in to manage this person’s connections' };
+    }
+    return { ok: true };
+  }
   const orgId = await repo.getOrgIdOfPerson(id);
   const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
   const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);

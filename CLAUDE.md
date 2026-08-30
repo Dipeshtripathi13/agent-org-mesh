@@ -197,15 +197,28 @@ own real, one-person org immediately, no separate org-creation step.
   one (`sessionPreferredPersonId` in `server.ts`) — this is exactly the piece that used to
   let anyone spoof "who's asking about whom," and it's fixed everywhere that actually
   gates disclosure. What's left is narrower and lower-stakes: GitHub/Jira/Gmail connect,
-  ingest tokens, sub-agent registration, and claim correction still use the more
-  permissive `requireSelfIfLoggedIn` — open when there's no session at all (most of the
-  seeded 40-person roster has no linked account and never will in a demo context), open
-  when a real session exists but has no linked identity in *this* id's org, and only
-  fails closed on a genuine mismatch (a real, linked session trying to touch a different
-  real person's own connections). Tightening these to the same unconditional
-  session-preferring treatment `/api/agent/ask` gets is the honest remaining gap — real,
-  but these are personal tool connections, not org-wide disclosure, so the blast radius of
-  leaving them as-is is much smaller than what was just closed. "My agent" went through
+  ingest tokens, sub-agent registration, claim correction, and the generic connector
+  endpoints all still use the more permissive `requireSelfIfLoggedIn` — open when a real
+  session exists but has no linked identity in *this* id's org, and fails closed on a
+  genuine mismatch (a real, linked session trying to touch a different real person's own
+  connections). **Considered, and deliberately not done: mirroring `sessionPreferredPersonId`'s
+  substitute-rather-than-block pattern here.** That pattern fits *attribution* endpoints
+  (who's asking, for a disclosure decision) — silently trusting the session over a claim is
+  strictly safer there. These are *target* endpoints (which person's own connection record
+  gets written), where silently redirecting a mismatched request to the caller's own
+  identity instead of erroring would be a worse UX than today's explicit 403 for no real
+  security gain (the mismatch was already blocked either way) — reconsidered after reading
+  this note literally and worth recording so it isn't re-attempted without new reasoning.
+  What *was* a real, narrowly-scoped gap and is now fixed: the "no session at all" branch
+  used to stay open unconditionally, regardless of whether `id` itself belonged to a real,
+  loggable-into account — meaning a totally anonymous caller could connect a fake token to
+  *any* real person's profile, not just the accountless seeded ones the openness was meant
+  for. `requireSelfIfLoggedIn` now checks `person.accountId` in that branch: still fully
+  open for the genuine demo affordance (a seeded person with no login of their own —
+  confirmed unchanged live, an anonymous connect against one of them still reaches Linear's
+  real API), now closed for anyone with a real, linked account (confirmed live: an
+  anonymous connect against a person freshly linked to a real account now gets a clean 403,
+  "log in to manage this person's connections", instead of silently succeeding). "My agent" went through
   two rounds of tightening after this audit, both found live rather than anticipated in
   design. First: its identity switcher (`MeContext.tsx`) *used to* stay open regardless of
   login as a documented demo affordance — no longer, once the marketing site's real "Try
