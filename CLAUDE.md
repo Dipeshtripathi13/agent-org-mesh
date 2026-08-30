@@ -649,6 +649,46 @@ Also live-verified: the account and person connector pools stay genuinely disjoi
 this new shared routing — connecting/failing GitHub or generating an ingest token on one
 side never touches the other's status, checked directly against the running dev API.
 
+**Sub-agent (LLM runtime) registration and Gmail fold into that same one dropdown too —
+found live, reported directly, right after the GitHub/Jira/ingest-token merge above:
+"the subagent and tools [should be] in the same drop down... put Gmail also under the
+drop down, it's just a tool."** Both are structurally *not* `ConnectorDef` catalog
+entries — a runtime registration lives in `person_runtimes`/`account_runtimes`, a wholly
+separate table from `person_oauth_tokens`, and Gmail can never become one at all (it isn't
+a `SurfaceKey`; rule 4's boundary — it must never become a `claims`-row a manager could
+see via cross-person Ask — is exactly why it was still a bespoke panel after the first
+merge). Rather than forcing either into the catalog's `SurfaceKey`-typed shape (which would
+have meant weakening that boundary for Gmail, or fabricating a fake `SurfaceKey` for every
+LLM runtime), `ConnectorsPanel.tsx` now fetches the runtime catalog/registration state
+(`personRuntimes`/`accountRuntimes`, the same endpoints "Register another agent" always
+used) and, for a person/org owner only, Gmail's own status, and merges all three into one
+dropdown and one "Connected tools" list purely on the frontend — the backend architecture,
+and rule 4 itself, are both untouched; no schema or endpoint changed. `openKey` doubles as
+the discriminator across all three (`'gmail'` is a reserved sentinel that can't collide
+with a real `SurfaceKey` or runtime key), so exactly one of a connector's form, the
+ingest-token manager, a runtime's detail card, or Gmail's connect link renders at a time.
+Selecting a sub-agent opens the same detail card "Register another agent" always
+showed (vendor/context/host/note, a blocked/no-DPA warning, "Request approval" instead of
+"Connect" when unapproved) — relocated, not rebuilt — and a registered one keeps its
+existing "What did it complete today?" query button, pending-scope "Withdraw request"
+state, and (for Claude Code specifically, person/org mode only) the "Ask it live" real
+`claude` CLI shell-out block, all now living in the "Connected tools" list alongside
+data connectors instead of a separate grid. Calendar keeps its own catalog entry and its
+"Connect Gmail" link (it's a real org-visible surface with real claims) *and* Gmail gets a
+first-class entry of its own (a self-ask-only digest source that's never a claim) — two
+entries that happen to drive the same OAuth flow but represent genuinely different stored
+state, kept deliberately separate rather than collapsed into one to avoid quietly blurring
+that boundary. `OrgSetUpMyAgent` and `PersonalMainAgentPanel` lost the "Agents under X"/
+"Register another agent" grid and the "Personal data sources" Gmail panel entirely — what's
+left is just the read-only "Main · aggregator agent" display (still admin-set, still
+org-level, never touched by this) plus one `ConnectorsPanel`.
+`components/PersonalToolsPanel.tsx`, which after the first merge held only sub-agent
+registration, is now fully redundant and was deleted outright rather than left as unused
+dead surface. Live-verified against the running dev API rather than assumed from reading
+the code: registered a real sub-agent through the exact endpoint the merged dropdown calls,
+confirmed it appears in the registered list, queried it, and disconnected it — all through
+the same person-keyed runtime endpoints now driving `ConnectorsPanel`'s UI.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/
