@@ -576,6 +576,79 @@ plain, ungrounded conversation, rather than weakening `synthesize()`'s real "nev
 beyond the real data given" guarantee for the org path to accommodate a use case that was
 never about grounded summarization in the first place.
 
+**An org member can now run their own personal main agent alongside the org's, not
+instead of it — two genuinely separate agents, each with its own tool connections, not
+one shared thing.** Found live, reported directly: "I am also part of the organization
+Red Hat... I should be able to set up my main agent and connect my tools to my main agent
+so that whenever I need to find the solution for myself, I can call directly from the main
+agent... but only certain tools to the organizational main agent." Checking the backend
+before changing anything showed this mostly already worked — `account_main_agent`,
+`account_oauth_tokens`, `account_runtimes`, `account_ingest_tokens`, `personal_asks`, and
+`POST /api/agent/ask-personal` are all keyed purely on the logged-in account, with zero
+dependency on org membership anywhere in that code path. The only thing stopping an org
+member from using their own personal agent was a strict, mutually-exclusive frontend
+branch (`identities.length === 0 ? <PersonalMainAgentPanel /> : <OrgSetUpMyAgent />`) that
+never let both render for the same person. `SetUpMyAgent.tsx` now always renders
+`PersonalMainAgentPanel` (your own agent, your own tools — nobody else, org or otherwise,
+can see this) plus `OrgSetUpMyAgent` whenever `identities.length > 0` (the org's agent,
+set by its admin, tools you connect here feed the org's disclosure machinery through
+policy same as always) — one page, two independent sections, one heading instead of each
+component's own. `MyAgent.tsx` grew a parallel `usePersonalAgent` toggle ("Ask yourself" /
+"My personal agent", shown only for an org member — a true no-org account has no toggle at
+all, it's always on) driving a derived `showPersonalChat` that every chat data/copy branch
+reads instead of `personal` alone; the connected-surfaces/never-ingested page chrome stays
+keyed on `personal` alone, since an org member using their personal agent still sees their
+own org connected-surfaces panel — only the chat side switches. The history-reload
+`useEffect` had to split in two (org roster fetch vs. chat history reload) so toggling
+doesn't needlessly refetch surfaces, and so switching resets `activeConversationId` —
+without that reset, an org thread id left over from before a toggle would point at nothing
+inside `personalEntries`, landing on a silently blank chat instead of a real one.
+
+**One catalog-driven "Connect a tool" dropdown now covers every tool, replacing five
+scattered panels.** Reported directly alongside the above: "everything is a tool... it
+should be under the same drop down... based on that specific tool, the required
+configuration entry UI should appear." GitHub and Jira were already real
+`connectorCatalog.ts` entries the whole time — only ever excluded from `ConnectorsPanel`'s
+dropdown by a frontend constant, not by the catalog itself — so folding them in meant
+registering their existing connect/status/disconnect functions
+(`githubConnection.ts`/`jiraConnection.ts`, both person- and account-keyed already) into
+the generic `CONNECT_HANDLERS`/`STATUS_HANDLERS`/`DISCONNECT_HANDLERS` dispatch maps
+`server.ts` and `personalConnectors.ts` already used for every other connector, not
+rebuilding anything. Claude Code/Codex CLI/Gemini CLI needed a real new `authType:
+'ingest-token'` on `ConnectorDef` (`fields: []` — the generic field-driven form never runs
+for these three): a PAT connector is "submit once, one Disconnect forever," but an
+ingest-token tool holds multiple independently-revocable tokens with a one-time-shown
+secret, a genuinely different transaction, so `ConnectorsPanel.tsx` branches its open-tool
+panel on `authType` — `'oauth-google'` renders the Gmail connect link, `'ingest-token'`
+renders the real token-management UI (lifted from `SetUpMyAgent.tsx`'s old bespoke block,
+`ingestSnippet()`/`SOURCE_LABEL` now exported from there for reuse), everything else the
+existing form. A "Connected tools" row for an ingest-token tool shows "N active token(s)" +
+`Manage` instead of a bare `Disconnect`, since revoking *which* token a single Disconnect
+would hit is genuinely ambiguous once more than one exists. One deliberate trap avoided:
+the *existing* `ACCOUNT_STATUS_HANDLERS['claude-code'/'codex'/'gemini-cli']` encode a
+richer, different question ("registered runtime OR pushed event — is this worth
+`ask-personal`'s digest bridge scanning for") that a prior phase's fix depends on to avoid
+a real hang (see the local-transcript-scan note elsewhere in this file); the dropdown only
+needs "does this person/account have ≥1 active token to manage," so that got its own,
+separate `ACCOUNT_INGEST_TOKEN_STATUS`/panel-scoped person-side map, checked first, rather
+than mutating the existing one. Gmail itself stays its own dedicated panel, never becomes a
+`ConnectorDef` — `gmail` isn't even a `SurfaceKey` (rule 4-adjacent: it must never become a
+`claims`-row a manager could see via cross-person Ask). `calendar`, by contrast, *is* a
+real `SurfaceKey`/`ConnectorDef` and moved into the dropdown — which surfaced a real,
+previously-invisible bug found while researching this: neither `POST
+/api/oauth/gmail/callback` nor `DELETE /api/person/:id/gmail` ever actually touched
+`person.surfaces.calendar`, despite the catalog's own helpText already claiming Gmail
+enables it. Invisible only because `calendar` was excluded from every UI that would have
+shown it before now. Fixed as a companion change (both call sites now set/reset `calendar`
+alongside Gmail itself) and live-verified at the DB level: manually marking a person's
+`calendar` surface `'connected'`, then calling the real disconnect endpoint, correctly
+flipped it back to `'absent'`. The forward direction (OAuth callback setting it on
+connect) is code-reviewed and typechecked but not yet round-tripped through a real Google
+consent screen, same pre-existing honest caveat as Gmail itself (see "Where to go next").
+Also live-verified: the account and person connector pools stay genuinely disjoint through
+this new shared routing — connecting/failing GitHub or generating an ingest token on one
+side never touches the other's status, checked directly against the running dev API.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/

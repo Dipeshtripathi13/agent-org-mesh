@@ -1,9 +1,10 @@
 import type { SurfaceKey } from '../domain/types.js';
 import * as repo from '../db/repo.js';
-import { getGithubAccountConnection, getGithubAccountStatus } from './githubConnection.js';
+import { saveGithubAccountConnection, getGithubAccountConnection, getGithubAccountStatus, disconnectGithubAccount } from './githubConnection.js';
 import { getRecentGithubActivity, formatGithubDigest } from './github.js';
-import { getJiraAccountConnection, getJiraAccountStatus } from './jiraConnection.js';
+import { saveJiraAccountConnection, getJiraAccountConnection, getJiraAccountStatus, disconnectJiraAccount } from './jiraConnection.js';
 import { getRecentJiraActivity, formatJiraDigest } from './jira.js';
+import { listAccountTokens } from './ingestTokens.js';
 import { getAccountEventsSince, formatIngestedEventsDigest } from './eventIngestion.js';
 import { getClaudeCodeActivitySince, formatClaudeCodeDigest } from './claudeCodeActivity.js';
 import {
@@ -56,17 +57,25 @@ import {
  * The personal (no-org) counterpart to server.ts's CONNECT_HANDLERS/DISCONNECT_HANDLERS/
  * STATUS_HANDLERS + resourceProviders.ts's PROVIDERS/gatherAll — same generic connector
  * catalog (connectorCatalog.ts), same tools, just account-keyed instead of person-keyed
- * since a personal account has no `people` row to attach a surface/claim to at all. GitHub/
- * Jira/Gmail are deliberately excluded here, same as ConnectorsPanel.tsx's own
- * HANDLED_ELSEWHERE — they stay org-chart-only by design (see CLAUDE.md's personal-main-
- * agent paragraph), and Google Calendar rides on Gmail's OAuth token, which personal
- * accounts don't have, so it's excluded from the personal panel too.
+ * since a personal account has no `people` row to attach a surface/claim to at all. GitHub
+ * and Jira are real, full entries here too now — a personal account can connect its own,
+ * private GitHub/Jira, never visible to anyone else. Google Calendar stays excluded: it
+ * rides on Gmail's OAuth token, and Gmail itself was never extended to personal accounts
+ * (a genuinely separate, bigger piece of work, not done here).
  */
 
 type AccountConnectHandler = (accountId: number, fields: Record<string, string>) => Promise<{ ok: true; label: string } | { ok: false; error: string }>;
 type AccountStatusHandler = (accountId: number) => Promise<{ connected: boolean; label: string | null }>;
 
 export const ACCOUNT_CONNECT_HANDLERS: Partial<Record<SurfaceKey, AccountConnectHandler>> = {
+  github: async (id, f) => {
+    const r = await saveGithubAccountConnection(id, f.token);
+    return r.ok ? { ok: true, label: r.login } : r;
+  },
+  jira: async (id, f) => {
+    const r = await saveJiraAccountConnection(id, f.siteUrl, f.email, f.apiToken);
+    return r.ok ? { ok: true, label: r.displayName } : r;
+  },
   linear: (id, f) => saveLinearAccountConnection(id, f.apiKey),
   notion: (id, f) => saveNotionAccountConnection(id, f.token),
   confluence: (id, f) => saveConfluenceAccountConnection(id, f.siteUrl, f.email, f.apiToken),
@@ -85,6 +94,8 @@ export const ACCOUNT_CONNECT_HANDLERS: Partial<Record<SurfaceKey, AccountConnect
 };
 
 export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId: number) => Promise<void>>> = {
+  github: disconnectGithubAccount,
+  jira: disconnectJiraAccount,
   linear: disconnectLinearAccount,
   notion: disconnectNotionAccount,
   confluence: disconnectConfluenceAccount,
@@ -140,6 +151,19 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
     ]);
     return { connected: registered.some((r) => r.runtimeKey === 'claude-code') || pushed.length > 0, label: null };
   },
+};
+
+/** A narrower, panel-scoped override for the three ingest-token tools' "connected" status
+ *  in the unified ConnectorsPanel dropdown — "has ≥1 active token to manage," a genuinely
+ *  different question from `ACCOUNT_STATUS_HANDLERS`'s richer ask-personal-relevance gate
+ *  above (which must never be replaced by this, or the local-transcript-scan-hang bug
+ *  CLAUDE.md documents comes back). `GET /api/accounts/me/connectors` checks this map
+ *  first for these three keys, falling back to `ACCOUNT_STATUS_HANDLERS` for everything
+ *  else — the two maps intentionally disagree for these keys, on purpose. */
+export const ACCOUNT_INGEST_TOKEN_STATUS: Partial<Record<SurfaceKey, AccountStatusHandler>> = {
+  'claude-code': async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
+  codex: async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
+  'gemini-cli': async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
 };
 
 /** The 10 "live"-tier tools that can actually produce a digest — the personal-ask bridge's

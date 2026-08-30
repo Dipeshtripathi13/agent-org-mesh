@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  api, INGEST_SOURCES,
-  type AccountMainAgent, type AgentRuntime, type IngestSource, type IngestToken, type OrgMainAgent, type PersonRuntime, type RuntimeScope,
+  api,
+  type AccountMainAgent, type AgentRuntime, type IngestSource, type OrgMainAgent, type PersonRuntime, type RuntimeScope,
 } from '../lib/api';
 import { ConnectorsPanel } from '../components/ConnectorsPanel';
 import { PersonalToolsPanel } from '../components/PersonalToolsPanel';
@@ -105,11 +105,11 @@ function PersonalMainAgentPanel() {
 
   return (
     <>
-      <div className="crumb">My agent &middot; set up</div>
-      <h1>Set up my agent</h1>
+      <h2 className="label" style={{ marginTop: 0 }}>Your personal agent</h2>
       <p className="sub">
-        You're not part of an organization, so this is your own personal main agent — the
-        one that answers in <strong>Ask yourself</strong>. Nobody else can see or use it.
+        Separate from any organization's agent — the one that answers in <strong>My
+        agent</strong>'s personal mode. Nobody else can ever see or use this, whether or
+        not you're also part of an organization.
       </p>
       <div className="panel" style={{ marginTop: 18 }}>
         <header>
@@ -199,14 +199,26 @@ function PersonalMainAgentPanel() {
   );
 }
 
-/** For an account connected to no organization at all, "Set up my agent" is just the
- *  personal main-agent panel below — none of the rest of this page (personal sub-agents,
- *  Gmail/GitHub/Jira, ingest tokens) applies, since all of it is keyed by an org-chart
- *  person id this account doesn't have. See MyAgent.tsx's own module comment for why
- *  `personal` is derived the same way in both places rather than threaded as a prop. */
+/** Every logged-in account gets its own personal agent section — found live, reported
+ *  directly: "I may be part of an organization, but I should ALSO be able to set up my
+ *  own personal main agent and connect my own tools to it... separate from the
+ *  organizational main agent." The backend for this already worked regardless of org
+ *  membership (account_main_agent/account_oauth_tokens/ask-personal are all keyed purely
+ *  on the logged-in account, never on `people` rows) — this was previously a strict
+ *  either/or purely in this component. Now both render: the personal section always,
+ *  Northbeam's (or whichever org's) section additionally, only when this account actually
+ *  has a real org-chart identity. See MyAgent.tsx's own comment for the matching change
+ *  on the "Ask yourself" side. */
 export function SetUpMyAgent() {
   const { people: identities } = useAuth();
-  return identities.length === 0 ? <PersonalMainAgentPanel /> : <OrgSetUpMyAgent />;
+  return (
+    <>
+      <div className="crumb">My agent &middot; set up</div>
+      <h1>Set up my agent</h1>
+      <PersonalMainAgentPanel />
+      {identities.length > 0 && <OrgSetUpMyAgent />}
+    </>
+  );
 }
 
 function OrgSetUpMyAgent() {
@@ -220,21 +232,6 @@ function OrgSetUpMyAgent() {
   const [queryOpen, setQueryOpen] = useState<Record<string, { text: string; real: boolean }>>({});
   const [queryBusy, setQueryBusy] = useState<string | null>(null);
   const [gmail, setGmail] = useState<{ connected: boolean; email: string | null } | null>(null);
-  const [tokens, setTokens] = useState<IngestToken[]>([]);
-  const [newTokenLabel, setNewTokenLabel] = useState('');
-  const [newTokenSource, setNewTokenSource] = useState<IngestSource>('claude-code');
-  const [justCreated, setJustCreated] = useState<{ id: string; token: string; source: IngestSource } | null>(null);
-  const [tokenBusy, setTokenBusy] = useState(false);
-  const [github, setGithub] = useState<{ connected: boolean; login: string | null } | null>(null);
-  const [githubTokenInput, setGithubTokenInput] = useState('');
-  const [githubBusy, setGithubBusy] = useState(false);
-  const [githubError, setGithubError] = useState<string | null>(null);
-  const [jira, setJira] = useState<{ connected: boolean; email: string | null; siteUrl: string | null } | null>(null);
-  const [jiraSiteUrl, setJiraSiteUrl] = useState('');
-  const [jiraEmail, setJiraEmail] = useState('');
-  const [jiraApiToken, setJiraApiToken] = useState('');
-  const [jiraBusy, setJiraBusy] = useState(false);
-  const [jiraError, setJiraError] = useState<string | null>(null);
   const [liveQuestion, setLiveQuestion] = useState('');
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveResult, setLiveResult] = useState<{ text: string } | { error: string } | null>(null);
@@ -245,27 +242,14 @@ function OrgSetUpMyAgent() {
   });
   const loadOrgMain = () => api.orgMainAgent(meOrgId).then((d) => setOrgMain(d.registered));
   const loadGmail = () => api.gmailStatus(meId).then(setGmail);
-  const loadTokens = () => api.ingestTokens(meId).then((d) => setTokens(d.tokens));
-  const loadGithub = () => api.githubStatus(meId).then(setGithub);
-  const loadJira = () => api.jiraStatus(meId).then(setJira);
 
   useEffect(() => {
     void load();
     void loadGmail();
-    void loadTokens();
-    void loadGithub();
-    void loadJira();
     // Switching who "My agent" acts as — clear anything cached for the previous person.
     setQueryOpen({});
-    setJustCreated(null);
-    setGithubTokenInput('');
-    setGithubError(null);
     setLiveQuestion('');
     setLiveResult(null);
-    setJiraSiteUrl('');
-    setJiraEmail('');
-    setJiraApiToken('');
-    setJiraError(null);
   }, [meId]);
   // The main agent is org-level, not person-level — reload it independently whenever
   // switching to an identity in a different org (a person switch that stays in the same
@@ -342,75 +326,15 @@ function OrgSetUpMyAgent() {
     await loadGmail();
   });
 
-  const connectGithub = async () => {
-    if (!githubTokenInput.trim()) return;
-    setGithubBusy(true);
-    setGithubError(null);
-    try {
-      await api.connectGithub(meId, githubTokenInput.trim());
-      setGithubTokenInput('');
-      await loadGithub();
-    } catch (e) {
-      setGithubError(e instanceof Error ? e.message : 'GitHub rejected this token');
-    } finally {
-      setGithubBusy(false);
-    }
-  };
-  const disconnectGithubAction = () => run(async () => {
-    await api.disconnectGithub(meId);
-    await loadGithub();
-  });
-
-  const connectJira = async () => {
-    if (!jiraSiteUrl.trim() || !jiraEmail.trim() || !jiraApiToken.trim()) return;
-    setJiraBusy(true);
-    setJiraError(null);
-    try {
-      await api.connectJira(meId, jiraSiteUrl.trim(), jiraEmail.trim(), jiraApiToken.trim());
-      setJiraApiToken('');
-      await loadJira();
-    } catch (e) {
-      setJiraError(e instanceof Error ? e.message : 'Jira rejected these credentials');
-    } finally {
-      setJiraBusy(false);
-    }
-  };
-  const disconnectJiraAction = () => run(async () => {
-    await api.disconnectJira(meId);
-    await loadJira();
-  });
-
-  const createToken = async () => {
-    if (!newTokenLabel.trim()) return;
-    setTokenBusy(true);
-    setError(null);
-    try {
-      const created = await api.createIngestToken(meId, newTokenLabel.trim());
-      setJustCreated({ ...created, source: newTokenSource });
-      setNewTokenLabel('');
-      await loadTokens();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not create token');
-    } finally {
-      setTokenBusy(false);
-    }
-  };
-  const revokeTok = (tokenId: string) => run(async () => {
-    await api.revokeIngestToken(meId, tokenId);
-    if (justCreated?.id === tokenId) setJustCreated(null);
-    await loadTokens();
-  });
-
   return (
     <>
-      <div className="crumb">My agent &middot; set up</div>
-      <h1>Set up my agent</h1>
+      <h2 className="label" style={{ marginTop: 32 }}>Your organization's agent</h2>
       <p className="sub">
-        Your organization's main agent is the only one connected to the org &mdash; it's the
-        one that reads through your surfaces on <strong>Controls</strong> and the one other
-        people's questions reach. It's set once for everyone by an organization admin, not
-        chosen here. Everything else you register below is a personal sub-agent: it never
-        touches org surfaces, and nobody outside you can query it directly.
+        The only one connected to the org &mdash; it's the one that reads through your
+        surfaces on <strong>Controls</strong> and the one other people's questions reach.
+        It's set once for everyone by an organization admin, not chosen here. Everything
+        else you register below is a personal sub-agent: it never touches org surfaces,
+        and nobody outside you can query it directly.
       </p>
 
       {error && (
@@ -662,247 +586,6 @@ function OrgSetUpMyAgent() {
                 >
                   Connect Gmail
                 </a>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel" style={{ marginTop: 18 }}>
-        <header>
-          <span className="label">Connect real tools</span>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-            self-service &mdash; your tool pushes its own activity
-          </span>
-        </header>
-        <div className="inner">
-          <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
-            Generate a token, paste it into your own Claude Code, Codex CLI, or Gemini CLI
-            hook config, and that tool reports real activity straight to this mesh &mdash;
-            from wherever it actually runs, not just this machine. The token is the only
-            thing that authenticates a pushed event; nothing else in the request is trusted.
-          </p>
-
-          {tokens.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              {tokens.map((t) => (
-                <div key={t.id} className="runtime-card" style={{ marginBottom: 8 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
-                    {t.revoked ? (
-                      <span className="pill pill-blocked"><i />Revoked</span>
-                    ) : (
-                      <span className="pill pill-full"><i />Active</span>
-                    )}
-                    <span className="spacer" />
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                      created {t.createdAt.slice(0, 10)}{t.lastUsedAt ? ` · last used ${t.lastUsedAt.slice(0, 10)}` : ' · never used'}
-                    </span>
-                  </div>
-                  {!t.revoked && (
-                    <div style={{ marginTop: 9 }}>
-                      <button className="chip" disabled={busy} onClick={() => revokeTok(t.id)}>Revoke</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
-              Label
-              <input
-                aria-label="Token label"
-                placeholder="e.g. laptop — payments-core"
-                value={newTokenLabel}
-                onChange={(e) => setNewTokenLabel(e.target.value)}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
-              />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
-              Tool
-              <select
-                aria-label="Tool"
-                value={newTokenSource}
-                onChange={(e) => setNewTokenSource(e.target.value as IngestSource)}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12 }}
-              >
-                {INGEST_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
-              </select>
-            </label>
-            <button
-              disabled={tokenBusy || !newTokenLabel.trim()}
-              onClick={createToken}
-              style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
-            >
-              {tokenBusy ? 'Generating…' : 'Generate token'}
-            </button>
-          </div>
-
-          {justCreated && (() => {
-            const url = `${window.location.protocol}//${window.location.hostname}:3001/api/ingest/${justCreated.source}`;
-            const { file, snippet } = ingestSnippet(justCreated.source, url, justCreated.token);
-            return (
-              <div className="coverage-note" style={{ marginTop: 14 }}>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
-                  Shown once &mdash; copy it now, it isn't stored anywhere you can retrieve again
-                </span>
-                <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
-                  {justCreated.token}
-                </p>
-                <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '10px 0 4px' }}>
-                  Paste into <strong>{file}</strong>:
-                </p>
-                <pre style={{ fontFamily: 'var(--mono)', fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '9px', borderRadius: 2, margin: 0 }}>
-                  {snippet}
-                </pre>
-                <p className="glossary" style={{ marginTop: 8 }}>
-                  Every command/file-editing tool call in that project will push a real
-                  observation to this mesh. Only Bash/Edit/Write/NotebookEdit calls are kept;
-                  everything else is received and silently dropped, same as this demo's local
-                  session-log read. Your first pushed event connects this surface for real —
-                  after that, it feeds real claims anyone can Ask about you through the same
-                  policy grid as anything else.
-                </p>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
-
-      <div className="panel" style={{ marginTop: 18 }}>
-        <header>
-          <span className="label">GitHub</span>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-            a real org surface &mdash; unlike Gmail, this feeds the org, not just you
-          </span>
-        </header>
-        <div className="inner">
-          <div className="runtime-card" style={{ marginBottom: 0 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>GitHub</span>
-              {github?.connected ? (
-                <span className="pill pill-full"><i />Connected</span>
-              ) : (
-                <span className="pill pill-blocked"><i />Not connected</span>
-              )}
-              <span className="spacer" />
-              {github?.connected && github.login && (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>@{github.login}</span>
-              )}
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '6px 0 0' }}>
-              Reads pull requests you opened and reviews you gave &mdash; never file contents.
-              Paste a personal access token from{' '}
-              <a href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">github.com/settings/tokens</a>
-              {' '}(read-only scope is enough). Once connected, it becomes a real claim source
-              through the same policy grid as anything else &mdash; whoever your role allows can
-              see it, same as Claude Code activity.
-            </p>
-            {githubError && (
-              <p style={{ fontSize: 12, color: 'var(--hold)', marginTop: 8 }}>{githubError}</p>
-            )}
-            <div style={{ marginTop: 9 }}>
-              {github?.connected ? (
-                <button className="chip" disabled={busy} onClick={disconnectGithubAction}>Disconnect</button>
-              ) : (
-                <div style={{ display: 'flex', gap: 7 }}>
-                  <input
-                    aria-label="GitHub personal access token"
-                    type="password"
-                    placeholder="ghp_&hellip;"
-                    value={githubTokenInput}
-                    onChange={(e) => setGithubTokenInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && connectGithub()}
-                    style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
-                  />
-                  <button
-                    disabled={githubBusy || !githubTokenInput.trim()}
-                    onClick={connectGithub}
-                    style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
-                  >
-                    {githubBusy ? 'Connecting…' : 'Connect'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel" style={{ marginTop: 18 }}>
-        <header>
-          <span className="label">Jira</span>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-            a real org surface &mdash; unverified, no instance to test against yet
-          </span>
-        </header>
-        <div className="inner">
-          <div className="runtime-card" style={{ marginBottom: 0 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>Jira</span>
-              {jira?.connected ? (
-                <span className="pill pill-full"><i />Connected</span>
-              ) : (
-                <span className="pill pill-blocked"><i />Not connected</span>
-              )}
-              <span className="spacer" />
-              {jira?.connected && jira.email && (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>{jira.email}</span>
-              )}
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '6px 0 0' }}>
-              Reads issues assigned to or reported by you &mdash; never comments or
-              attachments. Generate an API token at{' '}
-              <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noreferrer">
-                id.atlassian.com/manage-profile/security/api-tokens
-              </a>, then paste it below with your Atlassian account email and site URL
-              (e.g. https://yourteam.atlassian.net). Built the same way as every other
-              connector here, but nobody's tested it against a real site yet &mdash; if
-              something breaks, that's why.
-            </p>
-            {jiraError && (
-              <p style={{ fontSize: 12, color: 'var(--hold)', marginTop: 8 }}>{jiraError}</p>
-            )}
-            <div style={{ marginTop: 9 }}>
-              {jira?.connected ? (
-                <button className="chip" disabled={busy} onClick={disconnectJiraAction}>Disconnect</button>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 7, maxWidth: 420 }}>
-                  <input
-                    aria-label="Jira site URL"
-                    placeholder="https://yourteam.atlassian.net"
-                    value={jiraSiteUrl}
-                    onChange={(e) => setJiraSiteUrl(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
-                  />
-                  <input
-                    aria-label="Jira account email"
-                    placeholder="you@company.com"
-                    value={jiraEmail}
-                    onChange={(e) => setJiraEmail(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
-                  />
-                  <div style={{ display: 'flex', gap: 7 }}>
-                    <input
-                      aria-label="Jira API token"
-                      type="password"
-                      placeholder="API token"
-                      value={jiraApiToken}
-                      onChange={(e) => setJiraApiToken(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && connectJira()}
-                      style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
-                    />
-                    <button
-                      disabled={jiraBusy || !jiraSiteUrl.trim() || !jiraEmail.trim() || !jiraApiToken.trim()}
-                      onClick={connectJira}
-                      style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
-                    >
-                      {jiraBusy ? 'Connecting…' : 'Connect'}
-                    </button>
-                  </div>
-                </div>
               )}
             </div>
           </div>

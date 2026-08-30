@@ -21,6 +21,10 @@ let localTurnId = 0;
 export function MyAgent() {
   const { people: identities } = useAuth();
   const personal = identities.length === 0;
+  // An org member can still ask their own, separate personal agent — `usePersonalAgent`
+  // is the toggle for that; a true no-org account has no toggle at all, it's always on.
+  const [usePersonalAgent, setUsePersonalAgent] = useState(false);
+  const showPersonalChat = personal || usePersonalAgent;
   const { meId, meOrgId } = useMe();
   const [me, setMe] = useState<Person | null>(null);
   const [surfaces, setSurfaces] = useState<Surface[]>([]);
@@ -44,7 +48,7 @@ export function MyAgent() {
   const busy = pending != null && pending.busy;
 
   const thread: ThreadTurn[] = activeConversationId
-    ? personal
+    ? showPersonalChat
       ? personalEntries
           .filter((e) => e.conversationId === activeConversationId)
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -57,7 +61,7 @@ export function MyAgent() {
   const displayedThread = pending ? [...thread, pending] : thread;
 
   const loadHistory = async () => {
-    if (personal) {
+    if (showPersonalChat) {
       const [asksRes, convRes] = await Promise.all([api.personalAsks(), api.personalConversations()]);
       setPersonalEntries(asksRes.entries);
       setConversations(convRes.conversations);
@@ -87,8 +91,16 @@ export function MyAgent() {
         setNever(d.neverIngested);
       });
     }
-    // New identity — reload from that person's own real chats rather than carrying over
-    // whoever we were a moment ago.
+    return () => { cancelled = true; };
+  }, [personal, meId, meOrgId]);
+
+  useEffect(() => {
+    // Separate from the org-roster fetch above: switching `showPersonalChat` (the org-vs-
+    // personal-agent toggle) must reload chat history without re-fetching surfaces/never-
+    // ingested every time — and must reset `activeConversationId`, since an org thread id
+    // means nothing inside `personalEntries` and vice versa; carrying it over would land on
+    // a silently blank chat instead of a real one.
+    let cancelled = false;
     setDraft('');
     setPending(null);
     setHistoryLoaded(false);
@@ -101,7 +113,7 @@ export function MyAgent() {
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [personal, meId, meOrgId]);
+  }, [showPersonalChat, meId, meOrgId]);
 
   useEffect(() => {
     if (!historyLoaded) return; // don't animate-scroll on the initial history load
@@ -120,7 +132,7 @@ export function MyAgent() {
     setPending({ id: localId, question: q.trim(), result: null, error: null, busy: true });
     setDraft('');
     try {
-      if (personal) {
+      if (showPersonalChat) {
         // No org, no target/role/requesterId — the requester is always the target.
         const r = await api.askPersonal(q.trim(), activeConversationId ?? undefined);
         await loadHistory();
@@ -153,9 +165,9 @@ export function MyAgent() {
       <header>
         <span className="label">Ask yourself</span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-          {personal ? 'your own personal agent' : 'same real Ask, just about you'}
+          {showPersonalChat ? 'your own personal agent' : 'same real Ask, just about you'}
         </span>
-        {!personal && (
+        {!showPersonalChat && (
           <>
             <span className="spacer" />
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -188,7 +200,7 @@ export function MyAgent() {
         <div className="chat-main">
           {displayedThread.length === 0 ? (
             <p className="glossary" style={{ margin: '0 0 12px' }}>
-              {personal ? (
+              {showPersonalChat ? (
                 <>
                   Answered by your own configured main agent — see <strong>Set up my
                   agent</strong> to connect one. Nothing here is shared with anyone; there's
@@ -231,12 +243,12 @@ export function MyAgent() {
                     {turn.result && (
                       <>
                         <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                          {!personal && (
+                          {!showPersonalChat && (
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
                               ANSWER &middot; {turn.result.withheldCount > 0 ? `${turn.result.withheldCount} item(s) withheld, not included below` : 'nothing withheld for Self'}
                             </span>
                           )}
-                          <p style={{ margin: personal ? 0 : '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
+                          <p style={{ margin: showPersonalChat ? 0 : '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
                         </div>
                         {turn.result.consultedSources.length > 0 && (
                           <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
@@ -319,6 +331,11 @@ export function MyAgent() {
         Nothing on this page is hidden from you. See <strong>Preview</strong> for exactly what
         each requester would get if they asked right now.
       </p>
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 14 }}>
+        <button className="chip" aria-pressed={!usePersonalAgent} onClick={() => setUsePersonalAgent(false)}>Ask yourself</button>
+        <button className="chip" aria-pressed={usePersonalAgent} onClick={() => setUsePersonalAgent(true)}>My personal agent</button>
+      </div>
 
       <div className="split-row" style={{ marginTop: 18 }}>
         <div

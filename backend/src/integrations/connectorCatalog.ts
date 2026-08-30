@@ -46,7 +46,12 @@ export interface ConnectorDef {
   key: SurfaceKey;
   name: string;
   category: ConnectorCategory;
-  authType: 'pat' | 'pat-with-site' | 'oauth-google' | 'coming-soon';
+  /** 'ingest-token' — Claude Code/Codex CLI/Gemini CLI: no credential to paste at all.
+   *  `fields` stays empty; the frontend renders the real UI for this one (a label input,
+   *  a Generate-token button, the existing token-management list) instead of the generic
+   *  field-driven form, since "generate one of possibly several independently-revocable
+   *  tokens" is a genuinely different transaction from "submit a credential once." */
+  authType: 'pat' | 'pat-with-site' | 'oauth-google' | 'ingest-token' | 'coming-soon';
   fields: ConnectorField[];
   status: 'live' | 'connectable' | 'coming-soon';
   /** Shown in the connect form and the "coming soon" tooltip — where to get the
@@ -74,6 +79,26 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     key: 'linear', name: 'Linear', category: 'code', authType: 'pat', status: 'live',
     fields: [{ key: 'apiKey', label: 'Personal API key', placeholder: 'lin_api_...', secret: true }],
     helpText: 'Linear → Settings → Security & access → Personal API keys.',
+  },
+  // ---- ingest-token: no credential, a generated bearer token pasted into the tool's own
+  // hook/telemetry config instead — docs/agent-to-agent-communication.md §13. Unified into
+  // this same catalog/dropdown so "everything is a tool, pick it from one place" holds for
+  // these too, even though the connect flow underneath (genericConnection.ts's PAT/OAuth
+  // storage vs ingestTokens.ts's token generation) is genuinely different.
+  {
+    key: 'claude-code', name: 'Claude Code', category: 'code', authType: 'ingest-token', status: 'live',
+    fields: [],
+    helpText: 'Generate a token below, then paste it into your Claude Code hook config (an http-type PostToolUse hook) — it pushes real activity straight to this mesh, from wherever it actually runs.',
+  },
+  {
+    key: 'codex', name: 'Codex CLI', category: 'code', authType: 'ingest-token', status: 'live',
+    fields: [],
+    helpText: 'Generate a token below, then paste it into your Codex CLI hook/telemetry config.',
+  },
+  {
+    key: 'gemini-cli', name: 'Gemini CLI', category: 'code', authType: 'ingest-token', status: 'live',
+    fields: [],
+    helpText: 'Generate a token below, then paste it into your Gemini CLI telemetry config.',
   },
   {
     key: 'notion', name: 'Notion', category: 'docs', authType: 'pat', status: 'live',

@@ -114,7 +114,7 @@ export interface ConnectorDef {
   key: string;
   name: string;
   category: ConnectorCategory;
-  authType: 'pat' | 'pat-with-site' | 'oauth-google' | 'coming-soon';
+  authType: 'pat' | 'pat-with-site' | 'oauth-google' | 'ingest-token' | 'coming-soon';
   fields: ConnectorField[];
   status: 'live' | 'connectable' | 'coming-soon';
   helpText: string;

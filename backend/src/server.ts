@@ -59,7 +59,7 @@ import { saveDiscordConnection, getDiscordStatus, disconnectDiscord } from './in
 import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './integrations/airflow.js';
 import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
 import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
-import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
+import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_INGEST_TOKEN_STATUS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -1383,11 +1383,21 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
   }
   try {
     const tokens = await exchangeCode(code);
-    await saveGmailConnection(Number(state), {
+    const personId = Number(state);
+    await saveGmailConnection(personId, {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? null,
       expiresIn: tokens.expires_in,
     });
+    // Connecting Gmail also enables Calendar — same OAuth token, an added scope — and the
+    // catalog's own helpText has always said so, but nothing ever actually flipped this
+    // surface: a real, previously-invisible bug found while unifying every connector into
+    // one dropdown (CLAUDE.md), since Calendar had never been shown in a UI that would
+    // have exposed it not actually updating.
+    const person = await repo.getPerson(personId);
+    if (person.surfaces.calendar !== 'connected') {
+      await repo.updatePersonSurface(personId, 'calendar', 'connected');
+    }
   } catch (err) {
     return `<p>Gmail connection failed: ${err instanceof Error ? err.message : String(err)}. <a href="${frontendUrl}">Return to the app</a>.</p>`;
   }
@@ -1413,6 +1423,10 @@ app.delete('/api/person/:id/gmail', async (req, reply) => {
     return { error: check.error };
   }
   await disconnectGmail(id);
+  const before = await repo.getPerson(id);
+  if (before.surfaces.calendar === 'connected') {
+    await repo.updatePersonSurface(id, 'calendar', 'absent');
+  }
   return { ok: true };
 });
 
@@ -1535,6 +1549,18 @@ type ConnectHandler = (personId: number, fields: Record<string, string>) => Prom
 type StatusHandler = (personId: number) => Promise<{ connected: boolean; label: string | null }>;
 
 const CONNECT_HANDLERS: Partial<Record<SurfaceKey, ConnectHandler>> = {
+  // Unified into the same generic dispatch the dropdown drives through — github/jira also
+  // keep their own bespoke /api/person/:id/github|jira endpoints (already reachable a
+  // second way, same underlying save/status/disconnect functions, so behavior is
+  // identical either path is used).
+  github: async (id, f) => {
+    const r = await saveGithubConnection(id, f.token);
+    return r.ok ? { ok: true, label: r.login } : r;
+  },
+  jira: async (id, f) => {
+    const r = await saveJiraConnection(id, f.siteUrl, f.email, f.apiToken);
+    return r.ok ? { ok: true, label: r.displayName } : r;
+  },
   linear: (id, f) => saveLinearConnection(id, f.apiKey),
   notion: (id, f) => saveNotionConnection(id, f.token),
   confluence: (id, f) => saveConfluenceConnection(id, f.siteUrl, f.email, f.apiToken),
@@ -1553,6 +1579,8 @@ const CONNECT_HANDLERS: Partial<Record<SurfaceKey, ConnectHandler>> = {
 };
 
 const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Promise<void>>> = {
+  github: disconnectGithub,
+  jira: disconnectJira,
   linear: disconnectLinear,
   notion: disconnectNotion,
   confluence: disconnectConfluence,
@@ -1571,6 +1599,8 @@ const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Prom
 };
 
 const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
+  github: async (id) => { const s = await getGithubStatus(id); return { connected: s.connected, label: s.login }; },
+  jira: async (id) => { const s = await getJiraStatus(id); return { connected: s.connected, label: s.email }; },
   linear: getLinearStatus,
   notion: getNotionStatus,
   confluence: async (id) => { const s = await getConfluenceStatus(id); return { connected: s.connected, label: s.email }; },
@@ -1586,15 +1616,24 @@ const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
   airflow: getAirflowStatus,
   dbt: getDbtStatus,
   snowflake: getSnowflakeStatus,
+  // "Has ≥1 active ingest token" — a narrower, panel-scoped question than whether
+  // ask-personal's digest bridge should bother scanning for activity (that's the
+  // deliberately different, richer gate ACCOUNT_STATUS_HANDLERS['claude-code'] already
+  // encodes in personalConnectors.ts — never touch that one for this UI-only purpose).
+  'claude-code': async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
+  codex: async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
+  'gemini-cli': async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
 };
 
 /** No auth needed — same posture as GET /api/runtimes: this is catalog metadata, not
  *  anyone's connection state. */
 app.get('/api/connectors/catalog', async () => ({ catalog: CONNECTOR_CATALOG }));
 
-/** Status for every connector at once — the ConnectorsPanel's one fetch on load. GitHub/
- *  Jira/Gmail keep their own status endpoints (already called separately by SetUpMyAgent's
- *  existing sections); Calendar has no connection of its own and mirrors Gmail's. */
+/** Status for every connector at once — the ConnectorsPanel's one fetch on load. GitHub
+ *  and Jira also keep their own bespoke status endpoints (kept for backward
+ *  compatibility, unused by the frontend now that ConnectorsPanel is the one dropdown
+ *  everything lives in) — both paths hit the exact same underlying status functions, so
+ *  they can never disagree. Calendar has no connection of its own and mirrors Gmail's. */
 app.get('/api/person/:id/connectors', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelfIfLoggedIn(req, id);
@@ -1604,7 +1643,6 @@ app.get('/api/person/:id/connectors', async (req, reply) => {
   }
   const statuses: Record<string, { connected: boolean; label: string | null }> = {};
   for (const def of CONNECTOR_CATALOG) {
-    if (def.key === 'github' || def.key === 'jira') continue;
     if (def.status === 'coming-soon') {
       statuses[def.key] = { connected: false, label: null };
       continue;
@@ -1679,8 +1717,8 @@ app.delete('/api/person/:id/connectors/:key', async (req, reply) => {
    Same catalog, same ConnectorsPanel component, same three-endpoint shape as the
    person-keyed routes just above — but scoped to the logged-in account itself (no :id
    param at all, same posture as GET/POST /api/accounts/me/main-agent) since a personal
-   account has no `people` row to key off of. GitHub/Jira/Calendar are excluded the same
-   way ConnectorsPanel.tsx's own HANDLED_ELSEWHERE excludes them from the dropdown. */
+   account has no `people` row to key off of. Calendar is excluded — it rides on Gmail's
+   OAuth token, which personal accounts don't have (Gmail was never extended there). */
 app.get('/api/accounts/me/connectors', async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
@@ -1689,12 +1727,16 @@ app.get('/api/accounts/me/connectors', async (req, reply) => {
   }
   const statuses: Record<string, { connected: boolean; label: string | null }> = {};
   for (const def of CONNECTOR_CATALOG) {
-    if (def.key === 'github' || def.key === 'jira' || def.key === 'calendar') continue;
+    if (def.key === 'calendar') continue;
     if (def.status === 'coming-soon') {
       statuses[def.key] = { connected: false, label: null };
       continue;
     }
-    const handler = ACCOUNT_STATUS_HANDLERS[def.key];
+    // The three ingest-token tools use a narrower, panel-only status here (has a token to
+    // manage) — a deliberately different question from ACCOUNT_STATUS_HANDLERS's own
+    // richer ask-personal-relevance gate for these same keys, see
+    // ACCOUNT_INGEST_TOKEN_STATUS's own comment for why they must stay two maps.
+    const handler = ACCOUNT_INGEST_TOKEN_STATUS[def.key] ?? ACCOUNT_STATUS_HANDLERS[def.key];
     statuses[def.key] = handler ? await handler(accountId) : { connected: false, label: null };
   }
   return { statuses };
@@ -1708,7 +1750,7 @@ app.post('/api/accounts/me/connectors/:key', async (req, reply) => {
   }
   const key = (req.params as { key: string }).key as SurfaceKey;
   const def = CONNECTOR_CATALOG.find((c) => c.key === key);
-  if (!def || def.key === 'github' || def.key === 'jira' || def.key === 'calendar') {
+  if (!def || def.key === 'calendar') {
     reply.code(404);
     return { error: 'unknown connector' };
   }
