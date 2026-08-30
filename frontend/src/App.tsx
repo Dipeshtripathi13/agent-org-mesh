@@ -3,7 +3,7 @@ import { api } from './lib/api';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { MeProvider, useMe } from './lib/MeContext';
 import { OrgProvider, useOrg } from './lib/OrgContext';
-import { AdminStepUp } from './pages/AdminStepUp';
+import { StepUpProvider } from './lib/StepUpContext';
 import { Ask } from './pages/Ask';
 import { AuditLog } from './pages/AuditLog';
 import { Connections } from './pages/Connections';
@@ -92,11 +92,13 @@ function MeSwitcher() {
 }
 
 /** The account's own profile trigger, folded into one menu instead of scattering "Admin"
- *  and "Log out" as separate topbar buttons — click your name to either step up into
- *  Admin (or head back to "My agent") and to log out, same shape as most real products'
- *  own account menus (a profile picture/name in the corner that opens both "switch
- *  context" and "sign out"). Closes on an outside click or Escape; a fresh click anywhere
- *  else in the menu also closes it after acting. */
+ *  and "Log out" as separate topbar buttons — click your name to either switch to Admin
+ *  (or head back to "My agent") and to log out, same shape as most real products' own
+ *  account menus (a profile picture/name in the corner that opens both "switch context"
+ *  and "sign out"). Switching to Admin no longer prompts for re-authentication — see
+ *  Shell's own comment on why; a specific sensitive action inside Admin might still ask
+ *  for one, inline, via StepUpContext.tsx. Closes on an outside click or Escape; a fresh
+ *  click anywhere else in the menu also closes it after acting. */
 function ProfileMenu({
   panel, switchPanel, name, subtitle, logout,
 }: {
@@ -142,7 +144,7 @@ function ProfileMenu({
             </button>
           ) : (
             <button type="button" role="menuitem" onClick={() => { switchPanel('admin'); setOpen(false); }}>
-              Admin login
+              Admin
             </button>
           )}
           <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); logout(); }}>
@@ -234,7 +236,7 @@ function pathFor(route: Route): string {
 
 function Shell() {
   const [{ panel, screen }, setRoute] = useState<Route>(() => parsePath(window.location.pathname));
-  const { account, orgRoles, people: myIdentities, adminElevatedUntil, loading: authLoading } = useAuth();
+  const { account, orgRoles, people: myIdentities, loading: authLoading } = useAuth();
   // Two genuinely different facts, kept separate rather than conflated into one "zero
   // orgs" flag: whether this account administers any org at all (drives what Admin's
   // sidebar can show), and whether it's a real person in any org's chart at all (drives
@@ -289,26 +291,25 @@ function Shell() {
     go({ panel: p, screen: p === 'admin' ? (hasAdminRole ? 'overview' : 'organizations') : 'mine' });
   const setScreen = (key: string) => go({ panel, screen: key });
 
-  // Both panels now require a real login first — "My agent" no longer works fully
-  // logged-out. That reverses what used to be a deliberate, documented demo affordance
-  // (a free identity switcher defaulting to a seeded Northbeam employee, reachable by
-  // anyone with zero auth): fine for internal testing, but once real strangers can land
-  // here via the marketing site's "Try it for free" link, showing a named person's data
-  // to nobody-in-particular reads exactly like a broken login, not a demo. Admin is
-  // additionally two-factor: the same login below ("locked") is the first factor, and a
-  // fresh re-entry of the same password (AdminStepUp, "stepup") is the second — neither
-  // is skippable by navigating around it, since every Admin-scoped endpoint re-checks the
-  // session's own elevation server-side regardless (requireOrgRole in server.ts).
-  // Re-evaluated every tick of useClock so a session that elevated 15 minutes ago and is
-  // still sitting on an Admin screen falls back to the re-auth prompt on its own, without
-  // needing a failed request first.
-  const now = useClock();
-  const isAdminElevated = !!adminElevatedUntil && new Date(adminElevatedUntil).getTime() > now.getTime();
-  const gate =
-    authLoading ? 'checking'
-    : !account ? 'locked'
-    : panel === 'admin' && !isAdminElevated ? 'stepup'
-    : 'open';
+  // Both panels require a real login first — "My agent" no longer works fully logged-out.
+  // That reverses what used to be a deliberate, documented demo affordance (a free
+  // identity switcher defaulting to a seeded Northbeam employee, reachable by anyone with
+  // zero auth): fine for internal testing, but once real strangers can land here via the
+  // marketing site's "Try it for free" link, showing a named person's data to
+  // nobody-in-particular reads exactly like a broken login, not a demo.
+  //
+  // Admin no longer gates entry behind a second factor — research into how GitHub/Stripe/
+  // Google Workspace/NIST 800-63B/OWASP actually handle "logged in vs. elevated" found
+  // that blanket step-up on *entering* an admin area is a real outlier; none of them
+  // re-authenticate before you can even look at settings, only before a specific
+  // sensitive action. A logged-in admin sees every Admin screen immediately now — the
+  // step-up prompt (StepUpContext.tsx) surfaces inline, only when a specific action
+  // (inviting/removing an admin, changing a role, removing a person, setting the org's
+  // main-agent credentials, editing policy) actually returns 428, exactly the same way
+  // GitHub's own sudo mode works. Every one of those endpoints still re-checks elevation
+  // server-side regardless (requireOrgRole in server.ts) — this UI change doesn't relax
+  // that boundary, it just moves where the prompt appears.
+  const gate = authLoading ? 'checking' : !account ? 'locked' : 'open';
 
   return (
     <div className="app">
@@ -319,10 +320,6 @@ function Shell() {
       ) : gate === 'locked' ? (
         <div className="body">
           <Login />
-        </div>
-      ) : gate === 'stepup' ? (
-        <div className="body">
-          <AdminStepUp />
         </div>
       ) : (
         <div className="body">
@@ -356,11 +353,13 @@ function Shell() {
 export default function App() {
   return (
     <AuthProvider>
-      <OrgProvider>
-        <MeProvider>
-          <Shell />
-        </MeProvider>
-      </OrgProvider>
+      <StepUpProvider>
+        <OrgProvider>
+          <MeProvider>
+            <Shell />
+          </MeProvider>
+        </OrgProvider>
+      </StepUpProvider>
     </AuthProvider>
   );
 }

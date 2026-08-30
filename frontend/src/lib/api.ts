@@ -147,6 +147,18 @@ export interface IngestToken {
 export const INGEST_SOURCES = ['claude-code', 'codex', 'gemini-cli'] as const;
 export type IngestSource = typeof INGEST_SOURCES[number];
 
+/** Carries the real HTTP status alongside the server's own error message — callers that
+ *  need to react differently to specific statuses (429's `errorRaw = ApiError`, most
+ *  notably a 428 meaning "this action needs step-up," see StepUpContext.tsx) can check
+ *  `e instanceof ApiError && e.status === 428` instead of string-matching a message. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -158,7 +170,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null) as { error?: string } | null;
-    throw new Error(body?.error ?? `${res.status} ${path}`);
+    throw new ApiError(res.status, body?.error ?? `${res.status} ${path}`);
   }
   return res.json() as Promise<T>;
 }

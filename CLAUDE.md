@@ -125,7 +125,8 @@ frontend/src/lib/AuthContext.tsx  React context for real login — session cooki
                        `Shell` in App.tsx renders `pages/Login.tsx` (which itself can hand
                        off to `pages/SignUp.tsx`) in place of *either* panel's content
                        whenever there's no session — both "My agent" and Admin require a
-                       real login now; Admin additionally requires step-up (see below).
+                       real login now; step-up is action-scoped within Admin, not a gate on
+                       entering it (see the main-agent/step-up-auth paragraph below).
 frontend/src/lib/MeContext.tsx  React context for the My-agent panel's "who am I" — no
                        longer a free identity switcher. It used to let any logged-in
                        account browse into *any* organization (a standing public demo org,
@@ -677,34 +678,54 @@ and pass a second re-auth prompt just to start) → this: signup still creates o
 needed for *that* account, but does it in one step, because most people trying this out are
 one person, not a company standing up a multi-person chart.
 
-**Step-up authentication ("log in as admin") gates every Admin-scoped action, and a real
-login now gates "My agent" too.** `App.tsx`'s `Shell` no longer shows Admin and "My agent"
-as co-equal tabs — "My agent" is the only thing shown by default. Admin login and logout
-both live under one profile menu (`App.tsx`'s `ProfileMenu`, opened by clicking your own
-name/avatar in the topbar — not a separate row of buttons), same shape as most real
-products' own account menus. Clicking "Admin login" doesn't just switch views: it requires
-a genuine second authentication step, the standard "step-up auth"/"sudo mode" pattern
-(GitHub re-prompts your password before SSH-key/org-settings changes even while logged in;
-AWS separates root from IAM; Stripe/Okta use the term explicitly). A normal login is the
-first factor; `POST /api/auth/step-up` (`pages/AdminStepUp.tsx`) re-verifies that same
-account's password and, only on success, elevates the *existing* session — not a second
-account or cookie — for 15 minutes (`sessions.elevated_until`, `ELEVATION_WINDOW_MS` in
-`server.ts`). A plain login never auto-elevates — only self-serve signup does (see above,
-since it's proving the same password moments earlier) — which is what keeps "log in" and
-"log in as admin" two genuinely separate steps everywhere else. This is enforced
-server-side, not just hidden in the UI: `requireOrgRole` (every Admin-scoped endpoint's
-single shared gate, ~14 call sites) checks elevation and returns `428` if the session
-hasn't stepped up, and the one Admin action with no `orgId` yet to check a role against —
-creating a brand-new organization from inside an already-logged-in session — goes through
-a parallel `requireElevatedSession` check on `POST /api/organizations`. Separately, "My
-agent" itself now also requires a real login before rendering anything (see the
-MeContext.tsx layout entry above for why) — found live when a real "Try it for free" click
-landed on a stranger seeing a named seeded person's data with no login at all, which read
-exactly like a broken login rather than a demo. One more race surfaced and got fixed along
-the way: `MyAgent.tsx`'s own identity-loading effect had no stale-response guard, so a
-brand-new signup flipping from the placeholder demo org to its own real org almost
-instantly could still end up displaying the demo org's data if that slower request happened
-to resolve last — same class of bug, same `cancelled` fix, as `Overview.tsx`'s own guard.
+**A real login gates both "My agent" and Admin; step-up ("confirm it's you") is
+action-scoped, not a gate on entering Admin at all.** `App.tsx`'s `Shell` no longer shows
+Admin and "My agent" as co-equal tabs — "My agent" is the only thing shown by default.
+Admin and logout both live under one profile menu (`App.tsx`'s `ProfileMenu`, opened by
+clicking your own name/avatar in the topbar). Clicking "Admin" goes straight to the Admin
+panel — reading Overview, Coverage, Audit log, Org structure, Connections, Escalations
+needs nothing beyond the same login already proven, exactly like any other read. This
+reverses the first version of this feature (a full-page password re-prompt gating *every*
+visit to Admin), changed after research into how GitHub, Stripe, Google Workspace,
+NIST 800-63B, and OWASP actually handle "logged in vs. elevated": none of them
+re-authenticate on *entering* an admin area — GitHub's own sudo-mode docs describe it
+triggering on specific actions (adding an SSH key, authorizing an OAuth app), never on
+viewing settings; OWASP's guidance is explicitly action-scoped (a dedicated "Transaction
+Authorization" cheat sheet); Google Workspace's admin console trusts the existing session
+by default. Blanket re-auth on every entry is also the documented UX failure mode: it
+trains people to treat the prompt as noise. Found live, reported directly, right after
+shipping the original blanket version: "this login to admin system is not good."
+
+Step-up now surfaces only when a specific sensitive write actually needs it — inviting or
+removing an org admin, changing an admin's role, removing a person from the chart, setting
+the org's main-agent credentials, editing the policy grid, and creating a brand-new
+organization — the same set GitHub/Stripe reserve theirs for. `requireOrgRole` (server.ts)
+takes an `{ elevated: true }` option now, opt-in per call site instead of an implicit
+blanket rule; the ~7 calls above pass it, the rest (reads, and low-stakes writes like
+adding a person to the chart) don't. `POST /api/organizations` (creating a new org, no
+`orgId` yet to check a role against) still goes through the separate
+`requireElevatedSession` it always used, unchanged. On the frontend, `StepUpContext.tsx`
+replaces the old full-page `AdminStepUp.tsx` gate (deleted, not left as dead code) with an
+inline modal any component can trigger: `runWithStepUp(() => api.someAction(...))` runs
+the call normally, and only on a real `428` (a new `ApiError` class in `api.ts` now
+carries the actual HTTP status, not just a message string, so this check isn't a fragile
+string match) does it show a password prompt over whatever the person was already doing,
+then retries the exact same call once, automatically, on success — never a full-page
+redirect, never losing the form state around it. Live-verified end-to-end: Admin opens
+straight to Overview with zero prompts; four different read screens confirmed prompt-free;
+inviting an admin correctly triggers the inline modal without navigating away; a wrong
+password is rejected with the modal staying open; the correct password closes it and the
+invite completes automatically, no second click. Every one of the gated endpoints still
+re-checks elevation server-side regardless of what the UI shows — this change moved where
+the prompt appears, not the boundary it enforces. "My agent" itself still requires a real
+login before rendering anything (see the MeContext.tsx layout entry above for why) — found
+live when a real "Try it for free" click landed on a stranger seeing a named seeded
+person's data with no login at all, which read exactly like a broken login rather than a
+demo. One more race surfaced and got fixed along the way: `MyAgent.tsx`'s own
+identity-loading effect had no stale-response guard, so a brand-new signup flipping from
+the placeholder demo org to its own real org almost instantly could still end up
+displaying the demo org's data if that slower request happened to resolve last — same
+class of bug, same `cancelled` fix, as `Overview.tsx`'s own guard.
 
 Multi-conversation chat, ChatGPT-style, is real on both "My agent" → "Ask yourself" *and*
 the cross-person **Ask** page — switch between chats, start a new one, and a follow-up

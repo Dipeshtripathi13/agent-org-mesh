@@ -210,17 +210,35 @@ type OrgRoleCheck = { ok: true; accountId: number } | { ok: false; code: 401 | 4
  *  watches for to distinguish "re-enter your password" from a genuine, unrecoverable 403.
  *  Mirrors verifyRequesterRole's shape below (the analogous check for a *person's* claimed
  *  org-chart role on /api/agent/ask). */
+/** `elevated`, when true, additionally requires step-up (a fresh password re-entry within
+ *  the last 15 minutes) on top of the role check — reserved for genuinely destructive or
+ *  security-sensitive writes (inviting/removing an admin, changing an admin's role,
+ *  removing a person from the chart, setting the org's main-agent credentials, editing
+ *  policy), never for reads or routine writes. Defaults to false: most of this function's
+ *  callers are reads (Overview, Coverage, Audit log, Connections, admins list) or
+ *  low-stakes writes (adding a person to the chart) that only ever needed the role check,
+ *  not a re-auth prompt on top of it.
+ *
+ *  This replaces step-up gating the *entire* Admin panel on every visit — found, after
+ *  research into how GitHub/Stripe/Google Workspace/NIST 800-63B/OWASP actually handle
+ *  this, to be a real outlier: none of them re-authenticate on *entering* an admin area,
+ *  only on the specific sensitive action itself (GitHub's own docs: sudo mode triggers on
+ *  adding an SSH key or authorizing an OAuth app, never on viewing settings). Blanket
+ *  re-auth on every entry is also the documented UX failure mode OWASP's Transaction
+ *  Authorization framing and NIST's assurance-level session timeouts both implicitly argue
+ *  against: it trains people to treat the prompt as noise rather than a real signal. */
 async function requireOrgRole(
   req: { cookies: Record<string, string | undefined> },
   orgId: number,
   minRole: OrgRole,
   deniedMessage: string,
+  options: { elevated?: boolean } = {},
 ): Promise<OrgRoleCheck> {
   const session = await currentSession(req);
   if (session == null) return { ok: false, code: 401, error: 'log in first' };
   const role = await repo.getOrgRole(orgId, session.accountId);
   if (role == null || ROLE_RANK[role] < ROLE_RANK[minRole]) return { ok: false, code: 403, error: deniedMessage };
-  if (!isElevated(session.elevatedUntil)) return { ok: false, code: 428, error: 'admin re-authentication required' };
+  if (options.elevated && !isElevated(session.elevatedUntil)) return { ok: false, code: 428, error: 'admin re-authentication required' };
   return { ok: true, accountId: session.accountId };
 }
 
@@ -438,7 +456,7 @@ app.get('/api/organizations/:orgId/admins', async (req, reply) => {
 
 app.post('/api/organizations/:orgId/admins', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
-  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can invite admins');
+  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can invite admins', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -477,7 +495,7 @@ app.post('/api/organizations/:orgId/admins', async (req, reply) => {
 app.patch('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const targetAdminId = Number((req.params as { adminId: string }).adminId);
-  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can change roles');
+  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can change roles', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -500,7 +518,7 @@ app.patch('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
 app.delete('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const targetAdminId = Number((req.params as { adminId: string }).adminId);
-  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can remove admins');
+  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can remove admins', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -606,7 +624,7 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
 
 app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
-  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization');
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1057,7 +1075,7 @@ app.get('/api/organizations/:orgId/main-agent', async (req) => {
  *  see sanitizeOrgMainAgent above. */
 app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
-  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to set this organization\'s main agent');
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to set this organization\'s main agent', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -2003,7 +2021,7 @@ app.get('/api/policy', async (req) => {
  *  'admin'+, same bar as adding/removing people. */
 app.post('/api/policy/cycle', async (req, reply) => {
   const orgId = orgIdFromQuery(req);
-  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization\'s policy');
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization\'s policy', { elevated: true });
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };

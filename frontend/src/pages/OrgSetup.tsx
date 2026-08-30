@@ -3,6 +3,7 @@ import { api, type AgentRuntime, type OrgAdmin, type OrgMainAgent, type OrgRole,
 import { CredentialsFields } from '../components/primitives';
 import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
+import { useStepUp } from '../lib/StepUpContext';
 
 const ROLE_LABEL: Record<OrgRole, string> = { owner: 'Owner', admin: 'Admin', viewer: 'Viewer' };
 const ROLES: OrgRole[] = ['owner', 'admin', 'viewer'];
@@ -13,6 +14,7 @@ const SCOPE_LABEL: Record<'full' | 'narrow' | 'pending', string> = {
 function OrganizationList() {
   const { orgId, organizations, setOrgId, refresh } = useOrg();
   const { refresh: refreshAuth } = useAuth();
+  const { runWithStepUp } = useStepUp();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +24,7 @@ function OrganizationList() {
     setBusy(true);
     setError(null);
     try {
-      const { organization } = await api.createOrganization(name.trim());
+      const { organization } = await runWithStepUp(() => api.createOrganization(name.trim()));
       setName('');
       // Creating an org also makes the caller its first person now (see api.ts's own
       // comment) — AuthContext's orgRoles/people are what App.tsx's Shell uses to decide
@@ -103,6 +105,7 @@ const EMPTY_FORM = { name: '', title: '', team: '', managerId: '' as number | ''
 function ChartBuilder() {
   const { orgId, organizations, refresh } = useOrg();
   const { orgRoles } = useAuth();
+  const { runWithStepUp } = useStepUp();
   const canEdit = orgRoles[orgId] === 'owner' || orgRoles[orgId] === 'admin';
   const org = organizations.find((o) => o.id === orgId);
   const [people, setPeople] = useState<Person[]>([]);
@@ -168,7 +171,7 @@ function ChartBuilder() {
   const removePerson = async (id: number) => {
     setError(null);
     try {
-      await api.removePerson(orgId, id);
+      await runWithStepUp(() => api.removePerson(orgId, id));
       await load();
       await refresh();
     } catch (e) {
@@ -317,6 +320,7 @@ const EMPTY_INVITE = { email: '', name: '', role: 'admin' as OrgRole };
 function OrgAdmins() {
   const { account: me, orgRoles } = useAuth();
   const { orgId, organizations } = useOrg();
+  const { runWithStepUp } = useStepUp();
   const org = organizations.find((o) => o.id === orgId);
   const myRole = orgRoles[orgId];
   const isOwner = myRole === 'owner';
@@ -345,7 +349,7 @@ function OrgAdmins() {
     setBusy(true);
     setError(null);
     try {
-      const { admin, tempPassword, emailSent } = await api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role);
+      const { admin, tempPassword, emailSent } = await runWithStepUp(() => api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role));
       setInvite(EMPTY_INVITE);
       await load();
       if (tempPassword) setJustInvited({ email: admin.email, tempPassword, emailSent });
@@ -359,7 +363,7 @@ function OrgAdmins() {
   const changeRole = async (accountId: number, role: OrgRole) => {
     setError(null);
     try {
-      await api.setOrgAdminRole(orgId, accountId, role);
+      await runWithStepUp(() => api.setOrgAdminRole(orgId, accountId, role));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not change role');
@@ -369,7 +373,7 @@ function OrgAdmins() {
   const remove = async (accountId: number) => {
     setError(null);
     try {
-      await api.removeOrgAdmin(orgId, accountId);
+      await runWithStepUp(() => api.removeOrgAdmin(orgId, accountId));
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not remove admin');
@@ -498,6 +502,7 @@ function OrgAdmins() {
 function OrgMainAgentPanel() {
   const { orgRoles } = useAuth();
   const { orgId, organizations } = useOrg();
+  const { runWithStepUp } = useStepUp();
   const org = organizations.find((o) => o.id === orgId);
   const myRole = orgRoles[orgId];
   const canEdit = myRole === 'admin' || myRole === 'owner';
@@ -553,7 +558,7 @@ function OrgMainAgentPanel() {
             model: formModel.trim() || null,
           }
         : { apiKey: null, baseUrl: null, model: null };
-      await api.setOrgMainAgent(orgId, effectiveRuntime, formScope, credentials);
+      await runWithStepUp(() => api.setOrgMainAgent(orgId, effectiveRuntime, formScope, credentials));
       setEditing(false);
       await load();
     } catch (e) {

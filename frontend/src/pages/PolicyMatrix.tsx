@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type AgentResponse, type Disposition, type Person } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
+import { useStepUp } from '../lib/StepUpContext';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
 
 const ROLES = ['Self', 'Peer', 'Direct manager', 'Skip-level', 'Executive', 'IT admin'];
@@ -17,6 +18,7 @@ export function PolicyMatrix() {
   // this just grays out what it would reject anyway, same convenience/boundary split
   // roles.ts already documents for Ask's role chips.
   const canEdit = orgRoles[orgId] === 'owner' || orgRoles[orgId] === 'admin';
+  const { runWithStepUp } = useStepUp();
   const [grid, setGrid] = useState<Record<string, Record<string, Disposition>> | null>(null);
   const [revision, setRevision] = useState(0);
   const [role, setRole] = useState('Direct manager');
@@ -47,7 +49,7 @@ export function PolicyMatrix() {
   }, [grid, role, target, revision]);
 
   const cycle = async (r: string, c: string) => {
-    await api.cyclePolicy(orgId, r, c);
+    await runWithStepUp(() => api.cyclePolicy(orgId, r, c));
     await loadPolicy();
   };
 

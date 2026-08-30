@@ -120,6 +120,13 @@ button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--acc
 .profile-dropdown button:hover { background: var(--accent-bg); color: var(--accent-hover); }
 .profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 4px; padding-top: 9px; }
 
+/* Step-up re-auth prompt — an inline modal over whatever sensitive action triggered it
+   (StepUpContext.tsx), not a full-page gate. */
+.stepup-overlay {
+  position: fixed; inset: 0; background: rgba(23,24,28,0.35); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+
 .org-switcher {
   height: 32px; border: 1px solid var(--rule2); border-radius: 2px; background: #fff;
   font-size: 12px; padding: 0 8px; color: var(--ink); max-width: 200px;
