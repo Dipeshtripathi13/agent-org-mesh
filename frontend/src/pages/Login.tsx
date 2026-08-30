@@ -92,9 +92,9 @@ export function Login() {
               onClick={() => setMode('signup')}
               style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
             >
-              Create your organization
+              Create your account
             </button>{' '}
-            — no existing admin required.
+            — you'll land in your own workspace immediately, no company name needed.
           </p>
           <p className="glossary" style={{ marginTop: 8 }}>
             Dev seed: <code>jordan@agentorgmesh.local</code> / <code>admin-dev-only</code> — see
