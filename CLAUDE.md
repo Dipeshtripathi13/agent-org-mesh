@@ -362,6 +362,19 @@ own real, one-person org immediately, no separate org-creation step.
   update `linear.ts`/`gitlab.ts`/`notion.ts`'s own module comments and this note once each
   is confirmed.
 
+- **Wire Fastify's request/error logging to somewhere `railway logs` actually captures.**
+  Found live, while debugging the Notion MCP issue above: this deployment produces zero
+  log output for any request, to any endpoint, beyond the container's own startup banner
+  — `app.log.error(...)` calls (this file has several, including the one right next to
+  the fix this note sits beside) never showed up in `railway logs`, historical or live,
+  regardless of the time window queried. Real production debugging currently depends
+  entirely on making failures visible *in the product's own responses* (like the fix
+  above) rather than server-side logs, which works for this one case but won't for
+  everything. Fastify's own `logger` option (or an explicit pino transport) needs a real
+  look — check the current server startup config in `server.ts` for what's actually
+  configured today, and confirm error-level logs genuinely reach stdout in production
+  after the fix, not just locally.
+
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
 one OAuth provider and one PAT provider, for one developer, running locally. The cloud
@@ -1019,6 +1032,27 @@ genuine passthrough in both cases. A real end-to-end round trip with real creden
 remains unverified for all three, the same honest gap `github.ts`'s own commit read still
 carries — and, explicitly, Linear should be the first of the three re-verified once a real
 account exists, since it carries by far the least real evidence backing it.
+
+**A connector that genuinely errors during a personal ask used to reproduce the exact
+same "zero signal → false denial" bug the empty-digest fix already closed — just for a
+different trigger.** Found live, immediately during Batch 2's first real test: a real,
+freshly-connected Notion integration with real, freshly-shared page access still got "I
+don't have access to your Notion account" from the model. The empty-digest fix only
+covers a *successful* call that finds nothing; a call that genuinely *throws* (a wrong
+tool name, a real provider outage, any bug in that connector's own code) was still
+silently logged and dropped in `ask-personal`'s digest bridge, leaving `converse()` with
+zero signal the tool was ever connected — same blind spot, different cause. Fixed the
+same way: a rejected `fetchDigest` now gets the same honest, specific section as the
+empty case ("Connected — reads: X. Checking it just now failed with a real error..."),
+never the raw error text itself (that stays server-side, in the log call right after it),
+and still counts as consulted, since it genuinely was checked. This also turned into the
+real diagnostic tool for the Notion investigation itself: this deployment's Fastify
+logger isn't wired to stdout in a way `railway logs` captures at all (confirmed live —
+every request across every endpoint, not just this one, produces zero log output beyond
+the startup banner), so there was no server-side way to see what actually failed. Making
+the failure honest *in the chat itself* closes that gap without needing log access at
+all — worth its own future fix (wiring Fastify's logger to stdout for real), but this
+was the faster, more valuable fix for what was actually blocking live debugging.
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for

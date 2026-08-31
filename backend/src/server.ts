@@ -2581,9 +2581,23 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
             });
             consultedSources.push(toRun[i].label);
           } else {
-            // One connector failing (a revoked token, a real provider outage) never blocks
-            // the rest — same Promise.allSettled resilience as gatherAll(), logged the same
-            // way rather than surfaced to the user.
+            // One connector failing (a revoked token, a real provider outage, a genuine bug
+            // in that connector's own code) never blocks the rest — same Promise.allSettled
+            // resilience as gatherAll(). Found live: this used to be silent-logged only,
+            // which reproduced the exact same "zero signal → false denial" bug the empty-
+            // digest fix above already closed, just for a different trigger (an error,
+            // instead of a real empty result) — a genuinely connected, genuinely relevant
+            // tool that happened to error still left converse() with nothing telling it the
+            // tool existed, so the model denied the connection outright instead of saying a
+            // real error occurred. Now it gets the same honest, specific section (never the
+            // raw error text — that's for logs, not the model or the person asking) as the
+            // empty case, and still counts as consulted, since it genuinely was checked.
+            const cand = candidates.find((c) => c.surfaceKey === toRun[i].surfaceKey);
+            sections.push({
+              source: toRun[i].label,
+              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. Checking it just now failed with a real error, so this answer doesn't include anything from it.`,
+            });
+            consultedSources.push(toRun[i].label);
             app.log.error({ err: r.reason, tool: toRun[i].label }, 'personal connector digest fetch failed');
           }
         });
