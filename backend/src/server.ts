@@ -67,7 +67,17 @@ const isProduction = process.env.NODE_ENV === 'production';
 // trustProxy: this sits behind Railway's own reverse proxy in production, so req.ip has
 // to come from the forwarded header or every request looks like it's from the same
 // address — both for rate limiting below and for anything else that ever keys on IP.
-const app = Fastify({ logger: false, trustProxy: true });
+//
+// `logger: false` used to mean every one of this file's own `app.log.error(...)` calls
+// (a real one sits right next to the ask-personal digest-bridge fix — see CLAUDE.md) was
+// silently going nowhere: Fastify still hands back a working `app.log` interface when
+// logging is disabled, so `.error()` never threw or warned, it just quietly did nothing.
+// Found live, mid-debugging a real production issue: `railway logs` produced zero output
+// for any request, to any endpoint, ever — not just this one connector's error. `level:
+// 'warn'` keeps the default per-request info-level noise out of production logs while
+// making every real `.error()`/`.warn()` call actually reach stdout, which is what
+// Railway's log capture reads from.
+const app = Fastify({ logger: { level: 'warn' }, trustProxy: true });
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
 // in production, so CORS is disabled outright there rather than left permissively open.

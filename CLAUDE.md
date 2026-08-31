@@ -362,19 +362,6 @@ own real, one-person org immediately, no separate org-creation step.
   update `linear.ts`/`gitlab.ts`/`notion.ts`'s own module comments and this note once each
   is confirmed.
 
-- **Wire Fastify's request/error logging to somewhere `railway logs` actually captures.**
-  Found live, while debugging the Notion MCP issue above: this deployment produces zero
-  log output for any request, to any endpoint, beyond the container's own startup banner
-  — `app.log.error(...)` calls (this file has several, including the one right next to
-  the fix this note sits beside) never showed up in `railway logs`, historical or live,
-  regardless of the time window queried. Real production debugging currently depends
-  entirely on making failures visible *in the product's own responses* (like the fix
-  above) rather than server-side logs, which works for this one case but won't for
-  everything. Fastify's own `logger` option (or an explicit pino transport) needs a real
-  look — check the current server startup config in `server.ts` for what's actually
-  configured today, and confirm error-level logs genuinely reach stdout in production
-  after the fix, not just locally.
-
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
 one OAuth provider and one PAT provider, for one developer, running locally. The cloud
@@ -1045,14 +1032,21 @@ zero signal the tool was ever connected — same blind spot, different cause. Fi
 same way: a rejected `fetchDigest` now gets the same honest, specific section as the
 empty case ("Connected — reads: X. Checking it just now failed with a real error..."),
 never the raw error text itself (that stays server-side, in the log call right after it),
-and still counts as consulted, since it genuinely was checked. This also turned into the
-real diagnostic tool for the Notion investigation itself: this deployment's Fastify
+and still counts as consulted, since it genuinely was checked. This also surfaced the
+real diagnostic blocker for the Notion investigation itself: this deployment's Fastify
 logger isn't wired to stdout in a way `railway logs` captures at all (confirmed live —
 every request across every endpoint, not just this one, produces zero log output beyond
-the startup banner), so there was no server-side way to see what actually failed. Making
-the failure honest *in the chat itself* closes that gap without needing log access at
-all — worth its own future fix (wiring Fastify's logger to stdout for real), but this
-was the faster, more valuable fix for what was actually blocking live debugging.
+the startup banner), so there was no server-side way to see what actually failed. The
+root cause turned out to be one line: `Fastify({ logger: false, ... })` — Fastify still
+hands back a working `app.log` interface when logging is disabled, so every
+`app.log.error(...)` call in this file (including the one right next to this fix) was
+silently doing nothing, not throwing, not warning, just quietly swallowed. Fixed to
+`logger: { level: 'warn' }` — keeps the default noisy per-request info logging out of
+production, while making every real `.error()`/`.warn()` call actually reach stdout,
+which is what Railway's log capture reads from. Both fixes landed together: the honest
+chat-visible error (works even for a failure this specific logging gap would have hidden
+regardless) and the actual logger fix (so the next investigation doesn't need to lean on
+that alone).
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
