@@ -8,24 +8,45 @@
  *  because there was nothing to report from PRs/reviews alone, even though real commits had
  *  happened.
  *
- *  Commits deliberately do NOT go through `/search/commits`, unlike the first version of
- *  this fix. Found live, twice, after that version shipped: a real, connected GitHub with
- *  real recent commits still reported "no commit activity" even after a first bug
- *  (`author:<login>` alone never searching private repos on that endpoint specifically —
- *  fixed by adding a `user:<login>`-scoped query) was fixed. The actual root cause is
- *  bigger than either bug: GitHub's Search API (commits included) is an asynchronous,
- *  Elasticsearch-backed index, not the live git graph — GitHub's own community threads
- *  document real indexing lag from minutes up to 48+ hours, sometimes longer, which makes
- *  it structurally unfit for "what's my *latest* commit," the exact question most likely to
- *  hit that lag. Fixed by dropping `/search/commits` entirely: `getRecentGithubActivity`
- *  now lists the account's most-recently-pushed repos via `GET /user/repos?sort=pushed`
- *  (real-time, authoritative, private repos included once authenticated) and reads each
- *  one's real commit log via `GET /repos/{owner}/{repo}/commits?author=&since=` — the
- *  actual git history, not a search index, confirmed live against a real, very recent
- *  public commit with zero lag. `/search/issues` (PRs/reviews below) doesn't have this
- *  problem — issues/PRs are lower-volume, centrally-indexed objects, not the same
- *  asynchronous code/commit index — and its `author:` qualifier was already confirmed to
- *  include private repos once authenticated, unlike commit search's, so it's unchanged. */
+ *  Commits went through three real, live-found bugs before landing here — worth recording
+ *  since it's exactly why the commit path (and only the commit path) below is now the one
+ *  piece of this connector routed through GitHub's own official MCP server instead of a
+ *  hand-rolled REST call: (1) commits weren't read at all, only PRs/reviews; (2)
+ *  `/search/commits`' `author:<login>` alone never searches private repositories, fixed by
+ *  adding a `user:<login>`-scoped query; (3) the deeper problem underneath both — GitHub's
+ *  Search API (commits included) is an asynchronous, Elasticsearch-backed index, not the
+ *  live git graph, with real documented indexing lag from minutes up to 48+ hours,
+ *  structurally unfit for "what's my *latest* commit." The first fix for (3) moved to the
+ *  real per-repo Commits REST API (`GET /repos/{owner}/{repo}/commits?author=&since=`) —
+ *  correct, but it's exactly the kind of vendor-API-quirk code this project doesn't want to
+ *  keep hand-writing and re-debugging per tool at scale (raised directly: "we will connect
+ *  hundreds of tools, I don't want to test and debug and create an endpoint for each").
+ *  `list_commits` on GitHub's official, remote, hosted MCP server
+ *  (`https://api.githubcopilot.com/mcp/`, plain PAT auth) wraps that same real Commits API
+ *  — GitHub's own maintainers already had to get this right — so the commit read now goes
+ *  through `mcpClient.ts`'s `withMcpSession` instead. Its "minimal commit" JSON shape
+ *  mirrors the REST API's own nested `commit.message`/`commit.author.{name,email,date}`
+ *  shape exactly (confirmed against the server's real Go source, `minimal_types.go` —
+ *  never assumed), so the mapping logic below needed no changes at all.
+ *
+ *  Deliberately NOT migrated to MCP: repo discovery (`listRecentlyPushedRepos`, plain REST
+ *  `GET /user/repos?sort=pushed`) and PR/review search (`searchIssues`, plain REST
+ *  `/search/issues`). Neither was ever part of the bug above — `/user/repos` is a direct,
+ *  real-time listing, not a search index, and `/search/issues`' `author:` qualifier was
+ *  already confirmed to include private repos once authenticated, unlike commit search's
+ *  own gap — so both stay on the REST calls that already work correctly. GitHub's MCP
+ *  server also exposes `search_commits`, tempting as a single-call replacement for the
+ *  whole commit path — deliberately not used: it's backed by the exact same lagging search
+ *  index as `/search/commits`, so using it would just reintroduce bug (3) through MCP
+ *  instead of fixing it. This file is therefore a deliberate MCP+REST hybrid, not "fully
+ *  MCP" — MCP only where it demonstrably fixes a real, already-found bug, not because
+ *  "MCP" is the goal in itself. */
+
+import { withMcpSession } from './mcpClient.js';
+
+// GitHub's official, remote, hosted MCP server — no self-hosting. Used for the commit
+// read only, see the module comment above for exactly why not everything in this file.
+const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/';
 
 export interface GithubActivityItem {
   kind: 'authored' | 'reviewed' | 'committed';
@@ -76,22 +97,43 @@ async function listRecentlyPushedRepos(token: string): Promise<{ owner: string; 
     .map((r) => ({ owner: r.owner.login, name: r.name }));
 }
 
-/** The real git commit log for one repo, not a search index — real-time, no indexing lag.
- *  A repo with zero commits ever (a genuinely empty repo) returns 409 from this endpoint,
- *  treated the same as "nothing to report" rather than an error; any other per-repo
- *  failure (e.g. a since-deleted or since-archived-with-restricted-access repo) is caught
- *  by the caller and skipped the same way — one repo's own quirk never blocks the rest. */
+/** The real git commit log for one repo, via GitHub's own MCP `list_commits` tool — not a
+ *  search index, no indexing lag (see the module comment above). Any per-repo failure
+ *  (an empty repo with zero commits ever, a since-deleted or restricted-access repo, a
+ *  transient MCP hiccup) is caught by the caller and skipped the same way — one repo's own
+ *  quirk never blocks the rest of the digest. */
 async function listRepoCommits(token: string, owner: string, name: string, login: string, since: Date): Promise<any[]> {
-  const qs = new URLSearchParams({ author: login, since: since.toISOString(), per_page: '10' });
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${name}/commits?${qs}`,
-    { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' } },
-  );
-  if (res.status === 409) return [];
-  if (!res.ok) throw new Error(`GitHub commits failed for ${owner}/${name}: ${res.status} ${await res.text()}`);
-  const commits = (await res.json()) as any[];
-  return commits.map((c) => ({ ...c, __repo: `${owner}/${name}` }));
+  return withMcpSession(GITHUB_MCP_URL, token, async (callTool) => {
+    const result = await callTool('list_commits', {
+      owner, repo: name, author: login, since: since.toISOString(), perPage: 10,
+    });
+    const commits = Array.isArray(result) ? result : [];
+    return commits.map((c: any) => ({ ...c, __repo: `${owner}/${name}` }));
+  });
 }
+
+// Split out to module scope, not left as closures inside getRecentGithubActivity, so
+// they're directly unit-testable against realistic fixture shapes without any network or
+// MCP mocking — the same pure/impure split as parseCallToolResult in mcpClient.ts.
+export const toPrItem = (kind: 'authored' | 'reviewed') => (i: any): GithubActivityItem => ({
+  kind,
+  title: i.title,
+  repo: String(i.repository_url ?? '').split('/').slice(-2).join('/'),
+  url: i.html_url,
+  updatedAt: i.updated_at,
+});
+// Message is trimmed to its first line/120 chars, matching how a PR title reads — never
+// the full commit body, and never a diff or file contents either way. `commit.message`/
+// `commit.author.date` — confirmed against GitHub's real MCP server source
+// (minimal_types.go), not assumed — matches the raw REST commit shape exactly, so this
+// mapping is identical whether `c` came from REST or from `list_commits`.
+export const toCommitItem = (c: any): GithubActivityItem => ({
+  kind: 'committed',
+  title: String(c.commit?.message ?? '').split('\n')[0].slice(0, 120),
+  repo: c.__repo ?? '',
+  url: c.html_url,
+  updatedAt: c.commit?.author?.date ?? '',
+});
 
 export async function getRecentGithubActivity(token: string, login: string, since: Date): Promise<GithubActivityItem[]> {
   const dateStr = since.toISOString().slice(0, 10);
@@ -104,23 +146,6 @@ export async function getRecentGithubActivity(token: string, login: string, sinc
     repos.map((r) => listRepoCommits(token, r.owner, r.name, login, since).catch(() => [] as any[])),
   );
   const committed = perRepoCommits.flat();
-
-  const toPrItem = (kind: 'authored' | 'reviewed') => (i: any): GithubActivityItem => ({
-    kind,
-    title: i.title,
-    repo: String(i.repository_url ?? '').split('/').slice(-2).join('/'),
-    url: i.html_url,
-    updatedAt: i.updated_at,
-  });
-  // Message is trimmed to its first line/120 chars, matching how a PR title reads — never
-  // the full commit body, and never a diff or file contents either way.
-  const toCommitItem = (c: any): GithubActivityItem => ({
-    kind: 'committed',
-    title: String(c.commit?.message ?? '').split('\n')[0].slice(0, 120),
-    repo: c.__repo ?? '',
-    url: c.html_url,
-    updatedAt: c.commit?.author?.date ?? '',
-  });
 
   return [...authored.map(toPrItem('authored')), ...reviewed.map(toPrItem('reviewed')), ...committed.map(toCommitItem)];
 }

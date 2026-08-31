@@ -18,9 +18,13 @@ import { getMainProvider } from './runtimeProvider.js';
  * (realClaims.ts) — this array, `selectRelevantSurfaces`'s routing, and everything
  * downstream needs no other change per tool.
  *
- * claude-code, github, codex, and gemini-cli are real and live-verified. jira, linear,
- * notion, confluence, asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake,
- * and databricks are real but UNVERIFIED — built the same way, no real account/instance to
+ * claude-code, codex, and gemini-cli are real and live-verified. github's PR/review reads
+ * and connect flow are still live-verified; its commit read moved onto GitHub's own
+ * official MCP server (github.ts's own module comment) and is UNVERIFIED against a real
+ * PAT again until that's re-proven — a deliberately invalid token reaching the real MCP
+ * endpoint and failing clean isn't the same as a real round trip. jira, linear, notion,
+ * confluence, asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, and
+ * databricks are real but UNVERIFIED — built the same way, no real account/instance to
  * test against yet (see CLAUDE.md's connector catalog paragraph). Gmail is deliberately NOT
  * a provider here — it stays personal-only (the "Ask yourself" box), never a manager-
  * visible org claim. See the design doc §8 for why. Trello/Airtable/Monday/Figma/Discord

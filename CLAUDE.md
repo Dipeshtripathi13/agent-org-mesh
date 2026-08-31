@@ -336,6 +336,18 @@ own real, one-person org immediately, no separate org-creation step.
   it for real, confirm a claim actually lands, then update this note and `databricks.ts`'s
   own module comment to drop the UNVERIFIED language.
 
+- **Verify GitHub's MCP-backed commit read against a real PAT, and decide whether to roll
+  the same pattern out further.** Same shape of gap as every other UNVERIFIED connector
+  here: a deliberately invalid token reaches `api.githubcopilot.com/mcp/` for real and gets
+  a genuine auth rejection, but a real end-to-end round trip (a real, current commit
+  landing in a real claim through both the org and personal ask paths) hasn't happened yet.
+  Once it does: update `github.ts`'s own module comment and this note, then decide — with
+  real evidence, not just the pilot's design reasoning — whether `mcpClient.ts`'s
+  `withMcpSession` pattern is worth extending to the other tools with official, remote MCP
+  servers already identified (Linear, Notion, Atlassian/Jira/Confluence, HubSpot,
+  Salesforce, Asana, Airtable, Monday, Trello, Dropbox, Slack), one at a time, the same
+  read-only-allowlist discipline this pilot established.
+
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
 one OAuth provider and one PAT provider, for one developer, running locally. The cloud
@@ -873,6 +885,77 @@ API and failing clean on a deliberately invalid token. `/search/issues` (PRs/rev
 unaffected and unchanged — issues/PRs are lower-volume, centrally-indexed objects without
 this same documented async-indexing-lag problem, and its `author:` qualifier was already
 confirmed to include private repos once authenticated, unlike commit search's own gap.
+
+**GitHub's commit read now goes through GitHub's own official MCP server instead of a
+hand-rolled REST call — a deliberately narrow pilot for a much bigger question, not a
+rewrite of everything.** After watching the three real bugs above get hand-debugged live,
+one at a time, the user asked directly: this product is going to connect hundreds of
+tools, and hand-writing and re-debugging a bespoke REST integration for each one doesn't
+scale — can MCP servers replace that? Researched before writing any code: GitHub operates
+an official, remote, hosted MCP server (`https://api.githubcopilot.com/mcp/`, no
+self-hosting, plain PAT auth) whose `list_commits` tool wraps the same real Commits API
+this project's own fix just moved to — GitHub's own maintainers already had to solve the
+exact lag problem found here. Several other already-connected tools also have official,
+remote MCP servers (Linear, Notion, Atlassian/Jira/Confluence, HubSpot, Salesforce, Asana,
+Airtable, Monday, Trello, Dropbox, Slack) — real future candidates, not touched this pass.
+A third-party MCP *aggregator* platform (Composio and similar) was considered and rejected
+for the same reason this project's own "Nango, considered and rejected" note already gave:
+it would route real, sensitive credentials through an additional third party, against this
+project's own read-only/data-boundary framing.
+
+The non-negotiable boundary: MCP replaces only the "how do I call this vendor's API"
+plumbing inside a connector's own client module — never a new place decisions get made.
+The router (`selectRelevantSurfaces`) still decides which *surfaces* are relevant and for
+how long, never raw MCP tool names, never handed to a model for open-ended tool selection
+— a model never sees GitHub's own 80-tool catalog. `github.ts`'s own code calls exactly one
+hand-picked, hardcoded, read-only tool name (`list_commits`) — never a write tool (GitHub's
+server also exposes `create_issue`, `merge_pull_request`, and dozens more, none ever
+called from anywhere in this codebase) — enforced by what code exists, never by trusting
+the server to self-restrict. New shared module `mcpClient.ts` (`withMcpSession`,
+session-scoped per call rather than reconnecting per tool call, and deliberately not
+exposing `listTools()` or any dynamic discovery surface to callers, for the same reason)
+is the reusable foundation any future MCP-backed connector builds on next, the same way
+`genericConnection.ts` is already reused by every PAT-based one. Its pure `isError`/
+content-array translation (`parseCallToolResult`) is unit-tested directly — the piece
+genuinely new to this codebase, since every other connector here parses a plain
+`res.json()` body, not an MCP result envelope.
+
+Deliberately **not** migrated: repo discovery (`GET /user/repos?sort=pushed`, a direct,
+real-time listing, never part of the lag bug) and PR/review search (`/search/issues`,
+already confirmed to include private repos correctly, unlike commit search's own gap) —
+both stay on the REST calls that already work. GitHub's MCP server also exposes
+`search_commits` — deliberately not used, since it's backed by the exact same lagging
+search index as `/search/commits` and would just reintroduce the bug through a different
+transport. `github.ts` is therefore a genuine MCP+REST hybrid, not "fully MCP": MCP only
+where it demonstrably fixes a real, already-found bug, not because using MCP was itself
+the goal. Before writing any mapping code, `list_commits`'s real input/output schema was
+pulled directly from GitHub's own open-source server implementation
+(`github/github-mcp-server`'s `minimal_types.go`, fetched via `gh api search/code` once
+generic doc-summary fetches gave conflicting answers) rather than assumed — it turned out
+to mirror the REST Commits API's own nested `commit.message`/`commit.author.date` shape
+exactly, so the existing mapping logic needed no changes at all, just a new transport
+underneath it. New test coverage (`github.test.ts`, `mcpClient.test.ts` — 16 tests, none
+existed for this connector before, despite three live-only-found bugs) covers the pure
+mapping/translation logic against those real, confirmed fixture shapes.
+
+One real, honest cost: `@modelcontextprotocol/sdk` v1 (the stable line — the newer split
+`@modelcontextprotocol/client` package is still alpha, `2.0.0-alpha.2`, deliberately not
+used yet) pulls in a heavier transitive dependency tree than this project's other
+integrations — Express, Hono, cors, rate-limiting middleware, none of it exercised by a
+client-only usage, since the same package still bundles both SDK halves in the v1 line.
+No way around it for now short of hand-rolling the MCP wire protocol, which would be worse.
+Live-verified the same way every other UNVERIFIED-with-a-real-account connector in this
+project is: a deliberately invalid PAT run through the real, rewritten `getRecentGithubActivity`
+reaches `api.githubcopilot.com/mcp/` for real and gets back a genuine
+`"unauthorized: AuthenticateToken authentication failed"` from GitHub's own live MCP
+infrastructure — not a network/TLS/malformed-request failure, real proof the transport and
+auth wiring are correct. A full round trip with a real PAT (confirming a real, current
+commit lands in both the org path's claim and the personal path's `ask-personal` answer,
+the concrete regression test for the bug that started this whole thread) remains
+unverified for the same honest reason every other new connector in this project does;
+update this note once one happens. If this pilot holds up under real use, the same
+`withMcpSession` pattern is the template for the tools listed above next — not attempted
+in this same pass, on purpose.
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
