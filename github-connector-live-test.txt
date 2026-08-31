@@ -1,0 +1,2 @@
+2026-08-31T20:03:09Z
+Test marker commit to verify the GitHub MCP-backed commit read end-to-end.
