@@ -515,7 +515,15 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
               </div>
 
               {justCreated && (() => {
-                const url = `${window.location.protocol}//${window.location.hostname}:3001/api/ingest/${justCreated.source}`;
+                // Local dev runs the API on a separate port (:3001) from Vite's dev
+                // server (:5173) — the hook's curl runs as a real external process, not a
+                // browser request, so it can't ride Vite's /api proxy and needs that port
+                // explicit. In production this app is one deployed service on one origin
+                // (no separate API port to reach), so appending :3001 there produces a URL
+                // nothing listens on — found live, the first time anyone actually pasted a
+                // generated snippet into a real hook config outside local dev.
+                const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+                const url = `${window.location.protocol}//${window.location.hostname}${isLocalDev ? ':3001' : ''}/api/ingest/${justCreated.source}`;
                 const { file, snippet } = ingestSnippet(justCreated.source, url, justCreated.token);
                 return (
                   <div className="coverage-note" style={{ marginTop: 14 }}>
