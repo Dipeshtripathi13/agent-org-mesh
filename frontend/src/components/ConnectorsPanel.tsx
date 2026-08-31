@@ -133,9 +133,16 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerKey]);
 
-  const hasActiveToken = tokens.some((t) => !t.revoked);
-  const connected = catalog.filter((c) => (c.authType === 'ingest-token' ? hasActiveToken : statuses[c.key]?.connected));
-  const notConnected = catalog.filter((c) => !(c.authType === 'ingest-token' ? hasActiveToken : statuses[c.key]?.connected));
+  // Found live, reported directly: since one ingest token authenticates a push to any of
+  // the three ingest-token tools (claude-code/codex/gemini-cli — see the comment on
+  // `tokens` above), treating "has ≥1 active token" as this list's own connected signal
+  // meant generating a Claude Code token made Codex CLI and Gemini CLI both show as
+  // connected too, even though neither had ever actually received a pushed event. Now
+  // reads `statuses[c.key]` uniformly for every catalog entry — the backend's own
+  // real, per-source signal (person.surfaces[key], only ever 'connected' once that exact
+  // source has a real event), the same one every other connector here already used.
+  const connected = catalog.filter((c) => statuses[c.key]?.connected);
+  const notConnected = catalog.filter((c) => !statuses[c.key]?.connected);
   const byCategory = new Map<string, ConnectorDef[]>();
   for (const c of notConnected) {
     const list = byCategory.get(c.category) ?? [];

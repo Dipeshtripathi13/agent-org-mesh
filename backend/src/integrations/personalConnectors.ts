@@ -160,18 +160,18 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
   },
 };
 
-/** A narrower, panel-scoped override for the three ingest-token tools' "connected" status
- *  in the unified ConnectorsPanel dropdown — "has ≥1 active token to manage," a genuinely
- *  different question from `ACCOUNT_STATUS_HANDLERS`'s richer ask-personal-relevance gate
- *  above (which must never be replaced by this, or the local-transcript-scan-hang bug
- *  CLAUDE.md documents comes back). `GET /api/accounts/me/connectors` checks this map
- *  first for these three keys, falling back to `ACCOUNT_STATUS_HANDLERS` for everything
- *  else — the two maps intentionally disagree for these keys, on purpose. */
-export const ACCOUNT_INGEST_TOKEN_STATUS: Partial<Record<SurfaceKey, AccountStatusHandler>> = {
-  'claude-code': async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
-  codex: async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
-  'gemini-cli': async (id) => ({ connected: (await listAccountTokens(id)).some((t) => !t.revoked), label: null }),
-};
+// A separate `ACCOUNT_INGEST_TOKEN_STATUS` map used to override these three keys' status
+// in the ConnectorsPanel dropdown with "has ≥1 active token to manage" instead of this
+// map's own real per-source signal — found live, reported directly: generating one
+// Claude Code token made Codex CLI and Gemini CLI both show as "connected" in the panel,
+// since a token isn't scoped to one source. Removed; the panel now reads
+// ACCOUNT_STATUS_HANDLERS directly for every key, same as every other connector. This
+// doesn't reintroduce the local-transcript-scan-hang bug the removed map's comment
+// warned about — that bug was ask-personal's digest bridge treating Claude Code as
+// unconditionally connected before it had any real gate at all; this map's own
+// claude-code/codex/gemini-cli entries above already are that real, cheap gate (a DB
+// check, never a filesystem scan), so reusing them for the panel's display is exactly the
+// same signal, not a step back toward the old bug.
 
 /** The 10 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
  *  version of resourceProviders.ts's PROVIDERS array. `ask-personal` in server.ts narrows

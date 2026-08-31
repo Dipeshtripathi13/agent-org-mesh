@@ -60,7 +60,7 @@ import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './in
 import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
 import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
 import { saveDatabricksConnection, getDatabricksStatus, disconnectDatabricks } from './integrations/databricks.js';
-import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_INGEST_TOKEN_STATUS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
+import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -1611,6 +1611,15 @@ const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Prom
   databricks: disconnectDatabricks,
 };
 
+// Real per-source signal for the three ingest-token tools — person.surfaces[key] only
+// ever flips to 'connected' once a real event for that exact source has landed
+// (POST /api/ingest/:source), never merely because a token exists. Shared by claude-code/
+// codex/gemini-cli below since they're otherwise identical one-line handlers.
+const ingestSourceStatus = async (id: number, key: SurfaceKey): Promise<{ connected: boolean; label: string | null }> => {
+  const person = await repo.getPerson(id);
+  return { connected: person.surfaces[key] === 'connected', label: null };
+};
+
 const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
   github: async (id) => { const s = await getGithubStatus(id); return { connected: s.connected, label: s.login }; },
   jira: async (id) => { const s = await getJiraStatus(id); return { connected: s.connected, label: s.email }; },
@@ -1630,13 +1639,19 @@ const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
   dbt: getDbtStatus,
   snowflake: getSnowflakeStatus,
   databricks: getDatabricksStatus,
-  // "Has ≥1 active ingest token" — a narrower, panel-scoped question than whether
-  // ask-personal's digest bridge should bother scanning for activity (that's the
-  // deliberately different, richer gate ACCOUNT_STATUS_HANDLERS['claude-code'] already
-  // encodes in personalConnectors.ts — never touch that one for this UI-only purpose).
-  'claude-code': async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
-  codex: async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
-  'gemini-cli': async (id) => ({ connected: (await listTokens(id)).some((t) => !t.revoked), label: null }),
+  // Found live, reported directly: generating a Claude Code token made Codex CLI and
+  // Gemini CLI both show as "connected" too — this used to read "has ≥1 active ingest
+  // token" (true the moment any one of the three tools has a token, since one token
+  // authenticates a push to any of them), not "is this specific tool actually connected."
+  // Now reads the same real, per-source signal every other connector's status already
+  // uses: person.surfaces[key], which POST /api/ingest/:source only ever flips to
+  // 'connected' once a real event for that exact source has landed — never on token
+  // generation alone. The "N active token(s)" count in the panel still comes straight
+  // from the token list, unaffected by this — a token remains manageable (Manage button,
+  // opened via the same detail panel) whether or not it's ever actually been used yet.
+  'claude-code': (id) => ingestSourceStatus(id, 'claude-code'),
+  codex: (id) => ingestSourceStatus(id, 'codex'),
+  'gemini-cli': (id) => ingestSourceStatus(id, 'gemini-cli'),
 };
 
 /** No auth needed — same posture as GET /api/runtimes: this is catalog metadata, not
@@ -1746,11 +1761,7 @@ app.get('/api/accounts/me/connectors', async (req, reply) => {
       statuses[def.key] = { connected: false, label: null };
       continue;
     }
-    // The three ingest-token tools use a narrower, panel-only status here (has a token to
-    // manage) — a deliberately different question from ACCOUNT_STATUS_HANDLERS's own
-    // richer ask-personal-relevance gate for these same keys, see
-    // ACCOUNT_INGEST_TOKEN_STATUS's own comment for why they must stay two maps.
-    const handler = ACCOUNT_INGEST_TOKEN_STATUS[def.key] ?? ACCOUNT_STATUS_HANDLERS[def.key];
+    const handler = ACCOUNT_STATUS_HANDLERS[def.key];
     statuses[def.key] = handler ? await handler(accountId) : { connected: false, label: null };
   }
   return { statuses };
