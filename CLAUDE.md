@@ -768,6 +768,30 @@ identically to "never happened," now distinguished and given the same honest-emp
 treatment) was traced directly against `formatGithubDigest`'s real `null`-on-empty
 contract; a full live retest needs the reporting user's own real account.
 
+**GitHub reads commits now, not just pull requests and reviews** — closing a gap that
+predates this session: `surfaces_catalog`'s own `github` entry has promised "Pull requests,
+reviews and commit metadata" since this connector's first version, but `github.ts` never
+actually fetched commits — `github.ts`'s own module comment even flagged it as a planned
+"v2 addition" that was never built. Found live, reported directly, right after the honesty
+fix above (the same real account had genuine commits with zero PR/review activity — the
+digest was accurately empty *and* the connector still wasn't reading everything it claimed
+to). `getRecentGithubActivity` now also queries GitHub's Search Commits API
+(`GET /search/commits`, `author:<login> author-date:>=<date>`) alongside the existing PR
+searches — a genuinely different item shape (`commit.message`/`commit.author.date`, not
+`title`/`updated_at`; `repository.full_name`, not a URL to slice) but the same
+`application/vnd.github+json` Accept header every other call here already sends, no preview
+header needed. Commit messages are trimmed to their first line, same as a PR title — never
+the full body, and never a diff or file contents either way, unchanged from this
+connector's original scope promise. `deterministicGithubClaimText` and the org-mode claim's
+`evidence.kind`/`note` (realClaims.ts) updated to count and describe commits too, not just
+PRs/reviews — they'd gone stale in the exact same "promised more than delivered" way.
+Live-verified against GitHub's real API: the exact commit-search request shape reaches
+`api.github.com` and gets a genuine `401 Bad credentials` on a deliberately invalid token
+(not a malformed-request error), and every field the parser reads
+(`commit.message`/`commit.author.date`/`repository.full_name`/`html_url`) was confirmed
+against a real, live public response (`torvalds/linux`) — the strongest verification this
+connector has had without the reporting user's own token.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/

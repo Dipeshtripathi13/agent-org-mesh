@@ -1,12 +1,18 @@
 /** Real GitHub reads — a personal access token the person pastes in themselves (no OAuth
- *  app to register, unlike Gmail). Read-only: pull requests authored and reviews given,
- *  since a given date. Never file contents — matches the surface's own promised contract
- *  in surfaces_catalog ("Pull requests, reviews and commit metadata" / "File contents are
- *  never stored"). Commit metadata is a natural v2 addition (the search/commits endpoint
- *  needs a different Accept header and its own pagination); PRs + reviews is what v1 reads. */
+ *  app to register, unlike Gmail). Read-only: pull requests authored, reviews given, and
+ *  commits authored, since a given date. Never file contents — matches the surface's own
+ *  promised contract in surfaces_catalog ("Pull requests, reviews and commit metadata" /
+ *  "File contents are never stored"). Commit metadata was that contract's own long-standing
+ *  gap: promised since this connector's first version, never actually fetched, until found
+ *  live — a personal ask answered "I don't have access" for a real, connected GitHub
+ *  because there was nothing to report from PRs/reviews alone, even though real commits had
+ *  happened. `search/commits` needs its own query (`author-date`, not `updated`) and its
+ *  own item shape (`commit.message`/`commit.author.date`, not `title`/`updated_at`), but no
+ *  special Accept header — the same `application/vnd.github+json` every other call here
+ *  already sends. */
 
 export interface GithubActivityItem {
-  kind: 'authored' | 'reviewed';
+  kind: 'authored' | 'reviewed' | 'committed';
   title: string;
   repo: string;
   url: string;
@@ -35,27 +41,53 @@ async function searchIssues(token: string, query: string): Promise<any[]> {
   return data.items ?? [];
 }
 
+async function searchCommits(token: string, query: string): Promise<any[]> {
+  const res = await fetch(
+    `https://api.github.com/search/commits?q=${encodeURIComponent(query)}&sort=author-date&order=desc&per_page=25`,
+    { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' } },
+  );
+  if (!res.ok) throw new Error(`GitHub commit search failed: ${res.status} ${await res.text()}`);
+  const data = (await res.json()) as { items?: any[] };
+  return data.items ?? [];
+}
+
 export async function getRecentGithubActivity(token: string, login: string, since: Date): Promise<GithubActivityItem[]> {
   const dateStr = since.toISOString().slice(0, 10);
-  const [authored, reviewed] = await Promise.all([
+  const [authored, reviewed, committed] = await Promise.all([
     searchIssues(token, `type:pr author:${login} updated:>=${dateStr}`),
     searchIssues(token, `type:pr reviewed-by:${login} -author:${login} updated:>=${dateStr}`),
+    searchCommits(token, `author:${login} author-date:>=${dateStr}`),
   ]);
 
-  const toItem = (kind: GithubActivityItem['kind']) => (i: any): GithubActivityItem => ({
+  const toPrItem = (kind: 'authored' | 'reviewed') => (i: any): GithubActivityItem => ({
     kind,
     title: i.title,
     repo: String(i.repository_url ?? '').split('/').slice(-2).join('/'),
     url: i.html_url,
     updatedAt: i.updated_at,
   });
+  // Commit search's item shape is genuinely different from issue search's — no top-level
+  // `title`/`updated_at`, and the repo comes as a full object rather than a URL to slice.
+  // Message is trimmed to its first line/120 chars, matching how a PR title reads — never
+  // the full commit body, and never a diff or file contents either way.
+  const toCommitItem = (c: any): GithubActivityItem => ({
+    kind: 'committed',
+    title: String(c.commit?.message ?? '').split('\n')[0].slice(0, 120),
+    repo: c.repository?.full_name ?? '',
+    url: c.html_url,
+    updatedAt: c.commit?.author?.date ?? '',
+  });
 
-  return [...authored.map(toItem('authored')), ...reviewed.map(toItem('reviewed'))];
+  return [...authored.map(toPrItem('authored')), ...reviewed.map(toPrItem('reviewed')), ...committed.map(toCommitItem)];
 }
+
+const KIND_LABEL: Record<GithubActivityItem['kind'], string> = {
+  authored: 'Opened/updated PR', reviewed: 'Reviewed PR', committed: 'Committed to',
+};
 
 export function formatGithubDigest(items: GithubActivityItem[]): string | null {
   if (items.length === 0) return null;
   return items
-    .map((i) => `- ${i.kind === 'authored' ? 'Opened/updated' : 'Reviewed'} PR in ${i.repo}: "${i.title}"`)
+    .map((i) => `- ${KIND_LABEL[i.kind]} ${i.kind === 'committed' ? i.repo : `in ${i.repo}`}: "${i.title}"`)
     .join('\n');
 }

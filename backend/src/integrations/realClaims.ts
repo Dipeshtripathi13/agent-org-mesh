@@ -98,9 +98,11 @@ export async function ingestClaudeCodeClaim(orgId: number, personId: number, sin
 function deterministicGithubClaimText(items: GithubActivityItem[]): string {
   const authored = items.filter((i) => i.kind === 'authored').length;
   const reviewed = items.filter((i) => i.kind === 'reviewed').length;
+  const committed = items.filter((i) => i.kind === 'committed').length;
   const parts = [
     authored ? `${authored} pull request${authored === 1 ? '' : 's'} opened or updated` : null,
     reviewed ? `${reviewed} review${reviewed === 1 ? '' : 's'} given` : null,
+    committed ? `${committed} commit${committed === 1 ? '' : 's'} pushed` : null,
   ].filter((p): p is string => p != null);
   const last = items[0];
   return `GitHub activity: ${parts.join(', ')}${last ? ` — most recently: "${last.title}" in ${last.repo}.` : '.'}`;
@@ -125,12 +127,12 @@ export async function ingestGithubClaim(orgId: number, personId: number, since: 
   const id = `auto-github-${personId}-${today}`;
   const evidence: Evidence = {
     id,
-    kind: 'pull request activity',
+    kind: 'pull request and commit activity',
     title: `GitHub activity — since ${windowLabel}`,
     connector: 'github',
     recordedAt: new Date().toISOString(),
     excerpt: digest.slice(0, 240),
-    note: 'Auto-ingested via a personal access token connected by this person. Reads pull requests and reviews only — never file contents.',
+    note: 'Auto-ingested via a personal access token connected by this person. Reads pull requests, reviews, and commits — never file contents.',
     externalRef: 'github-rest-api',
   };
   await repo.upsertEvidence(orgId, evidence);
