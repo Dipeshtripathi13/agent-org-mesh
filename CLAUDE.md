@@ -348,19 +348,19 @@ own real, one-person org immediately, no separate org-creation step.
   Airtable, Monday, Trello, Dropbox, Slack), one at a time, the same read-only-allowlist
   discipline this pilot established.
 
-- **Verify Notion's, GitLab's, and Linear's MCP-backed reads against real accounts —
-  Linear first.** Same shape of gap as the GitHub pilot, but the three carry genuinely
-  different amounts of real evidence behind them (see the CLAUDE.md paragraph on this
-  batch for why): Notion's is the strongest (its server is open-source and confirmed to be
-  a thin passthrough of Notion's own REST API — the existing parsing logic needed no
-  changes at all), GitLab's rests on real documented tool/parameter names but an
-  unconfirmed exact response shape, and Linear's rests on third-party documentation of
+- **Verify GitLab's and Linear's MCP-backed reads against real accounts — Linear first.**
+  Notion is no longer part of this note: a real test already happened (see the CLAUDE.md
+  paragraph on this batch), and it came back negative — `notion.ts` is back on plain REST,
+  not pending further verification. GitLab and Linear carry genuinely different amounts of
+  real evidence behind them: GitLab rests on real documented tool/parameter names but an
+  unconfirmed exact response shape; Linear rests on third-party documentation of
   *unofficial* community servers, not a source confirmed to describe Linear's own official
-  one. All three: a deliberately invalid credential reaches the real hosted endpoint and
-  fails clean, but no real round trip has happened. Verify Linear first when a real account
-  becomes available, precisely because it has the least real evidence supporting it;
-  update `linear.ts`/`gitlab.ts`/`notion.ts`'s own module comments and this note once each
-  is confirmed.
+  one. Both: a deliberately invalid credential reaches the real hosted endpoint and fails
+  clean, but no real round trip has happened. Verify Linear first when a real account
+  becomes available, precisely because it has the least real evidence supporting it, and
+  treat a negative result (like Notion's) as a legitimate, expected possible outcome, not
+  a bug to keep chasing — update `linear.ts`/`gitlab.ts`'s own module comments and this
+  note once each is confirmed either way.
 
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
@@ -981,17 +981,27 @@ changes, worse than owning the code directly), so each tool got checked individu
 before being touched, not assumed. Real findings, ranked by how verifiable each one turned
 out to be:
 
-- **Notion** — the strongest case of the three, stronger than expected. Notion's official
-  MCP server is open-source (`github.com/makenotion/notion-mcp-server`) and, read
-  directly, turned out to be an auto-generated thin passthrough of Notion's own REST API —
-  the search tool's name (`post-search`) comes straight from the OpenAPI `operationId` in
-  `scripts/notion-openapi.json`, and its request schema matched this file's own existing
-  request body field-for-field. `getRecentNotionActivity`'s parsing logic needed zero
-  changes, same pleasant surprise as `github.ts`'s commit mapping. One more thing
-  genuinely confirmed live, not assumed: whether the hosted endpoint even accepts this
-  connector's existing credential (Notion's own "internal integration secret," not a
-  personal OAuth login) — it does; a deliberately invalid secret produced Notion's own
-  real REST API error shape through the MCP endpoint, proving a genuine passthrough.
+- **Notion** — had the strongest case of the three on paper (open-source server, confirmed
+  thin passthrough of Notion's own REST API, `post-search`'s name and request schema
+  verified directly against real source, not guessed), and was the first of this whole
+  MCP effort to get a real, live test against a genuinely connected account — which is
+  exactly what caught a real problem the paper case couldn't: `notion.ts` has since been
+  **reverted back to plain REST**, not left on MCP. A real, fully-configured integration
+  (page shared, every relevant capability enabled) still got a genuine
+  `403 {"code":"restricted_resource","message":"Endpoint unavailable."}` from Notion's own
+  MCP server specifically — not a code bug, not a missed setup step, most likely Notion AI
+  access gating the `search` capability over MCP beyond what a plain internal-integration
+  secret's normal capabilities grant. See `notion.ts`'s own module comment for the full
+  story. Confirming this exact error was itself only possible after finding and fixing a
+  real, unrelated production gap: this deployment's Fastify logger was configured
+  `logger: false`, which silently swallowed every `app.log.error(...)` call in the whole
+  codebase, not just this one — `railway logs` had never shown a single request-level log
+  line, for any endpoint, until that was fixed to `logger: { level: 'warn' }`. A second,
+  smaller fix landed alongside it: `ask-personal`'s digest bridge used to silently drop a
+  connector that *errors* (as opposed to one that succeeds but finds nothing), reproducing
+  the exact same "zero signal → false denial" bug the empty-digest fix had already closed
+  for a different trigger — a rejected `fetchDigest` now gets the same honest, specific
+  section the empty case does, never the raw error text itself.
 - **GitLab** — real, sourced findings, not full certainty. GitLab's own docs
   (`docs.gitlab.com/user/model_context_protocol/mcp_server_tools/`) name the exact tool
   (`list_merge_requests`) and confirm its real filter parameters, but describe the

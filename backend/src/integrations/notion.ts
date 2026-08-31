@@ -4,42 +4,35 @@
  *  access is per-page, by design). Read-only: pages the integration can see, last edited
  *  since a given date.
  *
- *  The activity read (`getRecentNotionActivity`) goes through Notion's own official,
- *  open-source MCP server (`github.com/makenotion/notion-mcp-server`, hosted remotely at
- *  `https://mcp.notion.com/mcp`) instead of a direct REST call — part of the same MCP
- *  pilot batch as github.ts/gitlab.ts/linear.ts, following github.ts's own established
- *  discipline of verifying the real schema before writing mapping code rather than
- *  guessing. Confirmed directly against the server's real source, not assumed: its `search`
- *  tool (`post-search`, name taken from the OpenAPI `operationId` the server is generated
- *  from — `scripts/notion-openapi.json`) is a thin, auto-generated passthrough of Notion's
- *  own `POST /v1/search` — same request shape (`query`/`sort`/`filter`), same response
- *  shape, confirmed by the README's own description of how it plans tool calls
- *  ("v1/search and v1/comments") and by the OpenAPI spec's request schema matching this
- *  file's existing request body field-for-field. Also live-confirmed the hosted endpoint
- *  genuinely accepts this same stored integration secret as a plain bearer token (not
- *  OAuth-only, unlike the interactive-client default): a deliberately invalid token
- *  produced Notion's own real REST API error shape
- *  (`{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid."}`),
- *  proving the request reached Notion's real auth layer through the MCP endpoint. Because
- *  the tool is a thin passthrough, the existing response-parsing logic below
- *  (`pageTitle`, `results[].url`/`last_edited_time`) needed no changes at all — same as
- *  github.ts's own commit mapping.
- *
- *  `fetchNotionIdentity`/connection storage stay on plain REST, deliberately not migrated
- *  — same reasoning as github.ts's `fetchGithubLogin`: not part of what this migration
- *  fixes, and keeping it means "connect a token" still works even if the MCP path has a
- *  bad day. UNVERIFIED against a real workspace either way — this file has never been
- *  tested against a real Notion account, MCP or REST. */
+ *  `getRecentNotionActivity` briefly went through Notion's own official MCP server
+ *  (`mcp.notion.com/mcp`) as part of the same MCP pilot batch as github.ts/gitlab.ts/
+ *  linear.ts — real, sourced reasoning for trying it (the server is open-source and
+ *  confirmed to be a thin, auto-generated passthrough of Notion's own `POST /v1/search`,
+ *  and the hosted endpoint genuinely accepts this stored integration secret as a plain
+ *  bearer token) — but reverted back to plain REST after a real, live test: a genuinely
+ *  connected integration, with real page access and every relevant capability enabled,
+ *  still got `403 {"code":"restricted_resource","message":"Endpoint unavailable."}` from
+ *  Notion's own MCP server specifically, confirmed live via the exact production error
+ *  (railway logs, once `server.ts`'s own logging gap was fixed to actually see it). Not a
+ *  code bug, not a missing setup step, not a schema mismatch — the connect-time REST call
+ *  (`fetchNotionIdentity`) and page sharing both worked correctly with the same token; the
+ *  MCP server's own `search` capability specifically appears to be gated behind something
+ *  (most likely Notion AI access on the workspace) beyond what a plain internal-
+ *  integration secret's normal capabilities grant, and there's no integration-level
+ *  setting that unlocks it. Matches this whole pilot's own stated principle — MCP only
+ *  where it demonstrably helps, never because using MCP was the goal in itself — Notion's
+ *  original REST implementation never had a known bug the way github.ts's commit read
+ *  did, and this real test is direct evidence MCP is actively *worse* for it here. UNVERIFIED
+ *  beyond that one real, if negative, result — no further real workspace testing has
+ *  happened since reverting. */
 import {
   saveGenericConnection, getGenericConnection, getGenericConnectionStatus, disconnectGeneric,
   saveGenericAccountConnection, getGenericAccountConnection, getGenericAccountConnectionStatus, disconnectGenericAccount,
 } from './genericConnection.js';
-import { withMcpSession } from './mcpClient.js';
 
 const PROVIDER = 'notion';
 const API_URL = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
-const NOTION_MCP_URL = 'https://mcp.notion.com/mcp';
 
 export interface NotionActivityItem {
   title: string;
@@ -73,12 +66,18 @@ function pageTitle(page: any): string {
 }
 
 export async function getRecentNotionActivity(token: string, since: Date): Promise<NotionActivityItem[]> {
-  const data = await withMcpSession(NOTION_MCP_URL, token, (callTool) => callTool('post-search', {
-    filter: { property: 'object', value: 'page' },
-    sort: { direction: 'descending', timestamp: 'last_edited_time' },
-    page_size: 25,
-  })) as { results?: any[] } | null;
-  return (data?.results ?? [])
+  const res = await fetch(`${API_URL}/search`, {
+    method: 'POST',
+    headers: headers(token),
+    body: JSON.stringify({
+      filter: { property: 'object', value: 'page' },
+      sort: { direction: 'descending', timestamp: 'last_edited_time' },
+      page_size: 25,
+    }),
+  });
+  if (!res.ok) throw new Error(`Notion search failed: ${res.status} ${await res.text()}`);
+  const data = (await res.json()) as { results?: any[] };
+  return (data.results ?? [])
     .filter((p) => new Date(p.last_edited_time) >= since)
     .map((p) => ({ title: pageTitle(p), url: p.url, lastEditedAt: p.last_edited_time }));
 }
