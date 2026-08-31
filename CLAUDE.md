@@ -323,6 +323,19 @@ own real, one-person org immediately, no separate org-creation step.
   agent" — see the org-level main agent paragraph above), then update this note and
   `docs/agent-to-agent-communication.md` §15a.
 
+- **Verify the Databricks provider against a real workspace.** Same shape of gap as Jira/
+  Airflow/dbt/Snowflake, same honesty about it. `databricks.ts` follows Databricks'
+  documented OAuth M2M (service-principal client-credentials) flow and Jobs API 2.2 exactly,
+  and was verified two ways without a real workspace: a deliberately invalid workspace
+  subdomain fails clean (DNS rejection, caught, no 500), and the same request shape sent
+  straight to Databricks' own real, live OAuth endpoint got back a genuine rejection from
+  Databricks' own infrastructure — confirming the request format itself is correct, not just
+  that malformed input fails safely. What hasn't happened: a real service principal
+  connecting for real, and a real job-run digest landing in a synthesized answer. Once
+  there's a real workspace: create a service principal, grant it `CAN VIEW` on a job, connect
+  it for real, confirm a claim actually lands, then update this note and `databricks.ts`'s
+  own module comment to drop the UNVERIFIED language.
+
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
 one OAuth provider and one PAT provider, for one developer, running locally. The cloud
@@ -688,6 +701,48 @@ dead surface. Live-verified against the running dev API rather than assumed from
 the code: registered a real sub-agent through the exact endpoint the merged dropdown calls,
 confirmed it appears in the registered list, queried it, and disconnected it — all through
 the same person-keyed runtime endpoints now driving `ConnectorsPanel`'s UI.
+
+**Databricks joins the data-engineering catalog as a fourth Tier A status connector,
+researched fresh rather than assumed from the Airflow/dbt/Snowflake shape.** Requested
+directly, for both personal and organizational use. Its auth is genuinely different from
+the other three: Databricks' own current documentation (docs.databricks.com's OAuth M2M
+guide) recommends a service principal with OAuth client-credentials over a personal access
+token specifically for automated access — a PAT is tied to a human account, inherits that
+human's full permissions, and stops working the moment they leave; a service principal is
+an application-only identity that can be granted `CAN VIEW` on just the jobs it needs to
+read, matching the least-privilege posture this project already picked for Airflow
+(dedicated Viewer user), dbt (Service Account Token), and Snowflake (RSA key pair) each on
+that vendor's own terms rather than one uniform pattern. `databricks.ts` stores the service
+principal's `client_id`/`client_secret` (never a long-lived access token) and exchanges
+them for a fresh, one-hour bearer token at call time via the workspace's own `/oidc/v1/token`
+endpoint — the same "compute fresh per call, never cache" shape `snowflake.ts`'s own JWT
+signing already established here, just an HTTP token exchange instead of local signing.
+Reads are the same Tier A boundary as the other three: `GET /api/2.2/jobs/runs/list`
+(`job_id` deliberately omitted — Databricks' own documented behavior is to list runs across
+every job in the workspace when it's left out, the same one-call "activity across the whole
+instance" shape Airflow's `dag_id=~` wildcard already gives here) — did a job run, did it
+succeed, never a query an agent constructs or a read against real notebook/table contents.
+Reuses `pipelineDigest.ts` unchanged (a fourth "did it run, did it pass" formatter would
+have been the near-duplicate the memo's Phase 3 already built this to avoid), and the
+existing `pat-with-site` form-rendering path (`ConnectorField`'s generic 3-field form
+already handles "site URL + two more fields" regardless of what those fields mean
+underneath — no frontend code changed at all). `client_id` is packed alongside
+`workspaceUrl` into the one `site_url` storage slot genericConnection.ts provides, the same
+technique `snowflake.ts` uses to fit account+username+warehouse into that same slot.
+Live-verified two ways rather than one, both without a real workspace: a deliberately
+invalid workspace subdomain fails clean through the connect endpoint (DNS-level rejection,
+caught, no 500) for both the person- and account-keyed paths; separately, the exact same
+request shape (Basic auth of `client_id:client_secret`, `grant_type=client_credentials&scope=all-apis`)
+was sent straight to Databricks' own real, live OAuth endpoint
+(`accounts.cloud.databricks.com/oidc/v1/token`) with fake credentials, got back a genuine
+`invalid_request` rejection from Databricks' own infrastructure, and that identical request
+run back through `databricks.ts`'s own connect endpoint surfaced the same clean rejection —
+stronger proof than the DNS-failure case alone, since it confirms the request format itself
+is correct against Databricks' real API, not just that malformed input fails safely. A real
+successful connect-then-ask round trip remains unverified for the same honest reason every
+other new connector in this project does; update this note once a real Databricks workspace
+is available. No schema migration needed — `provider` on `person_oauth_tokens`/
+`account_oauth_tokens` is untyped `text`, and `surfaces_catalog` is seed-data, not schema.
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for

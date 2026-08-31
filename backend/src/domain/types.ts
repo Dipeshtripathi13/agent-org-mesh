@@ -50,7 +50,7 @@ export type SurfaceKey =
   // Data-engineering pipeline/job status — real ingestion, same 'live' tier as the row above
   // (docs/data-engineering-connectors research memo's Tier A: status/metadata, never a
   // connector-composed query against real warehouse data):
-  | 'airflow' | 'dbt' | 'snowflake';
+  | 'airflow' | 'dbt' | 'snowflake' | 'databricks';
 
 /**
  * connected  — live and inside the freshness window

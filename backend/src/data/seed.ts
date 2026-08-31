@@ -176,6 +176,13 @@ export const SURFACES: Surface[] = [
     doesNotRead: 'Query results or table contents — never executes a query of its own',
   },
   {
+    key: 'databricks',
+    name: 'Databricks',
+    feedsTier: 'T1',
+    reads: 'Recent job run status across the workspace — did it run, did it succeed',
+    doesNotRead: 'Notebook contents, cluster logs, or table/query results',
+  },
+  {
     key: 'claude-code',
     name: 'Claude Code',
     feedsTier: 'T2',
@@ -284,7 +291,7 @@ export const PEOPLE: Person[] = RAW.map(([id, name, title, managerId, team, code
   // who hasn't connected them, not 'outOfScope' (which means "doesn't apply to this
   // role," untrue here — any of these genuinely could apply, none happen to be wired up
   // for this fictional roster).
-  (['linear', 'notion', 'asana', 'gitlab', 'hubspot', 'zendesk', 'trello', 'airtable', 'monday', 'figma', 'discord', 'microsoft365', 'zoom', 'dropbox', 'airflow', 'dbt', 'snowflake'] as const)
+  (['linear', 'notion', 'asana', 'gitlab', 'hubspot', 'zendesk', 'trello', 'airtable', 'monday', 'figma', 'discord', 'microsoft365', 'zoom', 'dropbox', 'airflow', 'dbt', 'snowflake', 'databricks'] as const)
     .forEach((key) => { surfaces[key] = 'absent'; });
   return { id, name, title, team, managerId, agentDeployed: !NO_AGENT.has(id), surfaces };
 });

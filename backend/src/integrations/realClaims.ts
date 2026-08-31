@@ -18,6 +18,7 @@ import { formatCalendarDigest, getRecentCalendarActivity } from './googleCalenda
 import { getAirflowConnection, formatAirflowDigest, getRecentAirflowActivity } from './airflow.js';
 import { getDbtConnection, formatDbtDigest, getRecentDbtActivity } from './dbtCloud.js';
 import { getSnowflakeConnection, formatSnowflakeDigest, getRecentSnowflakeActivity } from './snowflake.js';
+import { getDatabricksConnection, formatDatabricksDigest, getRecentDatabricksActivity } from './databricks.js';
 
 /**
  * This is the piece that makes the org mesh's manager-facing "Ask" actually real for one
@@ -522,5 +523,23 @@ export async function ingestSnowflakeClaim(orgId: number, personId: number, sinc
     orgId, personId, personName: person.name, surfaceKey: 'snowflake', label: 'Snowflake', kind: 'query activity',
     tier: 'T1', externalRef: 'snowflake-sql-api', digest,
     deterministicText: pipelineDeterministicText('Snowflake', activity),
+  });
+}
+
+/** No-op if this person doesn't have a real, connected Databricks service principal —
+ *  same shape as ingestGithubClaim. UNVERIFIED against a real workspace (see
+ *  databricks.ts's module comment). */
+export async function ingestDatabricksClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.databricks !== 'connected') return;
+  const conn = await getDatabricksConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentDatabricksActivity(conn.workspaceUrl, conn.clientId, conn.clientSecret, since);
+  const digest = formatDatabricksDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'databricks', label: 'Databricks', kind: 'job run activity',
+    tier: 'T1', externalRef: 'databricks-jobs-api', digest,
+    deterministicText: pipelineDeterministicText('Databricks', activity),
   });
 }

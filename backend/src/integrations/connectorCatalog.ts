@@ -174,6 +174,15 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     ],
     helpText: 'Register a public key on this user (ALTER USER ... SET RSA_PUBLIC_KEY=...) and paste the matching private key — Snowflake\'s own recommended auth for service accounts, never a password.',
   },
+  {
+    key: 'databricks', name: 'Databricks', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    fields: [
+      { key: 'workspaceUrl', label: 'Workspace URL', placeholder: 'https://dbc-xxxxxxxx-xxxx.cloud.databricks.com' },
+      { key: 'clientId', label: 'Service principal client ID' },
+      { key: 'clientSecret', label: 'OAuth client secret', secret: true },
+    ],
+    helpText: 'Create a service principal (Workspace admin settings → Identity and access → Service principals), generate an OAuth secret for it, and grant it CAN VIEW on the jobs you want read — Databricks\' own recommended auth for automated access, never a personal access token tied to a human account.',
+  },
 
   // ---- connectable: real connect+validate, ingestion not yet wired ----
   {

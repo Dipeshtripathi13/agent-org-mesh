@@ -59,6 +59,7 @@ import { saveDiscordConnection, getDiscordStatus, disconnectDiscord } from './in
 import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './integrations/airflow.js';
 import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
 import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
+import { saveDatabricksConnection, getDatabricksStatus, disconnectDatabricks } from './integrations/databricks.js';
 import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_INGEST_TOKEN_STATUS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -1576,6 +1577,7 @@ const CONNECT_HANDLERS: Partial<Record<SurfaceKey, ConnectHandler>> = {
   airflow: (id, f) => saveAirflowConnection(id, f.siteUrl, f.username, f.password),
   dbt: (id, f) => saveDbtConnection(id, f.token, f.accountId, f.siteUrl?.trim() || null),
   snowflake: (id, f) => saveSnowflakeConnection(id, f.account, f.username, f.privateKey, f.warehouse?.trim() || null),
+  databricks: (id, f) => saveDatabricksConnection(id, f.workspaceUrl, f.clientId, f.clientSecret),
 };
 
 const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Promise<void>>> = {
@@ -1596,6 +1598,7 @@ const DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (personId: number) => Prom
   airflow: disconnectAirflow,
   dbt: disconnectDbt,
   snowflake: disconnectSnowflake,
+  databricks: disconnectDatabricks,
 };
 
 const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
@@ -1616,6 +1619,7 @@ const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
   airflow: getAirflowStatus,
   dbt: getDbtStatus,
   snowflake: getSnowflakeStatus,
+  databricks: getDatabricksStatus,
   // "Has ≥1 active ingest token" — a narrower, panel-scoped question than whether
   // ask-personal's digest bridge should bother scanning for activity (that's the
   // deliberately different, richer gate ACCOUNT_STATUS_HANDLERS['claude-code'] already

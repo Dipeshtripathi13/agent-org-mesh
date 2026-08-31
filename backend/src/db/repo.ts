@@ -436,7 +436,7 @@ const EMPTY_SURFACES: Record<SurfaceKey, SurfaceState> = {
   linear: 'absent', notion: 'absent', asana: 'absent', gitlab: 'absent', hubspot: 'absent', zendesk: 'absent',
   trello: 'absent', airtable: 'absent', monday: 'absent', figma: 'absent', discord: 'absent',
   microsoft365: 'absent', zoom: 'absent', dropbox: 'absent',
-  airflow: 'absent', dbt: 'absent', snowflake: 'absent',
+  airflow: 'absent', dbt: 'absent', snowflake: 'absent', databricks: 'absent',
   // Out of scope by default — most people don't have a real sub-agent/token registered.
   'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope',
 };

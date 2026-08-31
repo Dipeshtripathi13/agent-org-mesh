@@ -52,6 +52,10 @@ import {
   saveSnowflakeAccountConnection, getSnowflakeAccountStatus, getSnowflakeAccountConnection, disconnectSnowflakeAccount,
   getRecentSnowflakeActivity, formatSnowflakeDigest,
 } from './snowflake.js';
+import {
+  saveDatabricksAccountConnection, getDatabricksAccountStatus, getDatabricksAccountConnection, disconnectDatabricksAccount,
+  getRecentDatabricksActivity, formatDatabricksDigest,
+} from './databricks.js';
 
 /**
  * The personal (no-org) counterpart to server.ts's CONNECT_HANDLERS/DISCONNECT_HANDLERS/
@@ -91,6 +95,7 @@ export const ACCOUNT_CONNECT_HANDLERS: Partial<Record<SurfaceKey, AccountConnect
   airflow: (id, f) => saveAirflowAccountConnection(id, f.siteUrl, f.username, f.password),
   dbt: (id, f) => saveDbtAccountConnection(id, f.token, f.accountId, f.siteUrl?.trim() || null),
   snowflake: (id, f) => saveSnowflakeAccountConnection(id, f.account, f.username, f.privateKey, f.warehouse?.trim() || null),
+  databricks: (id, f) => saveDatabricksAccountConnection(id, f.workspaceUrl, f.clientId, f.clientSecret),
 };
 
 export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId: number) => Promise<void>>> = {
@@ -111,6 +116,7 @@ export const ACCOUNT_DISCONNECT_HANDLERS: Partial<Record<SurfaceKey, (accountId:
   airflow: disconnectAirflowAccount,
   dbt: disconnectDbtAccount,
   snowflake: disconnectSnowflakeAccount,
+  databricks: disconnectDatabricksAccount,
 };
 
 export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHandler>> = {
@@ -129,6 +135,7 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
   airflow: getAirflowAccountStatus,
   dbt: getDbtAccountStatus,
   snowflake: getSnowflakeAccountStatus,
+  databricks: getDatabricksAccountStatus,
   github: async (id) => { const s = await getGithubAccountStatus(id); return { connected: s.connected, label: s.login }; },
   jira: async (id) => { const s = await getJiraAccountStatus(id); return { connected: s.connected, label: s.email }; },
   // codex/gemini-cli have no credential to check and aren't real runtime_catalog entries
@@ -257,6 +264,14 @@ export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
       const conn = await getSnowflakeAccountConnection(id);
       if (!conn) return null;
       return formatSnowflakeDigest(await getRecentSnowflakeActivity(conn.account, conn.username, conn.privateKey, conn.warehouse, since));
+    },
+  },
+  {
+    surfaceKey: 'databricks', label: 'Databricks',
+    fetchDigest: async (id, since) => {
+      const conn = await getDatabricksAccountConnection(id);
+      if (!conn) return null;
+      return formatDatabricksDigest(await getRecentDatabricksActivity(conn.workspaceUrl, conn.clientId, conn.clientSecret, since));
     },
   },
   // GitHub/Jira have their own dedicated connect panel (not the generic catalog), same as

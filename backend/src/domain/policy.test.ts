@@ -138,21 +138,21 @@ describe('coverage', () => {
     // Salesforce out of scope for engineers; Claude Code is genuinely in scope for
     // Diego specifically — he's the one person with a real, registered sub-agent.
     // 6 original in-scope surfaces (github/jira/calendar/slack/confluence/claude-code) +
-    // 14 connectors (linear.ts and friends) + 3 data-engineering connectors (airflow/dbt/
-    // snowflake) which all default to 'absent' — in scope, just nobody in this seeded
-    // demo has connected one — not 'outOfScope', so they count toward the denominator
-    // too. Updated deliberately each time the catalog grows (CLAUDE.md rule 1), not
-    // loosened to paper over the growth: 9 → 23 → 26 surfaces so far.
+    // 14 connectors (linear.ts and friends) + 4 data-engineering connectors (airflow/dbt/
+    // snowflake/databricks) which all default to 'absent' — in scope, just nobody in this
+    // seeded demo has connected one — not 'outOfScope', so they count toward the
+    // denominator too. Updated deliberately each time the catalog grows (CLAUDE.md rule 1),
+    // not loosened to paper over the growth: 9 → 23 → 26 → 27 surfaces so far.
     const diego = byId(11);
     const report = computeCoverage(diego, SURFACES);
-    expect(report.inScopeCount).toBe(23);
+    expect(report.inScopeCount).toBe(24);
   });
 
   it('weights partial and stale at half', () => {
     // Ruben: github connected(1) jira stale(.5) sf out cal partial(.5) slack absent(0) conf absent(0)
-    // + 14 connectors + 3 data-engineering connectors, all 'absent' (0 each) — same
+    // + 14 connectors + 4 data-engineering connectors, all 'absent' (0 each) — same
     // reasoning as the test above.
-    // sum 2.0 / 22 in-scope surfaces * 100 = 9.09...%, rounds to 9.
+    // sum 2.0 / 23 in-scope surfaces * 100 = 8.69...%, rounds to 9.
     const report = computeCoverage(byId(13), SURFACES);
     expect(report.percent).toBe(9);
   });
