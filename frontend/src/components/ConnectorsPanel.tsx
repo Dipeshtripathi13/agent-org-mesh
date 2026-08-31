@@ -183,6 +183,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     setBusy(true);
     try {
       await disconnectReq(key);
+      setOpenKey(null);
       await load();
     } finally {
       setBusy(false);
@@ -270,6 +271,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     setBusy(true);
     try {
       await api.disconnectGmail(owner.personId);
+      setOpenKey(null);
       await load();
     } finally {
       setBusy(false);
@@ -309,11 +311,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                   {c.status === 'live' ? 'reads at ask-time' : 'connected — not yet queried at ask-time'}
                 </span>
                 <span className="spacer" />
-                {c.authType === 'ingest-token' ? (
-                  <button className="chip" disabled={busy} onClick={() => openConnect(c.key)}>Manage</button>
-                ) : (
-                  <button className="chip" disabled={busy} onClick={() => disconnect(c.key)}>Disconnect</button>
-                )}
+                <button className="chip" disabled={busy} onClick={() => openConnect(c.key)}>Manage</button>
               </div>
             ))}
 
@@ -326,7 +324,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                   )}
                   <span style={{ fontSize: 11, color: 'var(--ink3)' }}>feeds your own daily summary only, never the org</span>
                   <span className="spacer" />
-                  <button className="chip" disabled={busy} onClick={disconnectGmailAction}>Disconnect</button>
+                  <button className="chip" disabled={busy} onClick={() => openConnect('gmail')}>Manage</button>
                 </div>
               </div>
             )}
@@ -558,7 +556,20 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
             </div>
           )}
 
-          {openIsGmail && owner.kind === 'person' && (
+          {openIsGmail && owner.kind === 'person' && gmailConnected && (
+            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                Connected as <strong>{gmail?.email}</strong>. Feeds your own daily summary
+                and self-ask only — never the org.
+              </p>
+              <div style={{ display: 'flex', gap: 7 }}>
+                <button className="chip" disabled={busy} onClick={disconnectGmailAction}>Disconnect</button>
+                <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Close</button>
+              </div>
+            </div>
+          )}
+
+          {openIsGmail && owner.kind === 'person' && !gmailConnected && (
             <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
               <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
                 Read-only, today's messages only (subject and snippet, never full bodies).
@@ -612,7 +623,19 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
             </div>
           )}
 
-          {openDef && openDef.authType !== 'oauth-google' && openDef.authType !== 'ingest-token' && (
+          {openDef && openDef.authType !== 'oauth-google' && openDef.authType !== 'ingest-token' && statuses[openDef.key]?.connected && (
+            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                Connected{statuses[openDef.key]?.label ? <> as <strong>{statuses[openDef.key]?.label}</strong></> : ''}. {openDef.helpText}
+              </p>
+              <div style={{ display: 'flex', gap: 7 }}>
+                <button className="chip" disabled={busy} onClick={() => disconnect(openDef.key)}>Disconnect</button>
+                <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Close</button>
+              </div>
+            </div>
+          )}
+
+          {openDef && openDef.authType !== 'oauth-google' && openDef.authType !== 'ingest-token' && !statuses[openDef.key]?.connected && (
             <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
               <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>{openDef.helpText}</p>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
