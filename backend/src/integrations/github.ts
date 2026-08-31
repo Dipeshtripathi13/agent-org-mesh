@@ -6,22 +6,26 @@
  *  gap: promised since this connector's first version, never actually fetched, until found
  *  live — a personal ask answered "I don't have access" for a real, connected GitHub
  *  because there was nothing to report from PRs/reviews alone, even though real commits had
- *  happened. `search/commits` needs its own query (`author-date`, not `updated`) and its
- *  own item shape (`commit.message`/`commit.author.date`, not `title`/`updated_at`), but no
- *  special Accept header — the same `application/vnd.github+json` every other call here
- *  already sends.
+ *  happened.
  *
- *  A real, second bug found immediately after shipping commits: `author:<login>` alone
- *  never searches private repositories on GitHub's commit-search endpoint specifically —
- *  confirmed against GitHub's own docs, and unlike `search/issues` (used for PRs/reviews
- *  above), where `author:` alone does already include private repos once authenticated.
- *  A person asking "what's my latest commit" whose real commits live in private repos (the
- *  common case) got an honest-sounding but wrong "no commit activity" — correctly honest
- *  about what the query found, wrong about what actually happened. Fixed by running a
- *  second query scoped `user:<login>` (repos that account owns, private included once
- *  authenticated as that same account) alongside the original, and merging by commit sha —
- *  the original query still matters on its own, since it also catches commits in repos the
- *  person doesn't own but has pushed to (a public org project, say) that `user:` wouldn't. */
+ *  Commits deliberately do NOT go through `/search/commits`, unlike the first version of
+ *  this fix. Found live, twice, after that version shipped: a real, connected GitHub with
+ *  real recent commits still reported "no commit activity" even after a first bug
+ *  (`author:<login>` alone never searching private repos on that endpoint specifically —
+ *  fixed by adding a `user:<login>`-scoped query) was fixed. The actual root cause is
+ *  bigger than either bug: GitHub's Search API (commits included) is an asynchronous,
+ *  Elasticsearch-backed index, not the live git graph — GitHub's own community threads
+ *  document real indexing lag from minutes up to 48+ hours, sometimes longer, which makes
+ *  it structurally unfit for "what's my *latest* commit," the exact question most likely to
+ *  hit that lag. Fixed by dropping `/search/commits` entirely: `getRecentGithubActivity`
+ *  now lists the account's most-recently-pushed repos via `GET /user/repos?sort=pushed`
+ *  (real-time, authoritative, private repos included once authenticated) and reads each
+ *  one's real commit log via `GET /repos/{owner}/{repo}/commits?author=&since=` — the
+ *  actual git history, not a search index, confirmed live against a real, very recent
+ *  public commit with zero lag. `/search/issues` (PRs/reviews below) doesn't have this
+ *  problem — issues/PRs are lower-volume, centrally-indexed objects, not the same
+ *  asynchronous code/commit index — and its `author:` qualifier was already confirmed to
+ *  include private repos once authenticated, unlike commit search's, so it's unchanged. */
 
 export interface GithubActivityItem {
   kind: 'authored' | 'reviewed' | 'committed';
@@ -53,34 +57,53 @@ async function searchIssues(token: string, query: string): Promise<any[]> {
   return data.items ?? [];
 }
 
-async function searchCommits(token: string, query: string): Promise<any[]> {
+// How many of the account's most-recently-pushed repos to check for real commits — bounds
+// the number of API calls a single ask makes. The account's own *most recently pushed to*
+// repos are, by construction, exactly where a "what's my latest commit" question is most
+// likely to be answered from; a repo that hasn't been pushed to recently is also very
+// unlikely to hold the answer to that question.
+const REPOS_TO_CHECK = 15;
+
+async function listRecentlyPushedRepos(token: string): Promise<{ owner: string; name: string }[]> {
   const res = await fetch(
-    `https://api.github.com/search/commits?q=${encodeURIComponent(query)}&sort=author-date&order=desc&per_page=25`,
+    `https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=${REPOS_TO_CHECK}&affiliation=owner,collaborator,organization_member`,
     { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' } },
   );
-  if (!res.ok) throw new Error(`GitHub commit search failed: ${res.status} ${await res.text()}`);
-  const data = (await res.json()) as { items?: any[] };
-  return data.items ?? [];
+  if (!res.ok) throw new Error(`GitHub repo list failed: ${res.status} ${await res.text()}`);
+  const repos = (await res.json()) as { owner?: { login?: string }; name?: string }[];
+  return repos
+    .filter((r): r is { owner: { login: string }; name: string } => !!r.owner?.login && !!r.name)
+    .map((r) => ({ owner: r.owner.login, name: r.name }));
+}
+
+/** The real git commit log for one repo, not a search index — real-time, no indexing lag.
+ *  A repo with zero commits ever (a genuinely empty repo) returns 409 from this endpoint,
+ *  treated the same as "nothing to report" rather than an error; any other per-repo
+ *  failure (e.g. a since-deleted or since-archived-with-restricted-access repo) is caught
+ *  by the caller and skipped the same way — one repo's own quirk never blocks the rest. */
+async function listRepoCommits(token: string, owner: string, name: string, login: string, since: Date): Promise<any[]> {
+  const qs = new URLSearchParams({ author: login, since: since.toISOString(), per_page: '10' });
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${name}/commits?${qs}`,
+    { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' } },
+  );
+  if (res.status === 409) return [];
+  if (!res.ok) throw new Error(`GitHub commits failed for ${owner}/${name}: ${res.status} ${await res.text()}`);
+  const commits = (await res.json()) as any[];
+  return commits.map((c) => ({ ...c, __repo: `${owner}/${name}` }));
 }
 
 export async function getRecentGithubActivity(token: string, login: string, since: Date): Promise<GithubActivityItem[]> {
   const dateStr = since.toISOString().slice(0, 10);
-  const [authored, reviewed, committedAnywhere, committedOwnRepos] = await Promise.all([
+  const [authored, reviewed, repos] = await Promise.all([
     searchIssues(token, `type:pr author:${login} updated:>=${dateStr}`),
     searchIssues(token, `type:pr reviewed-by:${login} -author:${login} updated:>=${dateStr}`),
-    // Public repos anywhere, or private repos this token can otherwise search — but never
-    // private repos on its own, see the module comment above.
-    searchCommits(token, `author:${login} author-date:>=${dateStr}`),
-    // The other half of that gap: repos this same account owns, private included.
-    searchCommits(token, `author:${login} user:${login} author-date:>=${dateStr}`),
+    listRecentlyPushedRepos(token),
   ]);
-  // Merged by sha rather than concatenated — the two queries' result sets overlap for any
-  // public repo the person owns, and a commit should only ever count once in the digest.
-  const committedBySha = new Map<string, any>();
-  for (const c of [...committedAnywhere, ...committedOwnRepos]) {
-    if (c.sha) committedBySha.set(c.sha, c);
-  }
-  const committed = [...committedBySha.values()];
+  const perRepoCommits = await Promise.all(
+    repos.map((r) => listRepoCommits(token, r.owner, r.name, login, since).catch(() => [] as any[])),
+  );
+  const committed = perRepoCommits.flat();
 
   const toPrItem = (kind: 'authored' | 'reviewed') => (i: any): GithubActivityItem => ({
     kind,
@@ -89,14 +112,12 @@ export async function getRecentGithubActivity(token: string, login: string, sinc
     url: i.html_url,
     updatedAt: i.updated_at,
   });
-  // Commit search's item shape is genuinely different from issue search's — no top-level
-  // `title`/`updated_at`, and the repo comes as a full object rather than a URL to slice.
   // Message is trimmed to its first line/120 chars, matching how a PR title reads — never
   // the full commit body, and never a diff or file contents either way.
   const toCommitItem = (c: any): GithubActivityItem => ({
     kind: 'committed',
     title: String(c.commit?.message ?? '').split('\n')[0].slice(0, 120),
-    repo: c.repository?.full_name ?? '',
+    repo: c.__repo ?? '',
     url: c.html_url,
     updatedAt: c.commit?.author?.date ?? '',
   });

@@ -854,6 +854,26 @@ results to repos he actually owns rather than an unrelated match), then run thro
 `getRecentGithubActivity`'s own request shape against a deliberately invalid token and
 confirmed a clean 401 from GitHub's real API, not a malformed-request error.
 
+**A third layer under the same two bugs, found live a second time with the real reporting
+user's own account: GitHub's Search API — commits included — is not the live git graph,
+it's an asynchronous Elasticsearch index with documented real lag (GitHub's own community
+threads: minutes to 48+ hours, sometimes longer).** The `user:`-scoping fix above was
+correct and stayed, but a real, connected GitHub with real, current commits still reported
+"no commit activity" a second time — not because the query was wrong, but because
+`/search/commits` structurally cannot be trusted for "what's my *latest* commit," the
+exact question most likely to land inside the indexing lag window. Fixed by dropping
+`/search/commits` for commits entirely: `getRecentGithubActivity` now lists the account's
+most-recently-pushed repos via `GET /user/repos?sort=pushed` (real-time, authoritative,
+private repos included once authenticated — confirmed against a live response) and reads
+each one's actual commit log via `GET /repos/{owner}/{repo}/commits?author=&since=` — the
+real git history, not a search index. Live-verified against a genuinely current commit on
+a real public repo (torvalds/linux, pushed the same day) with zero lag, and both new
+endpoints (`/user/repos`, the per-repo commits endpoint) confirmed reaching GitHub's real
+API and failing clean on a deliberately invalid token. `/search/issues` (PRs/reviews) is
+unaffected and unchanged — issues/PRs are lower-volume, centrally-indexed objects without
+this same documented async-indexing-lag problem, and its `author:` qualifier was already
+confirmed to include private repos once authenticated, unlike commit search's own gap.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/
