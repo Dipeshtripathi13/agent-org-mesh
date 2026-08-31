@@ -344,9 +344,23 @@ own real, one-person org immediately, no separate org-creation step.
   Once it does: update `github.ts`'s own module comment and this note, then decide — with
   real evidence, not just the pilot's design reasoning — whether `mcpClient.ts`'s
   `withMcpSession` pattern is worth extending to the other tools with official, remote MCP
-  servers already identified (Linear, Notion, Atlassian/Jira/Confluence, HubSpot,
-  Salesforce, Asana, Airtable, Monday, Trello, Dropbox, Slack), one at a time, the same
-  read-only-allowlist discipline this pilot established.
+  servers already identified (Atlassian/Jira/Confluence, HubSpot, Salesforce, Asana,
+  Airtable, Monday, Trello, Dropbox, Slack), one at a time, the same read-only-allowlist
+  discipline this pilot established.
+
+- **Verify Notion's, GitLab's, and Linear's MCP-backed reads against real accounts —
+  Linear first.** Same shape of gap as the GitHub pilot, but the three carry genuinely
+  different amounts of real evidence behind them (see the CLAUDE.md paragraph on this
+  batch for why): Notion's is the strongest (its server is open-source and confirmed to be
+  a thin passthrough of Notion's own REST API — the existing parsing logic needed no
+  changes at all), GitLab's rests on real documented tool/parameter names but an
+  unconfirmed exact response shape, and Linear's rests on third-party documentation of
+  *unofficial* community servers, not a source confirmed to describe Linear's own official
+  one. All three: a deliberately invalid credential reaches the real hosted endpoint and
+  fails clean, but no real round trip has happened. Verify Linear first when a real account
+  becomes available, precisely because it has the least real evidence supporting it;
+  update `linear.ts`/`gitlab.ts`/`notion.ts`'s own module comments and this note once each
+  is confirmed.
 
 **Nango, considered and rejected** (researched 2026-08-17): its value is many end-users ×
 many providers — N in-house OAuth flows becomes the real pain it solves. This project has
@@ -956,6 +970,55 @@ unverified for the same honest reason every other new connector in this project 
 update this note once one happens. If this pilot holds up under real use, the same
 `withMcpSession` pattern is the template for the tools listed above next — not attempted
 in this same pass, on purpose.
+
+**Batch 2 of the MCP rollout — Notion, GitLab, and Linear — landed with genuinely
+different confidence levels per tool, on purpose, rather than uniform treatment.** Asked
+for directly right after the GitHub pilot: why not migrate everything, since a vendor
+changing their own REST API underneath an *official* MCP server means the vendor updates
+it, not this codebase. True, but conditional on "official" — a *community*-maintained
+server carries the opposite risk (dependent on a volunteer keeping pace with a vendor's
+changes, worse than owning the code directly), so each tool got checked individually
+before being touched, not assumed. Real findings, ranked by how verifiable each one turned
+out to be:
+
+- **Notion** — the strongest case of the three, stronger than expected. Notion's official
+  MCP server is open-source (`github.com/makenotion/notion-mcp-server`) and, read
+  directly, turned out to be an auto-generated thin passthrough of Notion's own REST API —
+  the search tool's name (`post-search`) comes straight from the OpenAPI `operationId` in
+  `scripts/notion-openapi.json`, and its request schema matched this file's own existing
+  request body field-for-field. `getRecentNotionActivity`'s parsing logic needed zero
+  changes, same pleasant surprise as `github.ts`'s commit mapping. One more thing
+  genuinely confirmed live, not assumed: whether the hosted endpoint even accepts this
+  connector's existing credential (Notion's own "internal integration secret," not a
+  personal OAuth login) — it does; a deliberately invalid secret produced Notion's own
+  real REST API error shape through the MCP endpoint, proving a genuine passthrough.
+- **GitLab** — real, sourced findings, not full certainty. GitLab's own docs
+  (`docs.gitlab.com/user/model_context_protocol/mcp_server_tools/`) name the exact tool
+  (`list_merge_requests`) and confirm its real filter parameters, but describe the
+  response only as "compact metadata" without publishing exact field names, and the live
+  server requires real auth even for `tools/list` — so the mapping keeps this file's
+  existing REST-convention field names as the best-informed guess (GitLab's own REST API
+  already uses exactly this snake_case shape), not a confirmed one.
+- **Linear** — the weakest evidence, and shipped anyway as a deliberate, informed choice,
+  not an oversight. Linear's MCP server is closed-source, its docs publish no tool
+  reference, and — same as GitLab — the live server requires real auth even for
+  discovery. `list_issues` and its `assignedToMe` filter come from third-party
+  documentation of *unofficial* community Linear MCP servers, not a source confirmed to
+  describe Linear's own official one. `linear.ts`'s parsing tries several plausible field
+  spellings per value rather than assuming one exact shape, and degrades to an empty
+  digest rather than fabricating data or crashing if the guess is wrong.
+
+All three keep their identity/connect-time validation on their original REST/GraphQL
+calls, unchanged — same reasoning as `github.ts`'s `fetchGithubLogin`: not part of what
+this migration addresses, and it means "connect a token" still works even if a tool's MCP
+path has a bad day. Live-verified the same way as the GitHub pilot: a deliberately invalid
+credential for each of the three reaches its real, live, hosted MCP endpoint
+(`mcp.notion.com`, `gitlab.com/api/v4/mcp`, `mcp.linear.app`) and gets a clean, real
+rejection — Notion's and Linear's own native error shapes came through intact, proving a
+genuine passthrough in both cases. A real end-to-end round trip with real credentials
+remains unverified for all three, the same honest gap `github.ts`'s own commit read still
+carries — and, explicitly, Linear should be the first of the three re-verified once a real
+account exists, since it carries by far the least real evidence backing it.
 
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for

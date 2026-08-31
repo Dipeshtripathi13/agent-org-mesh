@@ -1,18 +1,38 @@
 /** Real Linear reads — a personal API key the person pastes in themselves (no OAuth app
  *  to register, same PAT-style shape as GitHub). Read-only: issues assigned to them,
- *  updated since a given date, via Linear's GraphQL API.
+ *  updated since a given date.
  *
- *  UNVERIFIED AGAINST A REAL WORKSPACE — built the same way as every other connector in
- *  this project, following Linear's documented GraphQL API exactly, but no real Linear
- *  workspace was available to test against yet (see CLAUDE.md's "where to go next" for
- *  this project's honesty convention on that). */
+ *  `getRecentLinearActivity` goes through Linear's own official, remote-hosted MCP server
+ *  (`https://mcp.linear.app/mcp`) instead of the GraphQL API — part of the same MCP pilot
+ *  batch as github.ts/notion.ts/gitlab.ts, and deliberately the least-confident of the
+ *  three: Linear's MCP server is closed-source, its docs never publish a tool reference,
+ *  and the live server requires real authentication even for `tools/list` discovery — so
+ *  unlike github.ts (real Go source) and notion.ts (real OpenAPI spec confirming an exact
+ *  passthrough), there is no way to verify the real tool name or response shape without a
+ *  real Linear API key, which wasn't available. What *is* confirmed live: Linear's docs
+ *  state the MCP server accepts a plain personal API key as `Authorization: Bearer
+ *  <token>` (no OAuth flow required for a server-side integration like this one), and
+ *  `list_issues` is the tool name multiple independent, if unofficial, references agree
+ *  on, with an `assignedToMe` boolean filter matching this file's own existing intent.
+ *  Response field names are genuinely a best guess, so parsing below tries several
+ *  plausible key spellings per field rather than assuming one exact shape, and degrades to
+ *  an empty digest — never a crash or fabricated data — for anything it can't confidently
+ *  read. Revisit this file first, before gitlab.ts or notion.ts, once a real Linear
+ *  account is available to test against; it carries by far the least real evidence.
+ *
+ *  `fetchLinearIdentity`/connection storage stay on Linear's GraphQL API, unchanged and
+ *  deliberately not migrated — same reasoning as every sibling connector in this batch.
+ *  UNVERIFIED against a real workspace either way — this file has never been tested
+ *  against a real Linear account, MCP or GraphQL. */
 import {
   saveGenericConnection, getGenericConnection, getGenericConnectionStatus, disconnectGeneric,
   saveGenericAccountConnection, getGenericAccountConnection, getGenericAccountConnectionStatus, disconnectGenericAccount,
 } from './genericConnection.js';
+import { withMcpSession } from './mcpClient.js';
 
 const PROVIDER = 'linear';
 const API_URL = 'https://api.linear.app/graphql';
+const LINEAR_MCP_URL = 'https://mcp.linear.app/mcp';
 
 export interface LinearActivityItem {
   identifier: string;
@@ -45,24 +65,36 @@ export async function fetchLinearIdentity(apiKey: string): Promise<{ name: strin
   }
 }
 
+// Genuinely uncertain which of these key spellings the real tool returns — see the module
+// comment above. Tries each candidate in order and takes the first defined value, rather
+// than assuming one exact shape.
+function pick(obj: any, keys: string[]): any {
+  for (const k of keys) {
+    if (obj?.[k] != null) return obj[k];
+  }
+  return undefined;
+}
+
 export async function getRecentLinearActivity(apiKey: string, since: Date): Promise<LinearActivityItem[]> {
-  const data = await graphql(
-    apiKey,
-    `query($since: DateTimeOrDuration) {
-      issues(filter: { assignee: { isMe: { eq: true } }, updatedAt: { gte: $since } }, first: 25) {
-        nodes { identifier title url updatedAt state { name } }
-      }
-    }`,
-    { since: since.toISOString() },
-  );
-  const nodes = data?.issues?.nodes ?? [];
-  return nodes.map((n: any) => ({
-    identifier: n.identifier,
-    title: n.title,
-    status: n.state?.name ?? 'unknown',
-    url: n.url,
-    updatedAt: n.updatedAt,
+  const result = await withMcpSession(LINEAR_MCP_URL, apiKey, (callTool) => callTool('list_issues', {
+    assignedToMe: true,
+    sortBy: 'updatedAt',
+    sortDirection: 'DESC',
+    limit: 25,
   }));
+  const nodes: any[] = Array.isArray(result) ? result : ((result as any)?.issues ?? []);
+  return nodes
+    .map((n) => {
+      const status = pick(n, ['status', 'state']);
+      return {
+        identifier: String(pick(n, ['identifier', 'id']) ?? ''),
+        title: String(pick(n, ['title']) ?? ''),
+        status: typeof status === 'string' ? status : (status?.name ?? 'unknown'),
+        url: String(pick(n, ['url']) ?? ''),
+        updatedAt: String(pick(n, ['updatedAt', 'updated_at']) ?? ''),
+      };
+    })
+    .filter((n) => n.identifier && n.updatedAt && new Date(n.updatedAt) >= since);
 }
 
 export function formatLinearDigest(items: LinearActivityItem[]): string | null {
