@@ -1,2 +1,2 @@
-2026-08-31T20:03:09Z
-Test marker commit to verify the GitHub MCP-backed commit read end-to-end.
+2026-08-31T20:10:04Z
+Retest with the real verified GitHub email (killredps@gmail.com) as commit author.
