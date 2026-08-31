@@ -2546,7 +2546,21 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
           if (r.status === 'fulfilled' && r.value) {
             sections.push({ source: toRun[i].label, digest: r.value });
             consultedSources.push(toRun[i].label);
-          } else if (r.status === 'rejected') {
+          } else if (r.status === 'fulfilled') {
+            // Connected and genuinely checked, just nothing to report for this window —
+            // found live: leaving this case silent left converse() with zero signal that
+            // the tool exists at all, so a bare Claude call answered "I don't have access
+            // to your GitHub account" for a real, connected GitHub with no PR/review
+            // activity today. Telling the model what got checked, and what that connector
+            // actually reads (candidates[i].reads — the same surfaces_catalog description
+            // the router itself saw), turns that into an honest, specific answer instead.
+            const cand = candidates.find((c) => c.surfaceKey === toRun[i].surfaceKey);
+            sections.push({
+              source: toRun[i].label,
+              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. No matching activity found for today.`,
+            });
+            consultedSources.push(toRun[i].label);
+          } else {
             // One connector failing (a revoked token, a real provider outage) never blocks
             // the rest — same Promise.allSettled resilience as gatherAll(), logged the same
             // way rather than surfaced to the user.

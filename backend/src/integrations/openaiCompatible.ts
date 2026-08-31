@@ -133,7 +133,7 @@ async function converse(personName: string, question: string, priorTurns?: Conve
   return callOpenAI([
     `You are ${personName}'s own personal assistant, answering directly and conversationally.`,
     'Be concise and helpful.',
-    body ? 'Some of your connected tools returned real, relevant activity below — use it if it helps.' : '',
+    body ? 'Below is what your connected tools returned for this question — real activity where there was any, and an honest "nothing found" note where a tool was checked but had nothing relevant. Use it; never claim a tool listed there isn\'t connected.' : '',
     '',
     formatPriorTurns(priorTurns),
     wrapUntrustedData('question', question),

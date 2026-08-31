@@ -744,6 +744,30 @@ other new connector in this project does; update this note once a real Databrick
 is available. No schema migration needed — `provider` on `person_oauth_tokens`/
 `account_oauth_tokens` is untyped `text`, and `surfaces_catalog` is seed-data, not schema.
 
+**A personal ask no longer falsely claims "I don't have access" for a genuinely connected
+tool that just had nothing to report.** Found live, reported directly: a real personal
+main agent (the user's own Anthropic key) with a real, connected GitHub answered "I don't
+have access to your GitHub account or real-time data" when asked to list repositories.
+Root cause, traced through `POST /api/agent/ask-personal`: when a connected tool's digest
+came back empty (`fetchDigest` resolving to `null` — e.g. GitHub's own connector only ever
+reads pull requests opened or reviewed, never a repository list, and none were found in
+today's window), that tool was silently dropped from `sections` entirely, same as if it
+had never been connected at all — `converseFreely`/`converse` (anthropic.ts and
+openaiCompatible.ts both) had zero signal the tool existed, so a bare, ungrounded Claude
+call produced a plausible-sounding but false denial. Fixed by keeping every genuinely
+*checked* (relevant + connected) tool in `sections` even when its digest is empty, with an
+honest note built from the same `reads` description the router itself already saw (e.g.
+"Connected — reads: pull requests you opened and reviews you gave. No matching activity
+found for today.") — the model now has to say what's actually true (connected, narrower
+scope than asked, or genuinely nothing today) instead of denying the connection outright.
+Both `converse()` implementations' intro line changed to match ("never claim a tool listed
+there isn't connected"). Live-verified as far as possible without a real GitHub PAT or a
+platform-wide Anthropic key in this dev environment (both empty locally) — the branch logic
+itself (`Promise.allSettled`'s `fulfilled` result with a falsy value, previously treated
+identically to "never happened," now distinguished and given the same honest-empty
+treatment) was traced directly against `formatGithubDigest`'s real `null`-on-empty
+contract; a full live retest needs the reporting user's own real account.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/
