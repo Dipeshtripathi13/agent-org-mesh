@@ -28,7 +28,15 @@ export interface ProviderCredentials {
 
 export interface ModelProvider {
   configured(credentials?: ProviderCredentials): boolean;
-  selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Set<string>>;
+  /** Returns a Map of surfaceKey -> sinceDays (how many days back to look), one entry per
+   *  surface judged relevant to the question — not just *which* tools to call, but how far
+   *  back each one should look, inferred from the question's own phrasing. Replaces a
+   *  fixed "Today / This week" toggle a person previously had to pick by hand before every
+   *  ask: found live, reported directly, that a manual per-request toggle doesn't scale to
+   *  "hundreds of connected tools" and can't express anything more specific than those two
+   *  options anyway. See orchestrator.ts's parseRelevantSurfaces for the exact fail-open
+   *  behavior and default window. */
+  selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Map<string, number>>;
   /** `priorTurns`, when passed, is prior questions in the same chat plus the answers this
    *  same function already returned for them — real conversational memory for a follow-up
    *  question. Safe to feed to a model unfiltered because it's a second-order derivative

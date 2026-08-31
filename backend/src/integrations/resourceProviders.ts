@@ -65,19 +65,28 @@ const startOfToday = () => {
 /**
  * Best-effort: one provider failing (a locked file, a slow call) never blocks the rest —
  * Promise.allSettled, not Promise.all. Failures are logged, not surfaced to the caller.
- * `since` defaults to today, matching the standing-disclosure flow's existing behavior;
- * pass an older date for a wider window (e.g. a week, for an arbitrary-question ask).
+ * `since` defaults to today, matching the standing-disclosure flow's existing behavior for
+ * the no-question path below — pass an older date to widen that specific fallback.
  *
- * `question`, when passed, narrows which connected providers actually run: a router call,
- * through whichever ModelProvider `orgId`'s admin has registered as the org's one real
- * main agent (runtimeProvider.ts::getMainProvider) — Claude, ChatGPT, or a self-hosted
- * model all resolve here identically, no per-vendor branching in this function — reads
- * the question against what each connected surface can tell you and returns only the
- * plausibly relevant ones. So "did Diego touch the calendar today" no longer fires a live
- * GitHub call and a live Jira call for no reason, regardless of which model is the org's
- * main agent. Omit `question`, or the org has no configured/resolvable main provider,
- * and every connected provider runs, exactly as before this existed — the router only
- * ever narrows which real-world calls get made, and fails open whenever it can't decide.
+ * `question`, when passed, narrows which connected providers actually run *and* how far
+ * back each one looks: a router call, through whichever ModelProvider `orgId`'s admin has
+ * registered as the org's one real main agent (runtimeProvider.ts::getMainProvider) —
+ * Claude, ChatGPT, or a self-hosted model all resolve here identically, no per-vendor
+ * branching in this function — reads the question against what each connected surface can
+ * tell you and returns, per surface, whether it's relevant and how many days back to look
+ * (inferred from the question's own phrasing — see modelProvider.ts's
+ * `selectRelevantSurfaces` doc and orchestrator.ts's `DEFAULT_SINCE_DAYS`). This replaces a
+ * fixed "Today / This week" toggle a person previously picked by hand before every ask:
+ * found live, reported directly, that doesn't scale to hundreds of connected tools and
+ * can't express anything more specific than those two options anyway — the router deciding
+ * a window per tool, per question, does both. So "did Diego touch the calendar today" no
+ * longer fires a live GitHub call and a live Jira call for no reason, regardless of which
+ * model is the org's main agent, and "what's the latest thing in my GitHub" gets a wider
+ * window than "what did I do today" without anyone picking one by hand. Omit `question`,
+ * or the org has no configured/resolvable main provider, and every connected provider runs
+ * against the caller's own `since` fallback, exactly as before this router existed — it
+ * only ever narrows/redirects which real-world calls get made, and fails open (full
+ * coverage, the generous default window) whenever it can't decide.
  *
  * Returns the surface keys actually ingested — the caller (server.ts's /api/agent/ask)
  * surfaces this back as `consultedSources`, real proof of which tools the router decided
@@ -89,6 +98,7 @@ export async function gatherAll(orgId: number, personId: number, since: Date = s
   if (connected.length === 0) return [];
 
   let toRun = connected;
+  let sinceDaysByKey: Map<string, number> | null = null;
   if (question?.trim()) {
     const { provider } = await getMainProvider(orgId);
     if (provider?.configured()) {
@@ -99,10 +109,21 @@ export async function gatherAll(orgId: number, personId: number, since: Date = s
       }));
       const relevant = await provider.selectRelevantSurfaces(question, candidates);
       toRun = connected.filter((p) => relevant.has(p.surfaceKey));
+      sinceDaysByKey = relevant;
     }
   }
 
-  const results = await Promise.allSettled(toRun.map((p) => p.ingest(orgId, personId, since)));
+  // Per-surface window when the router decided one; the caller's own `since` fallback
+  // otherwise (no question, or no configured router — sinceDaysByKey stays null either way).
+  const sinceFor = (surfaceKey: string): Date => {
+    const days = sinceDaysByKey?.get(surfaceKey);
+    if (days == null) return since;
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - days);
+    return d;
+  };
+
+  const results = await Promise.allSettled(toRun.map((p) => p.ingest(orgId, personId, sinceFor(p.surfaceKey))));
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       // eslint-disable-next-line no-console

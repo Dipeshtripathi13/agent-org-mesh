@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedTextOnly, parseRelevantSurfaces } from './orchestrator.js';
+import { DEFAULT_SINCE_DAYS, allowedTextOnly, parseRelevantSurfaces } from './orchestrator.js';
 import type { ResponseItem } from '../domain/types.js';
 
 /**
@@ -80,45 +80,63 @@ describe('allowedTextOnly', () => {
  */
 describe('parseRelevantSurfaces', () => {
   const keys = ['github', 'jira', 'claude-code'];
+  const fullSet = (days = DEFAULT_SINCE_DAYS) => new Map(keys.map((k) => [k, days]));
 
-  it('parses a clean JSON array of recognized keys', () => {
-    expect(parseRelevantSurfaces('["github", "jira"]', keys)).toEqual(new Set(['github', 'jira']));
+  it('parses a clean JSON array of {surfaceKey, sinceDays} objects', () => {
+    const raw = '[{"surfaceKey": "github", "sinceDays": 7}, {"surfaceKey": "jira", "sinceDays": 1}]';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Map([['github', 7], ['jira', 1]]));
+  });
+
+  it('falls back to the default window for a bare surfaceKey string entry (a weaker model ignoring the richer shape)', () => {
+    expect(parseRelevantSurfaces('["github", "jira"]', keys)).toEqual(new Map([['github', DEFAULT_SINCE_DAYS], ['jira', DEFAULT_SINCE_DAYS]]));
   });
 
   it('tolerates markdown fences and prose around the array', () => {
-    const raw = 'Here you go:\n```json\n["github"]\n```\nHope that helps.';
-    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Set(['github']));
+    const raw = 'Here you go:\n```json\n[{"surfaceKey": "github", "sinceDays": 1}]\n```\nHope that helps.';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Map([['github', 1]]));
+  });
+
+  it('clamps an out-of-range sinceDays into [1, 365]', () => {
+    const raw = '[{"surfaceKey": "github", "sinceDays": 9000}, {"surfaceKey": "jira", "sinceDays": -5}]';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Map([['github', 365], ['jira', 1]]));
+  });
+
+  it('falls back to the default window when sinceDays is missing or not a number', () => {
+    const raw = '[{"surfaceKey": "github"}, {"surfaceKey": "jira", "sinceDays": "soon"}]';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Map([['github', DEFAULT_SINCE_DAYS], ['jira', DEFAULT_SINCE_DAYS]]));
   });
 
   it('drops unrecognized keys but keeps the recognized ones alongside them', () => {
-    expect(parseRelevantSurfaces('["github", "salesforce", "jira"]', keys)).toEqual(new Set(['github', 'jira']));
+    const raw = '[{"surfaceKey": "github", "sinceDays": 7}, {"surfaceKey": "salesforce", "sinceDays": 7}, {"surfaceKey": "jira", "sinceDays": 1}]';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(new Map([['github', 7], ['jira', 1]]));
   });
 
-  it('fails open to the full candidate set when every key is unrecognized', () => {
-    expect(parseRelevantSurfaces('["salesforce", "workday"]', keys)).toEqual(new Set(keys));
+  it('fails open to the full candidate set, generous default, when every key is unrecognized', () => {
+    const raw = '[{"surfaceKey": "salesforce", "sinceDays": 1}, {"surfaceKey": "workday", "sinceDays": 1}]';
+    expect(parseRelevantSurfaces(raw, keys)).toEqual(fullSet());
   });
 
   it('respects a genuine empty array as "nothing is relevant" — not a fail-open case', () => {
-    expect(parseRelevantSurfaces('[]', keys)).toEqual(new Set());
+    expect(parseRelevantSurfaces('[]', keys)).toEqual(new Map());
   });
 
   it('fails open to the full candidate set when the JSON is a non-array (an object)', () => {
-    expect(parseRelevantSurfaces('{"github": true}', keys)).toEqual(new Set(keys));
+    expect(parseRelevantSurfaces('{"github": true}', keys)).toEqual(fullSet());
   });
 
   it('fails open to the full candidate set on malformed JSON', () => {
-    expect(parseRelevantSurfaces('[github, jira]', keys)).toEqual(new Set(keys));
+    expect(parseRelevantSurfaces('[github, jira]', keys)).toEqual(fullSet());
   });
 
   it('fails open to the full candidate set when there is no array-like substring at all', () => {
-    expect(parseRelevantSurfaces('sure, github and jira seem relevant', keys)).toEqual(new Set(keys));
+    expect(parseRelevantSurfaces('sure, github and jira seem relevant', keys)).toEqual(fullSet());
   });
 
   it('fails open to the full candidate set on an empty response', () => {
-    expect(parseRelevantSurfaces('', keys)).toEqual(new Set(keys));
+    expect(parseRelevantSurfaces('', keys)).toEqual(fullSet());
   });
 
   it('an empty candidate list produces an empty selection, not a fail-open set', () => {
-    expect(parseRelevantSurfaces('["github"]', [])).toEqual(new Set());
+    expect(parseRelevantSurfaces('[{"surfaceKey": "github", "sinceDays": 1}]', [])).toEqual(new Map());
   });
 });

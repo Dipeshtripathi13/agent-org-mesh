@@ -808,6 +808,31 @@ both now. The honest "connected, nothing found" note the previous fix added also
 stop hardcoding "today" once the window could genuinely be a week — it now names whichever
 window was actually checked.
 
+**The "Today / This week" toggle above was removed again, one commit later — replaced by
+the router inferring a time window per tool, per question, rather than one manual choice
+applying to every connected surface at once.** Pushed back on directly, immediately after
+the toggle above shipped: "we will connect 100s of tools and we cannot do this to all" — a
+manual, global, two-option picker a person has to set by hand before every question
+doesn't scale, and can't express anything more specific than "today" or "this week" even
+for the tools it does apply to. `selectRelevantSurfaces` (`modelProvider.ts`, both
+`anthropic.ts` and `openaiCompatible.ts`) now returns `Map<surfaceKey, sinceDays>` instead
+of `Set<surfaceKey>` — the router decides, per surface, both whether it's relevant *and*
+how many days back to look, inferred straight from the question's own wording ("today" →
+1, "this week" → 7, "this month" → 30, no time frame stated — "what's my latest X" — →
+`orchestrator.ts`'s new `DEFAULT_SINCE_DAYS`, 90). `parseRelevantSurfaces` tolerates a bare
+surfaceKey string alongside the richer `{surfaceKey, sinceDays}` shape (a smaller/local
+model may not follow the new format exactly), defaulting that entry to the same generous
+window rather than treating the whole response as a parse failure — same fail-open
+philosophy as before, just carrying a time value now too. `gatherAll()` and
+`ask-personal`'s digest bridge (and the org self-ask's own Gmail bridge, which had the same
+single-`since` shape) all compute each provider's own window from its own map entry now,
+instead of one `since` shared by the whole run. The "Today / This week" UI (`MyAgent.tsx`,
+`Ask.tsx`) and the `window` request-body field it drove (`POST /api/agent/ask`,
+`POST /api/agent/ask-personal`) were deleted outright, not kept as a disabled or optional
+path alongside the router — the point was one fewer manual thing to scale per tool, not two
+ways to arrive at the same window. `docs/agent-to-agent-communication.md` gained a new §6b
+documenting this on top of §6a's original question-aware-selection design.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/

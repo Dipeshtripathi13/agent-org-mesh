@@ -258,6 +258,39 @@ Policy Matrix test panel, which don't carry a specific free-text question) skips
 router entirely and gathers everything, same as always — narrowing what gets fetched is
 only safe when there's an actual question to judge relevance against.
 
+### 6b. Per-surface time window, router-inferred — implemented 2026-08-31
+
+Every ask before this pass — org self-ask, cross-person Ask, and the personal (no-org)
+"Ask yourself" — carried one manually-picked, global "Today / This week" toggle that
+applied uniformly to every connected surface, regardless of which tools the router
+actually decided were relevant. Found live, reported directly: that doesn't scale to
+"hundreds of connected tools," and a two-option toggle can't express anything more
+specific than those two windows even for the tools it does apply to. `selectRelevantSurfaces`
+now returns `Map<surfaceKey, sinceDays>` instead of `Set<surfaceKey>` — the router decides,
+per surface, both *whether* it's relevant and *how many days back* to look, inferred from
+the question's own wording ("today" → 1, "this week" → 7, "this month" → 30, no time frame
+stated at all — "what's my latest X" — → `DEFAULT_SINCE_DAYS`, 90):
+
+```ts
+// backend/src/integrations/orchestrator.ts
+export const DEFAULT_SINCE_DAYS = 90;
+export function parseRelevantSurfaces(raw: string, candidateKeys: string[]): Map<string, number> {
+  // parses [{surfaceKey, sinceDays}, ...] — also tolerates a bare surfaceKey string
+  // (a weaker/local model ignoring the richer shape), defaulting that entry to
+  // DEFAULT_SINCE_DAYS rather than treating the whole response as unparseable.
+}
+```
+
+`gatherAll()` and `POST /api/agent/ask-personal`'s digest bridge both compute each
+provider's own `since` date from its own map entry (`sinceDaysByKey.get(surfaceKey) ??` the
+caller's fallback), instead of one `since` shared by every provider in the run. Fails open
+the same way §6a already did, just with a generous window attached: unconfigured provider,
+API error, or a fully-unrecognized response → every connected surface runs, at
+`DEFAULT_SINCE_DAYS`. The "Today / This week" UI toggle (`MyAgent.tsx`, `Ask.tsx`) and the
+`window` request-body field it drove (`POST /api/agent/ask`, `POST /api/agent/ask-personal`)
+were removed outright, not left disabled or optional alongside the router — the whole point
+was one fewer manual thing to scale per tool, not two ways to arrive at the same window.
+
 ## 7. The new endpoint
 
 ```

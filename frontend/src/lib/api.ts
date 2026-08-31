@@ -240,7 +240,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ targetId, role, persist, question, requesterId }),
     }),
-  agentAsk: (targetId: number, role: string, question: string, requesterId: number, window: 'today' | 'week' = 'today', persist = false, conversationId?: string) =>
+  /** No `window`/time-range param — the router (server.ts's gatherAll) now infers how far
+   *  back to look per connected surface from the question's own wording, replacing a fixed
+   *  "Today / This week" toggle found live not to scale to hundreds of connected tools. */
+  agentAsk: (targetId: number, role: string, question: string, requesterId: number, persist = false, conversationId?: string) =>
     req<{
       answer: string; items: ResponseItem[]; withheldCount: number; coverage: AgentResponse['coverage'];
       conversationId?: string;
@@ -249,14 +252,14 @@ export const api = {
       consultedSources: string[];
     }>('/agent/ask', {
       method: 'POST',
-      body: JSON.stringify({ targetId, role, question, window, persist, requesterId, conversationId }),
+      body: JSON.stringify({ targetId, role, question, persist, requesterId, conversationId }),
     }),
   /** The personal counterpart to agentAsk, for an account with no organization — no
    *  targetId/role/requesterId, since the requester is always the target. */
-  askPersonal: (question: string, window?: 'today' | 'week', conversationId?: string) =>
+  askPersonal: (question: string, conversationId?: string) =>
     req<{ answer: string; conversationId: string; consultedSources: string[] }>('/agent/ask-personal', {
       method: 'POST',
-      body: JSON.stringify({ question, window, conversationId }),
+      body: JSON.stringify({ question, conversationId }),
     }),
   audit: (orgId: number) => req<{
     entries: {

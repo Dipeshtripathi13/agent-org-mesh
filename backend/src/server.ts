@@ -39,7 +39,7 @@ import { disconnectJira, getJiraStatus, saveJiraConnection, disconnectJiraAccoun
 import { normalizeIngestPayload, recordEvent, recordAccountEvent } from './integrations/eventIngestion.js';
 import { runEscalationChecks } from './integrations/escalationEngine.js';
 import { generateToken, listTokens, resolveToken, revokeToken, generateAccountToken, listAccountTokens, revokeAccountToken, resolveAccountToken } from './integrations/ingestTokens.js';
-import { allowedTextOnly } from './integrations/orchestrator.js';
+import { DEFAULT_SINCE_DAYS, allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll } from './integrations/resourceProviders.js';
 import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
 import { CONNECTOR_CATALOG } from './integrations/connectorCatalog.js';
@@ -2231,7 +2231,6 @@ app.post('/api/agent/ask', async (req, reply) => {
     role: RequesterRole;
     question?: string;
     requesterId?: number;
-    window?: 'today' | 'week';
     persist?: boolean;
     /** Groups this ask into a chat thread with the target — My agent → Ask yourself
      *  (requesterId === targetId) or a real cross-person Ask thread (e.g. a manager's own
@@ -2281,16 +2280,15 @@ app.post('/api/agent/ask', async (req, reply) => {
     }
   }
 
-  const since = new Date();
-  if (body.window === 'week') since.setUTCDate(since.getUTCDate() - 7);
-  else since.setUTCHours(0, 0, 0, 0);
-
   // Which surface keys the router actually decided to call for this question — becomes
   // part of `consultedSources` below, real proof of the routing rather than a fire-and-
-  // forget side effect.
+  // forget side effect. No manual "since" here anymore — gatherAll's own router now infers
+  // a window per surface from the question itself (see its doc comment); the old fixed
+  // "Today / This week" toggle this used to thread through was found live not to scale to
+  // hundreds of connected tools, and removed rather than left alongside the router.
   let usedSurfaceKeys: string[] = [];
   try {
-    usedSurfaceKeys = await gatherAll(orgId, body.targetId, since, question);
+    usedSurfaceKeys = await gatherAll(orgId, body.targetId, undefined, question);
   } catch (err) {
     app.log.error({ err }, 'real claim ingestion failed — continuing with existing claims');
   }
@@ -2369,7 +2367,9 @@ app.post('/api/agent/ask', async (req, reply) => {
           { surfaceKey: 'gmail', reads: 'Your own inbox — sender, subject, snippet, read-only' },
         ]);
         if (relevant.has('gmail')) {
-          const digest = formatGmailDigest(await getEmailsSince(gmailToken, since));
+          const gmailSince = new Date();
+          gmailSince.setUTCDate(gmailSince.getUTCDate() - (relevant.get('gmail') ?? DEFAULT_SINCE_DAYS));
+          const digest = formatGmailDigest(await getEmailsSince(gmailToken, gmailSince));
           if (digest) {
             sections.push({ source: 'Your Gmail', digest });
             consultedSources.push('Gmail');
@@ -2485,6 +2485,15 @@ app.get('/api/agent/conversations', async (req) => {
   return { conversations: await repo.listConversationsForPair(requesterId ?? 0, targetIdNum) };
 });
 
+/** Turns a router-inferred `sinceDays` back into words for the honest "connected, nothing
+ *  found" note below — the same rough buckets the router prompt itself was told to use. */
+function daysLabel(days: number): string {
+  if (days <= 1) return 'today';
+  if (days <= 7) return 'the past week';
+  if (days <= 31) return 'the past month';
+  return `the past ${days} days`;
+}
+
 /** The personal counterpart to POST /api/agent/ask, for an account with no organization.
  *  Deliberately much smaller than the org path: no targetId/role/requesterId (the
  *  requester *is* the target, always — there's no relationship to verify), no claims, no
@@ -2498,7 +2507,7 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
     reply.code(401);
     return { error: 'log in first' };
   }
-  const body = req.body as { question?: string; conversationId?: string; window?: 'today' | 'week' };
+  const body = req.body as { question?: string; conversationId?: string };
   if (!body.question?.trim()) {
     reply.code(400);
     return { error: 'question is required' };
@@ -2537,16 +2546,21 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
           surfaceKey: p.surfaceKey as string,
           reads: surfaces.find((s) => s.key === p.surfaceKey)?.reads ?? p.surfaceKey,
         }));
+        // The router now decides both which surfaces are relevant *and* how many days
+        // back each one should look, inferred from the question itself — replacing a fixed
+        // "Today / This week" toggle a person had to pick by hand before every ask. Found
+        // live, reported directly: that doesn't scale to hundreds of connected tools, and
+        // couldn't express anything more specific than those two options anyway. See
+        // modelProvider.ts's selectRelevantSurfaces doc and orchestrator.ts's
+        // DEFAULT_SINCE_DAYS for the exact inference/fail-open behavior.
         const relevant = await provider.selectRelevantSurfaces(question, candidates);
         const toRun = connectedProviders.filter((p) => relevant.has(p.surfaceKey));
-        // Same 'today'/'week' window the org self-ask already offers (server.ts's
-        // POST /api/agent/ask) — found live, reported directly: a personal ask had no way
-        // to widen the digest window at all, so "no activity today" was correctly honest
-        // but also a dead end ("check a wider range?" with no way to actually do it).
-        const since = new Date();
-        if (body.window === 'week') since.setUTCDate(since.getUTCDate() - 7);
-        else since.setUTCHours(0, 0, 0, 0);
-        const results = await Promise.allSettled(toRun.map((p) => p.fetchDigest(accountId, since)));
+        const sinceFor = (surfaceKey: string) => {
+          const d = new Date();
+          d.setUTCDate(d.getUTCDate() - (relevant.get(surfaceKey) ?? DEFAULT_SINCE_DAYS));
+          return d;
+        };
+        const results = await Promise.allSettled(toRun.map((p) => p.fetchDigest(accountId, sinceFor(p.surfaceKey))));
         results.forEach((r, i) => {
           if (r.status === 'fulfilled' && r.value) {
             sections.push({ source: toRun[i].label, digest: r.value });
@@ -2560,10 +2574,10 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
             // actually reads (candidates[i].reads — the same surfaces_catalog description
             // the router itself saw), turns that into an honest, specific answer instead.
             const cand = candidates.find((c) => c.surfaceKey === toRun[i].surfaceKey);
-            const windowLabel = body.window === 'week' ? 'the past week' : 'today';
+            const windowLabel = daysLabel(relevant.get(toRun[i].surfaceKey) ?? DEFAULT_SINCE_DAYS);
             sections.push({
               source: toRun[i].label,
-              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. No matching activity found for ${windowLabel}.`,
+              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. No matching activity found in ${windowLabel}.`,
             });
             consultedSources.push(toRun[i].label);
           } else {

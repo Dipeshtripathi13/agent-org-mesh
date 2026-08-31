@@ -16,7 +16,6 @@ export function Ask() {
   // 0 is never a real person id — just a placeholder until the org roster loads and the
   // effect below picks a real, real-someone-else default.
   const [target, setTarget] = useState(0);
-  const [window_, setWindow] = useState<'today' | 'week'>('today');
   const [question, setQuestion] = useState('');
   const [entries, setEntries] = useState<RawEntry[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -110,7 +109,7 @@ export function Ask() {
       // into the target's own audit log. Passing the active conversationId is what gives
       // the model this chat's own prior turns as real context; omitting it (a brand-new
       // chat) mints a fresh one server-side.
-      const r = await api.agentAsk(target, role, q.trim(), meId, window_, true, activeConversationId ?? undefined);
+      const r = await api.agentAsk(target, role, q.trim(), meId, true, activeConversationId ?? undefined);
       await loadHistory(meId, target);
       if (r.conversationId) setActiveConversationId(r.conversationId);
       setPending(null);
@@ -183,15 +182,6 @@ export function Ask() {
                   ))}
                 </select>
               </label>
-              <div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
-                  Since
-                </div>
-                <div style={{ display: 'flex', gap: 5 }}>
-                  <button className="chip" aria-pressed={window_ === 'today'} onClick={() => setWindow('today')}>Today</button>
-                  <button className="chip" aria-pressed={window_ === 'week'} onClick={() => setWindow('week')}>This week</button>
-                </div>
-              </div>
             </div>
           </div>
         </div>

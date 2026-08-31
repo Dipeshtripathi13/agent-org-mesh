@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { parseRelevantSurfaces } from './orchestrator.js';
+import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
 import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
 // The platform-wide default client (env-var key), cached like before. An org with its own
@@ -79,10 +79,10 @@ export async function writeActivityClaim(personName: string, digest: string, cre
  * because the failure mode for a tool-selection stage has to be "gather everything," the
  * same behavior as before this existed, never "silently gather nothing."
  */
-export async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Set<string>> {
+export async function selectRelevantSurfaces(question: string, candidates: SurfaceDescriptor[], credentials?: ProviderCredentials): Promise<Map<string, number>> {
   const keys = candidates.map((c) => c.surfaceKey);
-  if (keys.length === 0) return new Set();
-  if (!anthropicConfigured(credentials)) return new Set(keys);
+  if (keys.length === 0) return new Map();
+  if (!anthropicConfigured(credentials)) return new Map(keys.map((k) => [k, DEFAULT_SINCE_DAYS]));
 
   const listing = candidates.map((c) => `- ${c.surfaceKey}: ${c.reads}`).join('\n');
   let raw: string;
@@ -91,7 +91,11 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
       [
         "A question is about to be answered from a person's real, connected work surfaces.",
         'Below is the list of currently connected surfaces and what each one can tell you.',
-        'Return ONLY a JSON array of surfaceKey strings for the surfaces plausibly relevant to the question below — no prose, no markdown fences.',
+        'Return ONLY a JSON array — no prose, no markdown fences — of objects',
+        '`{"surfaceKey": string, "sinceDays": number}`, one per surface plausibly relevant to the question below.',
+        '`sinceDays` is how many days back to look, inferred from the question\'s own wording:',
+        '"today" -> 1, "this week" -> 7, "this month" -> 30, no time frame stated at all',
+        `(e.g. "what's my latest X", "give me my most recent Y") -> ${DEFAULT_SINCE_DAYS}.`,
         "If the question is a greeting, small talk, or otherwise isn't actually asking about the person's work, activity, or status, return an empty array [] — don't include a surface just because one exists.",
         'Otherwise, if you are at all unsure whether a surface is relevant, include it. Only exclude a surface you are confident has nothing to do with the question.',
         '',
@@ -102,7 +106,8 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
       credentials,
     );
   } catch {
-    return new Set(keys); // Claude API error — never let a router failure narrow coverage
+    // Claude API error — never let a router failure narrow coverage.
+    return new Map(keys.map((k) => [k, DEFAULT_SINCE_DAYS]));
   }
   return parseRelevantSurfaces(raw, keys);
 }

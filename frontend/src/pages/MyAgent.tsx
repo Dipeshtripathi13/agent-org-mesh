@@ -30,7 +30,6 @@ export function MyAgent() {
   const [surfaces, setSurfaces] = useState<Surface[]>([]);
   const [neverIngested, setNever] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
-  const [window_, setWindow] = useState<'today' | 'week'>('today');
   const [entries, setEntries] = useState<RawEntry[]>([]);
   const [personalEntries, setPersonalEntries] = useState<RawPersonalEntry[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -134,7 +133,7 @@ export function MyAgent() {
     try {
       if (showPersonalChat) {
         // No org, no target/role/requesterId — the requester is always the target.
-        const r = await api.askPersonal(q.trim(), window_, activeConversationId ?? undefined);
+        const r = await api.askPersonal(q.trim(), activeConversationId ?? undefined);
         await loadHistory();
         setActiveConversationId(r.conversationId);
       } else {
@@ -143,7 +142,7 @@ export function MyAgent() {
         // persisted ask (its own "Self asked: ..." line in your audit log). Passing the
         // active conversationId is what gives the model this chat's own prior turns as
         // real context; omitting it (a brand-new chat) mints a fresh one server-side.
-        const r = await api.agentAsk(meId, 'Self', q.trim(), meId, window_, true, activeConversationId ?? undefined);
+        const r = await api.agentAsk(meId, 'Self', q.trim(), meId, true, activeConversationId ?? undefined);
         await loadHistory();
         if (r.conversationId) setActiveConversationId(r.conversationId);
       }
@@ -166,12 +165,6 @@ export function MyAgent() {
         <span className="label">Ask yourself</span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
           {showPersonalChat ? 'your own personal agent' : 'same real Ask, just about you'}
-        </span>
-        <span className="spacer" />
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>Since</span>
-          <button className="chip" aria-pressed={window_ === 'today'} onClick={() => setWindow('today')}>Today</button>
-          <button className="chip" aria-pressed={window_ === 'week'} onClick={() => setWindow('week')}>This week</button>
         </span>
       </header>
       <div className="inner chat-panel-body" style={{ padding: 0 }}>
