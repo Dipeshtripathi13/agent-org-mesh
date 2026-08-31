@@ -3,11 +3,17 @@
  *  account email and site URL (no OAuth app to register, same PAT-style shape as GitHub).
  *  Read-only: issues assigned to or reported by them, updated since a given date.
  *
- *  UNVERIFIED AGAINST A REAL INSTANCE — built the same way as every other connector in
- *  this project, but there was no real Jira Cloud site available to test against as of
- *  2026-08-17 (see CLAUDE.md's "where to go next"). The request shapes below follow
- *  Jira Cloud's documented REST API v3 exactly, but unlike claude-code/github/codex/
- *  gemini-cli, nothing here has actually round-tripped against a live site yet. */
+ *  Found live, on the very first real connect: `POST /rest/api/3/search` — what this file
+ *  was built against — is gone. Atlassian removed it outright; the real production error
+ *  was a clean `410 {"errorMessages":["The requested API has been removed. Please migrate
+ *  to the /rest/api/3/search/jql API..."]}`, not a malformed-request failure, confirming
+ *  the request shape itself was otherwise correct. `searchIssues` now posts to
+ *  `/rest/api/3/search/jql` instead — same `jql`/`fields`/`maxResults` request body, same
+ *  response shape (`issues[].key`/`fields.summary`/`fields.status.name`/`fields.updated`),
+ *  confirmed via Atlassian's own community documentation of the replacement endpoint. The
+ *  new endpoint's pagination uses `nextPageToken` instead of `startAt`/`total` — irrelevant
+ *  here, since this connector only ever fetches one page of 25. `fetchJiraIdentity`
+ *  (`/rest/api/3/myself`) is untouched — that endpoint was never deprecated. */
 
 export interface JiraActivityItem {
   key: string;
@@ -34,7 +40,7 @@ export async function fetchJiraIdentity(siteUrl: string, email: string, apiToken
 }
 
 async function searchIssues(siteUrl: string, email: string, apiToken: string, jql: string, role: JiraActivityItem['role']): Promise<JiraActivityItem[]> {
-  const res = await fetch(`${siteUrl.replace(/\/$/, '')}/rest/api/3/search`, {
+  const res = await fetch(`${siteUrl.replace(/\/$/, '')}/rest/api/3/search/jql`, {
     method: 'POST',
     headers: {
       authorization: authHeader(email, apiToken),
