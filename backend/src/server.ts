@@ -2674,6 +2674,23 @@ app.get('/api/accounts/me/conversations', async (req, reply) => {
   return { conversations: await repo.listPersonalConversations(accountId) };
 });
 
+/** Real, permanent delete for one of your own personal chats — safe to offer here (unlike
+ *  the org self-ask/cross-person Ask threads GET /api/agent/conversations serves, which
+ *  are audit_log rows and structurally can never be deleted, rule 2) because personal_asks
+ *  carries no one else's disclosure evidence and mesh_app holds a real DELETE grant on it.
+ *  Scoped to the logged-in account via repo.deletePersonalConversation — no way to delete
+ *  a conversation that isn't your own, even by guessing its id. */
+app.delete('/api/accounts/me/conversations/:conversationId', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { conversationId } = req.params as { conversationId: string };
+  await repo.deletePersonalConversation(accountId, conversationId);
+  return { deleted: true };
+});
+
 /* ---------- serve the built frontend (production only) ----------
    Local dev keeps the two dev servers (Vite on :5173 proxying /api to this one on
    :3001) — this block only matters for a real deployment, where this one process serves

@@ -983,6 +983,18 @@ export async function listPersonalConversations(accountId: number): Promise<Conv
   return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/** Real, permanent delete — safe here in a way it structurally isn't for audit_log (rule 2):
+ *  personal_asks carries no one else's disclosure evidence, no hash chain, nothing anyone
+ *  but this same account could ever be shown, and mesh_app holds a real DELETE grant on
+ *  this table specifically (unlike audit_log/policy_revisions' INSERT-only grant). Scoped
+ *  to accountId so one account can never delete another's chat by guessing a conversation
+ *  id. Deleting a conversation that doesn't belong to this account, or doesn't exist,
+ *  quietly deletes zero rows rather than erroring — same idempotent-delete posture as
+ *  every other DELETE endpoint in this codebase. */
+export async function deletePersonalConversation(accountId: number, conversationId: string): Promise<void> {
+  await pool.query('DELETE FROM personal_asks WHERE account_id = $1 AND conversation_id = $2', [accountId, conversationId]);
+}
+
 /* ---------- personal OAuth connections ----------
    Not org data — credential state for the real-integration features. Fully owned by the
    person: unlike audit_log, this can be updated and deleted by them at will. */

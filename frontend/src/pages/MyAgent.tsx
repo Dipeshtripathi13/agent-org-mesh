@@ -125,6 +125,19 @@ export function MyAgent() {
     setDraft('');
   };
 
+  // Real, permanent delete — only offered for personal chat. Org self-ask/cross-person Ask
+  // threads are audit_log rows and can never be deleted (rule 2, non-negotiable) — no
+  // delete affordance exists for those here at all, not just a disabled one.
+  const deleteConversation = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this chat? This can\'t be undone.')) return;
+    await api.deletePersonalConversation(id);
+    const convos = await loadHistory();
+    if (activeConversationId === id) {
+      setActiveConversationId(convos[0]?.id ?? null);
+    }
+  };
+
   const askSelf = async (q: string) => {
     if (!q.trim() || busy) return;
     const localId = `local-${++localTurnId}`;
@@ -173,15 +186,26 @@ export function MyAgent() {
           <div className="chat-list">
             {conversations.length === 0 && <p className="chat-list-empty">No chats yet</p>}
             {conversations.map((c) => (
-              <button
-                key={c.id}
-                className={`chat-list-item${c.id === activeConversationId ? ' active' : ''}`}
-                onClick={() => setActiveConversationId(c.id)}
-                title={c.title}
-              >
-                <span className="chat-list-title">{c.title}</span>
-                <span className="chat-list-meta">{relativeTime(c.updatedAt)} &middot; {c.turnCount}</span>
-              </button>
+              <div key={c.id} className={`chat-list-item${c.id === activeConversationId ? ' active' : ''}`}>
+                <button
+                  className="chat-list-item-select"
+                  onClick={() => setActiveConversationId(c.id)}
+                  title={c.title}
+                >
+                  <span className="chat-list-title">{c.title}</span>
+                  <span className="chat-list-meta">{relativeTime(c.updatedAt)} &middot; {c.turnCount}</span>
+                </button>
+                {showPersonalChat && (
+                  <button
+                    className="chat-list-delete"
+                    aria-label="Delete chat"
+                    title="Delete this chat"
+                    onClick={(e) => void deleteConversation(e, c.id)}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>

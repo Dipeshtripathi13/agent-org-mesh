@@ -342,16 +342,27 @@ tbody tr:hover { background: #fafbfb; }
 .chat-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 420px; }
 .chat-list-empty { font-size: 11px; color: var(--ink3); margin: 4px 2px; }
 .chat-list-item {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
-  padding: 6px 8px; border-radius: 2px; border: 1px solid transparent; background: none; cursor: pointer;
+  display: flex; align-items: center; gap: 2px;
+  border-radius: 2px; border: 1px solid transparent; background: none;
 }
 .chat-list-item:hover { background: var(--panel-bg, #f4f4f2); }
 .chat-list-item.active { background: var(--panel-bg, #f4f4f2); border-color: var(--rule2); }
+.chat-list-item-select {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  text-align: left; padding: 6px 8px; background: none; cursor: pointer;
+}
 .chat-list-title {
   font-size: 12px; color: var(--ink); max-width: 100%; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-list-meta { font-size: 10px; color: var(--ink3); font-family: var(--mono); }
+.chat-list-delete {
+  flex: none; width: 20px; height: 20px; margin-right: 4px; padding: 0;
+  font-size: 14px; line-height: 1; color: var(--ink3); background: none; cursor: pointer;
+  border-radius: 2px; opacity: 0; transition: opacity 0.1s;
+}
+.chat-list-item:hover .chat-list-delete, .chat-list-item.active .chat-list-delete { opacity: 1; }
+.chat-list-delete:hover { color: var(--hold, #b3261e); background: var(--panel-bg2, #eae8e3); }
 .chat-main { flex: 1; min-width: 0; padding: 14px; }
 .chat-panel-body { display: flex; }
 @media (max-width: 560px) {
@@ -362,6 +373,7 @@ tbody tr:hover { background: #fafbfb; }
   .chat-new-btn { flex: none; white-space: nowrap; }
   .chat-list { flex-direction: row; gap: 6px; max-height: none; overflow-x: auto; overflow-y: visible; padding-bottom: 2px; }
   .chat-list-item { flex: none; min-width: 130px; max-width: 170px; }
+  .chat-list-delete { opacity: 1; } /* no hover state on touch — always visible instead */
 }
 .changed { font-size: 11px; color: var(--partial); font-family: var(--mono); }
 

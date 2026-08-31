@@ -288,6 +288,11 @@ export const api = {
   personalConversations: () => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
   }>('/accounts/me/conversations'),
+  /** Real, permanent delete — safe here in a way it isn't for org/cross-person Ask threads,
+   *  which are audit_log rows and can never be deleted (rule 2). See the endpoint's own
+   *  comment in server.ts. */
+  deletePersonalConversation: (conversationId: string) =>
+    req<{ deleted: true }>(`/accounts/me/conversations/${conversationId}`, { method: 'DELETE' }),
   escalations: (orgId: number) => req<{ escalations: Escalation[] }>(`/escalations?orgId=${orgId}`),
   acknowledgeEscalation: (id: string, actorPersonId: number) =>
     req<{ escalation: Escalation }>(`/escalations/${id}/acknowledge`, {
