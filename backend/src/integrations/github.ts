@@ -9,7 +9,19 @@
  *  happened. `search/commits` needs its own query (`author-date`, not `updated`) and its
  *  own item shape (`commit.message`/`commit.author.date`, not `title`/`updated_at`), but no
  *  special Accept header — the same `application/vnd.github+json` every other call here
- *  already sends. */
+ *  already sends.
+ *
+ *  A real, second bug found immediately after shipping commits: `author:<login>` alone
+ *  never searches private repositories on GitHub's commit-search endpoint specifically —
+ *  confirmed against GitHub's own docs, and unlike `search/issues` (used for PRs/reviews
+ *  above), where `author:` alone does already include private repos once authenticated.
+ *  A person asking "what's my latest commit" whose real commits live in private repos (the
+ *  common case) got an honest-sounding but wrong "no commit activity" — correctly honest
+ *  about what the query found, wrong about what actually happened. Fixed by running a
+ *  second query scoped `user:<login>` (repos that account owns, private included once
+ *  authenticated as that same account) alongside the original, and merging by commit sha —
+ *  the original query still matters on its own, since it also catches commits in repos the
+ *  person doesn't own but has pushed to (a public org project, say) that `user:` wouldn't. */
 
 export interface GithubActivityItem {
   kind: 'authored' | 'reviewed' | 'committed';
@@ -53,11 +65,22 @@ async function searchCommits(token: string, query: string): Promise<any[]> {
 
 export async function getRecentGithubActivity(token: string, login: string, since: Date): Promise<GithubActivityItem[]> {
   const dateStr = since.toISOString().slice(0, 10);
-  const [authored, reviewed, committed] = await Promise.all([
+  const [authored, reviewed, committedAnywhere, committedOwnRepos] = await Promise.all([
     searchIssues(token, `type:pr author:${login} updated:>=${dateStr}`),
     searchIssues(token, `type:pr reviewed-by:${login} -author:${login} updated:>=${dateStr}`),
+    // Public repos anywhere, or private repos this token can otherwise search — but never
+    // private repos on its own, see the module comment above.
     searchCommits(token, `author:${login} author-date:>=${dateStr}`),
+    // The other half of that gap: repos this same account owns, private included.
+    searchCommits(token, `author:${login} user:${login} author-date:>=${dateStr}`),
   ]);
+  // Merged by sha rather than concatenated — the two queries' result sets overlap for any
+  // public repo the person owns, and a commit should only ever count once in the digest.
+  const committedBySha = new Map<string, any>();
+  for (const c of [...committedAnywhere, ...committedOwnRepos]) {
+    if (c.sha) committedBySha.set(c.sha, c);
+  }
+  const committed = [...committedBySha.values()];
 
   const toPrItem = (kind: 'authored' | 'reviewed') => (i: any): GithubActivityItem => ({
     kind,

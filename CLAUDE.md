@@ -833,6 +833,27 @@ path alongside the router — the point was one fewer manual thing to scale per 
 ways to arrive at the same window. `docs/agent-to-agent-communication.md` gained a new §6b
 documenting this on top of §6a's original question-aware-selection design.
 
+**GitHub's commit search silently never covered private repositories, one more layer
+under the same two bugs above.** Found live, immediately after the router fix landed: with
+the window now genuinely searching 90 real days, a real, connected GitHub with real
+commits still reported "no commit activity found" — an honest report of what the query
+found, not of what actually happened. Root cause, confirmed against GitHub's own
+documentation: `author:<login>` alone works for `search/issues` (PRs, reviews) once
+authenticated, but `search/commits` specifically requires an explicit `repo:`, `user:`, or
+`org:` qualifier to include private repositories at all — a query with just `author:`
+silently searches public commit history only, authenticated or not. Fixed by running a
+second query scoped `user:<login>` (repos that account owns, private included) alongside
+the original `author:<login>`-only one, merged by commit sha rather than concatenated
+(their result sets overlap for any public repo the person owns). The original query still
+earns its place: it also catches commits in repos the person doesn't own but has pushed to
+(a public org project, a contribution to someone else's repo) that `user:<login>` alone
+would miss. Live-verified the same way as the commits feature itself: the new
+`author:<login> user:<login> author-date:>=<date>` shape was confirmed syntactically valid
+against a real public account first (`torvalds`, `user:` scoping correctly narrowed
+results to repos he actually owns rather than an unrelated match), then run through
+`getRecentGithubActivity`'s own request shape against a deliberately invalid token and
+confirmed a clean 401 from GitHub's real API, not a malformed-request error.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/
