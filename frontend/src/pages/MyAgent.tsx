@@ -134,7 +134,7 @@ export function MyAgent() {
     try {
       if (showPersonalChat) {
         // No org, no target/role/requesterId — the requester is always the target.
-        const r = await api.askPersonal(q.trim(), activeConversationId ?? undefined);
+        const r = await api.askPersonal(q.trim(), window_, activeConversationId ?? undefined);
         await loadHistory();
         setActiveConversationId(r.conversationId);
       } else {
@@ -167,16 +167,12 @@ export function MyAgent() {
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
           {showPersonalChat ? 'your own personal agent' : 'same real Ask, just about you'}
         </span>
-        {!showPersonalChat && (
-          <>
-            <span className="spacer" />
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>Since</span>
-              <button className="chip" aria-pressed={window_ === 'today'} onClick={() => setWindow('today')}>Today</button>
-              <button className="chip" aria-pressed={window_ === 'week'} onClick={() => setWindow('week')}>This week</button>
-            </span>
-          </>
-        )}
+        <span className="spacer" />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>Since</span>
+          <button className="chip" aria-pressed={window_ === 'today'} onClick={() => setWindow('today')}>Today</button>
+          <button className="chip" aria-pressed={window_ === 'week'} onClick={() => setWindow('week')}>This week</button>
+        </span>
       </header>
       <div className="inner chat-panel-body" style={{ padding: 0 }}>
         <div className="chat-rail">

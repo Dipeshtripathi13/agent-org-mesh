@@ -792,6 +792,22 @@ Live-verified against GitHub's real API: the exact commit-search request shape r
 against a real, live public response (`torvalds/linux`) — the strongest verification this
 connector has had without the reporting user's own token.
 
+**A personal ask can now widen its digest window past "today," the same "Today/This week"
+toggle org self-ask already had.** Found live in the same testing session as the two fixes
+above: with the honesty fix in place, a real personal ask correctly reported "no commit
+activity today" and asked "want me to check a wider range?" — but there was no way to
+actually do that. `POST /api/agent/ask-personal` was hardcoded to `since = start of today`
+with no way to override it, unlike the org self-ask path (`POST /api/agent/ask`), which
+has taken an optional `window: 'today' | 'week'` since early in this project. Fixed by
+mirroring that exact same window computation into `ask-personal` (`window` in the request
+body, `since.setUTCDate(since.getUTCDate() - 7)` for `'week'`, unchanged default
+otherwise) and threading it through `api.askPersonal` and `MyAgent.tsx`. The Since:
+Today/This week pills in the chat header — previously hidden for personal chat, since they
+did nothing there — now show for both org and personal modes, since they're functional in
+both now. The honest "connected, nothing found" note the previous fix added also had to
+stop hardcoding "today" once the window could genuinely be a week — it now names whichever
+window was actually checked.
+
 Each org can also bring its own provider credentials instead of sharing this deployment's
 platform-wide `ANTHROPIC_API_KEY`/`OPENAI_*` env vars — real multi-tenant flexibility for
 different organizations on different LLM providers, including their own self-hosted/

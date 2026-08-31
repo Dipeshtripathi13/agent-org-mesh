@@ -253,10 +253,10 @@ export const api = {
     }),
   /** The personal counterpart to agentAsk, for an account with no organization — no
    *  targetId/role/requesterId, since the requester is always the target. */
-  askPersonal: (question: string, conversationId?: string) =>
+  askPersonal: (question: string, window?: 'today' | 'week', conversationId?: string) =>
     req<{ answer: string; conversationId: string; consultedSources: string[] }>('/agent/ask-personal', {
       method: 'POST',
-      body: JSON.stringify({ question, conversationId }),
+      body: JSON.stringify({ question, window, conversationId }),
     }),
   audit: (orgId: number) => req<{
     entries: {

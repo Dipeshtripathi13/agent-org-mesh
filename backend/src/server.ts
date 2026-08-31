@@ -2498,7 +2498,7 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
     reply.code(401);
     return { error: 'log in first' };
   }
-  const body = req.body as { question?: string; conversationId?: string };
+  const body = req.body as { question?: string; conversationId?: string; window?: 'today' | 'week' };
   if (!body.question?.trim()) {
     reply.code(400);
     return { error: 'question is required' };
@@ -2539,8 +2539,13 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
         }));
         const relevant = await provider.selectRelevantSurfaces(question, candidates);
         const toRun = connectedProviders.filter((p) => relevant.has(p.surfaceKey));
+        // Same 'today'/'week' window the org self-ask already offers (server.ts's
+        // POST /api/agent/ask) — found live, reported directly: a personal ask had no way
+        // to widen the digest window at all, so "no activity today" was correctly honest
+        // but also a dead end ("check a wider range?" with no way to actually do it).
         const since = new Date();
-        since.setUTCHours(0, 0, 0, 0);
+        if (body.window === 'week') since.setUTCDate(since.getUTCDate() - 7);
+        else since.setUTCHours(0, 0, 0, 0);
         const results = await Promise.allSettled(toRun.map((p) => p.fetchDigest(accountId, since)));
         results.forEach((r, i) => {
           if (r.status === 'fulfilled' && r.value) {
@@ -2555,9 +2560,10 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
             // actually reads (candidates[i].reads — the same surfaces_catalog description
             // the router itself saw), turns that into an honest, specific answer instead.
             const cand = candidates.find((c) => c.surfaceKey === toRun[i].surfaceKey);
+            const windowLabel = body.window === 'week' ? 'the past week' : 'today';
             sections.push({
               source: toRun[i].label,
-              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. No matching activity found for today.`,
+              digest: `Connected — reads: ${cand?.reads ?? 'recent activity'}. No matching activity found for ${windowLabel}.`,
             });
             consultedSources.push(toRun[i].label);
           } else {
