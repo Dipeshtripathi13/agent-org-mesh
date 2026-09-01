@@ -653,7 +653,9 @@ almost always served behind an OpenAI-compatible local gateway, so this makes "a
 deployed model" a real, selectable main agent in the UI, not a hypothetical. `copilot`,
 `gemini`, and `mistral` stay `unsupported` — same honest, unchanged "simulated" behavior
 they already had; no adapter was invented for a vendor with no real integration path
-(same posture as this doc's own Jira UNVERIFIED note elsewhere). The main-agent dropdown
+(the same posture this project takes with any connector it can't actually exercise: say
+so plainly rather than ship something that looks supported — see CLAUDE.md's running list
+of which connectors are live-verified and which are still UNVERIFIED). The main-agent dropdown
 (`SetUpMyAgent.tsx`) now filters the fetched catalog on `apiFamily !== 'unsupported'`
 instead of a hardcoded key list — a new supported vendor becomes selectable by adding one
 seed row and one adapter file, never a frontend change.

@@ -22,9 +22,13 @@
  *  setting that unlocks it. Matches this whole pilot's own stated principle — MCP only
  *  where it demonstrably helps, never because using MCP was the goal in itself — Notion's
  *  original REST implementation never had a known bug the way github.ts's commit read
- *  did, and this real test is direct evidence MCP is actively *worse* for it here. UNVERIFIED
- *  beyond that one real, if negative, result — no further real workspace testing has
- *  happened since reverting. */
+ *  did, and this real test is direct evidence MCP is actively *worse* for it here.
+ *
+ *  The REST path below is LIVE-VERIFIED: the same real, connected workspace that got the
+ *  403 over MCP returned real pages through this code once the revert deployed, confirmed
+ *  by the person whose workspace it is. So the negative MCP result and the positive REST
+ *  one come from the identical account and integration secret — which is what makes the
+ *  comparison above evidence rather than a guess. */
 import {
   saveGenericConnection, getGenericConnection, getGenericConnectionStatus, disconnectGeneric,
   saveGenericAccountConnection, getGenericAccountConnection, getGenericAccountConnectionStatus, disconnectGenericAccount,

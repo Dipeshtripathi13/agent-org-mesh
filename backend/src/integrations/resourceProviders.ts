@@ -22,10 +22,14 @@ import { getMainProvider } from './runtimeProvider.js';
  * and connect flow are still live-verified; its commit read moved onto GitHub's own
  * official MCP server (github.ts's own module comment) and is UNVERIFIED against a real
  * PAT again until that's re-proven — a deliberately invalid token reaching the real MCP
- * endpoint and failing clean isn't the same as a real round trip. jira, linear, notion,
- * confluence, asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, and
- * databricks are real but UNVERIFIED — built the same way, no real account/instance to
- * test against yet (see CLAUDE.md's connector catalog paragraph). Gmail is deliberately NOT
+ * endpoint and failing clean isn't the same as a real round trip. jira and notion are
+ * live-verified now too, both against a real user's own account in production rather than
+ * a fixture: jira only after that live attempt surfaced a real breaking change (Atlassian
+ * had removed POST /rest/api/3/search outright — see jira.ts), notion on plain REST after
+ * its MCP path was tried and genuinely failed (notion.ts). linear, confluence, asana,
+ * gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, and databricks are real but
+ * UNVERIFIED — built the same way, no real account/instance to test against yet (see
+ * CLAUDE.md's connector catalog paragraph). Gmail is deliberately NOT
  * a provider here — it stays personal-only (the "Ask yourself" box), never a manager-
  * visible org claim. See the design doc §8 for why. Trello/Airtable/Monday/Figma/Discord
  * are connectable (connectorCatalog.ts) but have no ResourceProvider yet — ingestion

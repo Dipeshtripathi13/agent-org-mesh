@@ -309,20 +309,6 @@ own real, one-person org immediately, no separate org-creation step.
   real session auth built this pass are load-bearing prerequisites for it, not the
   compliance work itself.
 
-- **Verify the Jira provider against a real instance.** The connector itself is built —
-  `jira.ts`/`jiraConnection.ts`, `ingestJiraClaim` registered in `resourceProviders.ts`,
-  full connect UI in Set up my agent — same shape as GitHub's, down to the API-token
-  pattern. But unlike every other connector in this project (Claude Code, GitHub, Codex
-  CLI, Gemini CLI — all live-verified against a real account/instance/CLI, not just
-  typechecked), there was no real Jira Cloud site available as of 2026-08-17. What *was*
-  verified without one: input validation, and that invalid credentials fail cleanly
-  (checked against a real but nonexistent Atlassian domain) rather than silently
-  succeeding or corrupting surface state. The request shapes follow Jira Cloud's
-  documented REST API v3 exactly, but nothing has round-tripped against a live site.
-  Once there's a real instance: connect it for real, confirm a claim actually lands, then
-  update this note and `docs/agent-to-agent-communication.md` to drop the UNVERIFIED
-  language in `jira.ts`'s module comment and `resourceProviders.ts`.
-
 - **Verify `openaiCompatibleProvider` against a real OpenAI key.** Same shape of gap as
   Jira, same honesty about it. The adapter (`backend/src/integrations/openaiCompatible.ts`)
   is live-verified — router and synthesis both — but against a real local Ollama model
@@ -419,13 +405,19 @@ Confluence, Asana, GitLab, HubSpot, Zendesk, Google Calendar (the last reuses Gm
 OAuth token, just adds a `calendar.readonly` scope). Each has its own client module
 (`linear.ts`, `notion.ts`, etc., same `validateAndIdentify`/`getRecentActivity`/
 `formatDigest` shape as `github.ts`) and an `ingest<Tool>Claim` in `realClaims.ts`
-registered into `resourceProviders.ts`'s `PROVIDERS`. Live-verified the same way Jira's
-request shapes were — deliberately invalid credentials against each tool's real API,
+registered into `resourceProviders.ts`'s `PROVIDERS`. Checked the same way Jira's request
+shapes originally were — deliberately invalid credentials against each tool's real API,
 confirmed each fails cleanly with a real provider-specific rejection and zero 500s — for
 7 of the 8 (all but Calendar, which needs a live Gmail OAuth round-trip that remains
-unverified for the same pre-existing reason as Gmail itself). No real account was
-available for any of the 8, so — same as Jira/OpenAI/Gmail — a real successful
-connect-then-ask round trip is still unverified; update this note once one happens.
+unverified for the same pre-existing reason as Gmail itself). **Read that check for exactly
+what it is.** Jira passed it for months and still could not work at all against a live
+site: Atlassian had removed the endpoint outright, and an invalid credential returns a
+clean rejection whether or not the endpoint you're calling still exists (see the
+Jira/Notion verification paragraph below). It proves the request is well-formed and
+failures are handled; it cannot prove the endpoint is real, current, or returns what the
+parser expects. Of these 8, **Notion is now genuinely live-verified** against a real
+workspace; the other 7 still have not round-tripped against a real account — update this
+note as each one does.
 **`'connectable'` (5 new, connect flow real, ingestion not wired yet)** — Trello, Airtable,
 Monday.com, Figma, Discord; Trello's connect flow is live-verified the same way (real
 rejection, no 500). **`'coming-soon'` (5, genuinely can't connect yet)** — Slack,
@@ -1151,6 +1143,39 @@ lands on "My agent" regardless of role — see the step-up-auth paragraph below 
 Admin stopped being a default landing at all. What none of this does yet is change what
 any individual *request* is trusted to say about its own identity — see "Where to go
 next" and rule 7.
+
+**Jira and Notion are live-verified now — both only after a real account was pointed at
+them, and both found something no amount of code review would have.** Worth recording
+together because they're the same lesson twice: this project's "the request shapes follow
+the vendor's documented API exactly, and invalid credentials fail cleanly" standard is a
+real check, and it is *not* verification.
+
+- **Jira** had been marked UNVERIFIED-but-carefully-built since 2026-08-17. The first real
+  connect failed outright: Atlassian had **removed** `POST /rest/api/3/search`, the endpoint
+  this connector was written against, and returned a clean `410` naming
+  `/rest/api/3/search/jql` as its replacement. Every prior check had passed precisely
+  because they were all shape checks — the request was well-formed and the credentials were
+  invalid, so a 401 was indistinguishable from a healthy connector. Migrated (same
+  `jql`/`fields`/`maxResults` body, same `issues[]` response shape, `nextPageToken`
+  pagination that this connector never needs since it fetches one page of 25),
+  `/rest/api/3/myself` untouched since it was never deprecated, and the same person then
+  confirmed a real ask answered from their real issues.
+- **Notion** is verified on **plain REST**, which is the interesting half: the same real
+  workspace and the same integration secret got a genuine
+  `403 restricted_resource` from Notion's own MCP server and real pages back from REST.
+  That's what makes the MCP-vs-REST comparison in `notion.ts` evidence rather than a guess.
+
+Finding the Jira 410 at all depended on a fix made minutes earlier: `server.ts` was
+constructed with `Fastify({ logger: false })`, which still hands back a working `app.log`
+object, so every `app.log.error(...)` in the codebase had been silently discarding
+everything for the life of the deployment. Two independent connector investigations stalled
+on "the UI says it failed and the server says nothing at all" before that was traced. A
+deployment whose error logs go nowhere doesn't have a connector problem, it has an
+observability problem wearing a connector problem's clothes.
+
+`resourceProviders.ts`, `jira.ts`, and `notion.ts` all carry their real status now. Still
+genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,
+asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks.
 
 **A temp password can no longer become someone's permanent one, and an admin can reset a
 member's password without any email involved.** Researched before building (OWASP's Forgot

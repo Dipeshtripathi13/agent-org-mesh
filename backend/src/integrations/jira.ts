@@ -13,7 +13,16 @@
  *  confirmed via Atlassian's own community documentation of the replacement endpoint. The
  *  new endpoint's pagination uses `nextPageToken` instead of `startAt`/`total` — irrelevant
  *  here, since this connector only ever fetches one page of 25. `fetchJiraIdentity`
- *  (`/rest/api/3/myself`) is untouched — that endpoint was never deprecated. */
+ *  (`/rest/api/3/myself`) is untouched — that endpoint was never deprecated.
+ *
+ *  LIVE-VERIFIED against a real Jira Cloud site, which is what turned up the removal above:
+ *  a real person connected their own site in production, the connector reached Atlassian's
+ *  real API and came back with that 410, and after the migration the same person confirmed
+ *  a real ask answered from their real issues. Worth noting what this replaced — the note
+ *  here previously said the request shapes "follow Jira Cloud's documented REST API v3
+ *  exactly" and had been checked against invalid credentials, which was true and still left
+ *  a connector that could not work at all against a live site. Documented-shape agreement
+ *  is not verification. */
 
 export interface JiraActivityItem {
   key: string;
