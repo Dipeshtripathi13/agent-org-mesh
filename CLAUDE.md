@@ -267,6 +267,21 @@ own real, one-person org immediately, no separate org-creation step.
   real, confirm delivery, then update this note and drop the UNVERIFIED language in
   `resendEmail.ts`'s module comment.
 
+- **Self-service password reset (the email half).** Everything that doesn't need email is
+  built and live — see the password paragraph below. What's missing is the one case that
+  structurally can't be covered without it: a personal account with no admin above it (a
+  self-serve signup) that forgets its password. Admin-initiated reset can't help there by
+  design, and the options that avoid email are all worse — security questions are
+  deprecated by NIST 800-63B and recommended against by OWASP, and recovery codes nobody
+  saves just move the support burden. The real answer is the standard emailed reset token
+  (≥128 bits of entropy, hashed at rest, single-use, short expiry, all other sessions
+  invalidated on success — OWASP's Forgot Password cheat sheet), which is blocked on the
+  same thing the invite emails are: `resendEmail.ts` has never been exercised against a
+  real `RESEND_API_KEY`. Do that first, then this. Note the distinction that made this
+  worth deferring rather than skipping: email *verification* (confirm your address at
+  signup) is a separate feature and still isn't planned; a reset *link* only needs
+  delivery to work.
+
 - **SSO.** Real login is password-based today (`backend/src/domain/auth.ts`, `accounts`'
   nullable `password_hash`, deliberately doubling as the future "SSO-only account" state).
   OIDC as an *additional* login method — a verified SSO email resolving to an existing
@@ -1136,6 +1151,73 @@ lands on "My agent" regardless of role — see the step-up-auth paragraph below 
 Admin stopped being a default landing at all. What none of this does yet is change what
 any individual *request* is trusted to say about its own identity — see "Where to go
 next" and rule 7.
+
+**A temp password can no longer become someone's permanent one, and an admin can reset a
+member's password without any email involved.** Researched before building (OWASP's Forgot
+Password cheat sheet, NIST 800-63B, how Clerk/WorkOS model org invites); the email
+reset-token half is deliberately deferred, see "Where to go next". The gap that made this
+urgent wasn't the missing reset flow — it was that `POST /api/auth/change-password`
+already existed, already rate-limited, with **no UI anywhere**: `api.changePassword` was
+called from nothing, so anyone handed a temp password literally could not change it.
+
+`accounts.must_change_password` marks a password its owner never chose — set by every
+invite and by an admin reset, never by a self-serve signup (that password *was* chosen).
+While it's true, `App.tsx`'s `Shell` renders `components/ChangePasswordModal.tsx` over
+everything with no dismiss, and the modal locks body scroll (a `position: fixed` overlay
+covers the viewport but does nothing to stop the page scrolling behind it — the app was
+fully browsable underneath before that). The same modal, dismissible, is now reachable any
+time from the profile menu. It's a UX forcing function, not a security boundary pretending
+to be one: every other endpoint stays reachable, and the flag can only be cleared by
+`change-password`, which requires proving the current password.
+
+**Admin-initiated reset** (`POST /api/organizations/:orgId/people/:personId/reset-password`,
+admin + step-up) issues a fresh one-time temp password shown once, flags the account, and
+revokes every session it had. It **refuses for an account that also belongs to another
+organization** (`repo.accountBelongsToOtherOrgs`) — the one genuinely load-bearing
+decision here. An `accounts` row is a *global* login, not a tenant-owned identity (that's
+the whole point of `people.account_id` not being unique), so unlike Google Workspace or
+Microsoft 365 — where an admin can reset any user because those identities belong to the
+tenant — minting a password for a cross-org account would hand this org's admin a working
+login to someone else's org. That's a real cross-tenant takeover, not a theoretical one.
+It also refuses for a chart-only person with no login, and for the caller's own account
+(use "Change password").
+
+Two smaller things landed alongside, both from OWASP's guidance: a successful password
+change now revokes every *other* session for that account (the caller's own is spared, so
+you aren't logged out of the tab you did it in — `repo.revokeOtherSessionsForAccount`),
+and reusing the current password as the new one is rejected.
+
+The reporting gap that started this is closed too: adding a person whose email **already
+has an account** was already handled correctly server-side (link the account, issue no
+credential, send an added-to-org notice), but the frontend gated its confirmation panel on
+`tempPassword`, so that case rendered *nothing at all* — indistinguishable from the add
+having failed. `api.addPerson`/`api.inviteOrgAdmin` now surface `linkedExistingAccount` and
+`OrgSetup.tsx` reports either outcome explicitly. The admin-invite path also gained the
+added-to-org notice it was missing entirely — only the add-a-person path had one, so being
+granted an admin role on an existing account happened in total silence.
+
+One real bug surfaced by the new endpoint and fixed with it: `StepUpContext` showed any
+error thrown by the *retried* action inside the "Confirm it's you" box, as though the
+password had been mistyped — a refused reset reported "Use Change password for your own
+account" next to a password field. Auth failure and action failure are separated now; the
+latter closes the prompt and rejects so the caller surfaces it where the action was taken.
+
+Schema note, following the convention `schema.sql`'s own header sets: `must_change_password`
+is declared there for fresh databases *and* was applied to the live database by hand as its
+own additive `ALTER` (`backend/scripts/migrate-add-must-change-password.ts`, idempotent,
+kept in the repo so what ran against production is reviewable), rather than loosening
+`migrate.ts`'s destructive-reset guard. Applied to production *before* the code deploy,
+since the new code selects the column — 16 existing accounts, none flagged. Reaching the
+production database at all needs `railway ssh` (its Postgres has no public TCP proxy):
+`railway ssh 'cd /app/backend && TARGET_URL="$DATABASE_ADMIN_URL" npx tsx scripts/migrate-add-must-change-password.ts'`.
+
+Live-verified end to end against the running API and a real browser, not just typechecked:
+an invite issues a flagged temp password; login reports `mustChangePassword`; reusing the
+temp password as the new one is rejected; changing it clears the flag, keeps the current
+session alive, and kills a second session opened beforehand; the old temp password stops
+working; adding an already-registered email links instead of issuing a credential; and
+reset is refused for cross-org, no-login, and self targets while genuinely working for an
+org-local one, with the one-time password rendered in the admin UI.
 
 **Self-serve signup creates a personal account *and* a one-person "workspace" org in the
 same step — no separate "create an organization" click, no company name to type.**
