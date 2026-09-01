@@ -21,6 +21,7 @@ import { Preview } from './pages/Preview';
 import { SetUpMyAgent } from './pages/SetUpMyAgent';
 import { WhatItKnows } from './pages/WhatItKnows';
 import { WhoAsked } from './pages/WhoAsked';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 const ADMIN = [
   { key: 'overview', label: 'Overview', el: <Overview /> },
@@ -91,9 +92,10 @@ function MeSwitcher() {
  *  for one, inline, via StepUpContext.tsx. Closes on an outside click or Escape; a fresh
  *  click anywhere else in the menu also closes it after acting. */
 function ProfileMenu({
-  panel, switchPanel, name, subtitle, logout,
+  panel, switchPanel, name, subtitle, logout, onChangePassword,
 }: {
-  panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; name: string; subtitle: string; logout: () => void;
+  panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; name: string; subtitle: string;
+  logout: () => void; onChangePassword: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -138,6 +140,9 @@ function ProfileMenu({
               Admin
             </button>
           )}
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onChangePassword(); }}>
+            Change password
+          </button>
           <button type="button" role="menuitem" className="danger" onClick={() => { setOpen(false); logout(); }}>
             Log out
           </button>
@@ -148,9 +153,10 @@ function ProfileMenu({
 }
 
 function Topbar({
-  panel, switchPanel, hasOwnIdentity,
+  panel, switchPanel, hasOwnIdentity, onChangePassword,
 }: {
   panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; hasOwnIdentity: boolean;
+  onChangePassword: () => void;
 }) {
   const { meId } = useMe();
   const { account, logout } = useAuth();
@@ -190,6 +196,7 @@ function Topbar({
           name={who?.name ?? account.name}
           subtitle={who?.subtitle ?? 'Account'}
           logout={() => void logout()}
+          onChangePassword={onChangePassword}
         />
       )}
     </header>
@@ -223,6 +230,10 @@ function pathFor(route: Route): string {
 function Shell() {
   const [{ panel, screen }, setRoute] = useState<Route>(() => parsePath(window.location.pathname));
   const { account, orgRoles, people: myIdentities, loading: authLoading } = useAuth();
+  // Voluntary "Change password" from the profile menu. The *forced* case below doesn't
+  // use this flag at all — it's driven purely by the account's own server-side
+  // must_change_password, so it can't be dismissed by any client state.
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   // Two genuinely different facts, kept separate rather than conflated into one "zero
   // orgs" flag: whether this account administers any org at all (drives what Admin's
   // sidebar can show), and whether it's a real person in any org's chart at all (drives
@@ -296,10 +307,21 @@ function Shell() {
   // server-side regardless (requireOrgRole in server.ts) — this UI change doesn't relax
   // that boundary, it just moves where the prompt appears.
   const gate = authLoading ? 'checking' : !account ? 'locked' : 'open';
+  // A temp password someone else generated (an invite, or an admin-initiated reset) is not
+  // a password this account ever chose, so it gets exactly one screen: choose a real one.
+  // Driven by the server's own accounts.must_change_password via /api/auth/me — there is
+  // no client-side dismiss, and every other endpoint stays reachable regardless, so this
+  // is a UX forcing function rather than a security boundary pretending to be one.
+  const mustChangePassword = gate === 'open' && account?.mustChangePassword === true;
 
   return (
     <div className="app">
-      <Topbar panel={panel} switchPanel={switchPanel} hasOwnIdentity={hasOwnIdentity} />
+      <Topbar
+        panel={panel}
+        switchPanel={switchPanel}
+        hasOwnIdentity={hasOwnIdentity}
+        onChangePassword={() => setChangePasswordOpen(true)}
+      />
 
       {gate === 'checking' ? (
         <div className="body" />
@@ -331,6 +353,11 @@ function Shell() {
           </nav>
           <main className="main">{active.el}</main>
         </div>
+      )}
+
+      {mustChangePassword && <ChangePasswordModal forced />}
+      {!mustChangePassword && changePasswordOpen && (
+        <ChangePasswordModal forced={false} onClose={() => setChangePasswordOpen(false)} />
       )}
     </div>
   );

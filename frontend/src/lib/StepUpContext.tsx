@@ -53,14 +53,28 @@ export function StepUpProvider({ children }: { children: ReactNode }) {
     if (!pending || !password) return;
     setBusy(true);
     setError(null);
+    // Two failures worth telling apart, which this used to collapse into one: the password
+    // check failing (stay open, say so, let them retype) versus the *retried action* itself
+    // failing for its own reasons. The second one is not an auth problem at all, so showing
+    // it inside a "Confirm it's you" box next to a password field actively misleads — found
+    // live the first time a step-up-gated action had a plausible non-auth failure of its own
+    // (resetting a password the server refuses to reset, which reported "Use Change password
+    // for your own account" as though the password had been typed wrong). Now that case
+    // closes the prompt and rejects, so the caller's own error handling surfaces it in the
+    // place the action was taken.
     try {
       await stepUp(password);
-      const result = await pending.retry();
-      pending.resolve(result);
-      setPending(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not verify your password');
+      setBusy(false);
+      return;
+    }
+    try {
+      pending.resolve(await pending.retry());
+    } catch (e) {
+      pending.reject(e);
     } finally {
+      setPending(null);
       setBusy(false);
     }
   };

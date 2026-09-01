@@ -64,7 +64,14 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- set yet (a just-invited admin, or a person linked to an org chart by email who
   -- hasn't claimed their account) — also doubles as the future "SSO-only account" state
   -- once SSO lands, so a real account never needs a throwaway password.
-  password_hash  text
+  password_hash  text,
+  -- True while the current password is a system-generated temp one (an invite, or an
+  -- admin-initiated reset) that the account holder never chose. The app forces a change
+  -- before anything else is usable, then clears this — so a temp password can't quietly
+  -- become someone's permanent one, which is exactly what happened before this existed
+  -- (change-password had no UI at all, so an invited person literally could not change
+  -- it). Never set for a self-serve signup: that password was chosen by its owner.
+  must_change_password boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS organizations (

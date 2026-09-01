@@ -30,6 +30,10 @@ export interface Account {
   id: number;
   name: string;
   email: string;
+  /** True while this account's password is a system-generated temp one it never chose —
+   *  see the column's own comment in schema.sql. The app forces a change before anything
+   *  else is usable and clears it on success. */
+  mustChangePassword: boolean;
 }
 
 export type OrgRole = 'owner' | 'admin' | 'viewer';
@@ -218,30 +222,82 @@ function toOrgAdmin(row: any): OrgAdmin {
    "org-chart identity" are independent facts about one account, not different account
    types. */
 
+function toAccount(row: any): Account {
+  return { id: row.id, name: row.name, email: row.email, mustChangePassword: row.must_change_password };
+}
+
 export async function getAccount(id: number): Promise<Account | null> {
-  const { rows } = await pool.query('SELECT id, name, email FROM accounts WHERE id = $1', [id]);
-  return rows.length ? { id: rows[0].id, name: rows[0].name, email: rows[0].email } : null;
+  const { rows } = await pool.query('SELECT id, name, email, must_change_password FROM accounts WHERE id = $1', [id]);
+  return rows.length ? toAccount(rows[0]) : null;
 }
 
 export async function getAccountByEmail(email: string): Promise<(Account & { passwordHash: string | null }) | null> {
-  const { rows } = await pool.query('SELECT id, name, email, password_hash FROM accounts WHERE email = $1', [email]);
+  const { rows } = await pool.query(
+    'SELECT id, name, email, password_hash, must_change_password FROM accounts WHERE email = $1',
+    [email],
+  );
   if (rows.length === 0) return null;
-  return { id: rows[0].id, name: rows[0].name, email: rows[0].email, passwordHash: rows[0].password_hash };
+  return { ...toAccount(rows[0]), passwordHash: rows[0].password_hash };
 }
 
 /** Creates the account row itself — putting it to work as an org admin (addOrgAdmin) or
  *  linking it to an org-chart entry (createPerson's accountId) are separate steps, since
- *  the same account might end up doing either or both, in more than one org. */
-export async function insertAccount(name: string, email: string, passwordHash: string | null): Promise<Account> {
+ *  the same account might end up doing either or both, in more than one org.
+ *  `mustChangePassword` is true for every invite/reset-issued temp password and false for
+ *  a self-serve signup, whose password its owner actually chose. */
+export async function insertAccount(
+  name: string,
+  email: string,
+  passwordHash: string | null,
+  mustChangePassword = false,
+): Promise<Account> {
   const { rows } = await pool.query(
-    'INSERT INTO accounts (name, email, password_hash) VALUES ($1,$2,$3) RETURNING id, name, email',
-    [name, email, passwordHash],
+    `INSERT INTO accounts (name, email, password_hash, must_change_password) VALUES ($1,$2,$3,$4)
+     RETURNING id, name, email, must_change_password`,
+    [name, email, passwordHash, mustChangePassword],
   );
-  return { id: rows[0].id, name: rows[0].name, email: rows[0].email };
+  return toAccount(rows[0]);
 }
 
-export async function setAccountPassword(accountId: number, passwordHash: string): Promise<void> {
-  await pool.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [accountId, passwordHash]);
+/** Clears `must_change_password` alongside the new hash — this is the one path that ends
+ *  a forced-change state, and it can only be reached by someone who proved the current
+ *  password (change-password) so there's no way to clear the flag without actually
+ *  choosing a password. `mustChange` is set true only by an admin-initiated reset, which
+ *  hands out another temp password. */
+export async function setAccountPassword(
+  accountId: number,
+  passwordHash: string,
+  mustChange = false,
+): Promise<void> {
+  await pool.query('UPDATE accounts SET password_hash = $2, must_change_password = $3 WHERE id = $1', [
+    accountId,
+    passwordHash,
+    mustChange,
+  ]);
+}
+
+/** Does this account belong to any organization other than `orgId` — as a chart person, an
+ *  admin, or both?
+ *
+ *  This gates admin-initiated password resets, and it exists because an `accounts` row is
+ *  a *global* login, not a tenant-owned identity: the same human can be an employee here
+ *  and an owner somewhere else (that's the whole point of people.account_id not being
+ *  unique). A managed-tenant product like Google Workspace can let an admin reset any of
+ *  its users because those identities belong to the tenant; here, letting an admin of org
+ *  A mint a new password for an account that also owns org B would hand them a login to
+ *  org B — a real cross-tenant takeover, not a theoretical one. So a reset is only offered
+ *  for accounts whose entire footprint is this one org; anyone else has to go through a
+ *  self-service reset instead. */
+export async function accountBelongsToOtherOrgs(accountId: number, orgId: number): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM people     WHERE account_id = $1 AND org_id <> $2
+       UNION ALL
+       SELECT 1 FROM org_admins WHERE account_id = $1 AND org_id <> $2
+     ) AS present`,
+    [accountId, orgId],
+  );
+  return rows[0].present === true;
 }
 
 export async function listOrganizationsForAccount(accountId: number): Promise<Organization[]> {
@@ -402,6 +458,28 @@ export async function resolveSession(
 
 export async function revokeSession(tokenHash: string, now: string): Promise<void> {
   await pool.query('UPDATE sessions SET revoked_at = $2 WHERE token_hash = $1', [tokenHash, now]);
+}
+
+/** Every other live session for this account — OWASP's Forgot Password guidance is that a
+ *  successful password change invalidates all *other* sessions, so a stolen cookie stops
+ *  working the moment the real owner changes their password. The caller's own session is
+ *  deliberately spared (`exceptTokenHash`) so changing your password doesn't log you out
+ *  of the tab you're doing it in. */
+export async function revokeOtherSessionsForAccount(
+  accountId: number,
+  exceptTokenHash: string,
+  now: string,
+): Promise<void> {
+  await pool.query(
+    'UPDATE sessions SET revoked_at = $3 WHERE account_id = $1 AND token_hash <> $2 AND revoked_at IS NULL',
+    [accountId, exceptTokenHash, now],
+  );
+}
+
+/** Every session for this account, no exception — used by an admin-initiated reset, where
+ *  locking the account out of anything it was already logged into is the whole point. */
+export async function revokeAllSessionsForAccount(accountId: number, now: string): Promise<void> {
+  await pool.query('UPDATE sessions SET revoked_at = $2 WHERE account_id = $1 AND revoked_at IS NULL', [accountId, now]);
 }
 
 // Step-up auth: stamped after the account re-enters its password via POST

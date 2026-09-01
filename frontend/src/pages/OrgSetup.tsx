@@ -113,7 +113,16 @@ function ChartBuilder() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [justAdded, setJustAdded] = useState<{ name: string; email: string; tempPassword: string; emailSent: boolean } | null>(null);
+  // Two genuinely different outcomes, both worth confirming: a brand-new account (there's
+  // a one-time temp password to hand over) and an email that already had one (nothing to
+  // hand over — they keep their own password). Before this, only the first case showed
+  // anything at all, so linking an existing account looked identical to nothing happening.
+  const [justAdded, setJustAdded] = useState<
+    | { kind: 'new'; name: string; email: string; tempPassword: string; emailSent: boolean }
+    | { kind: 'linked'; name: string; email: string; emailSent: boolean }
+    | null
+  >(null);
+  const [resetFor, setResetFor] = useState<{ name: string; email: string | null; tempPassword: string } | null>(null);
 
   const load = () => api.org(orgId).then((d) => setPeople(d.people));
   useEffect(() => { void load(); setForm(EMPTY_FORM); setError(null); setJustAdded(null); }, [orgId]);
@@ -149,7 +158,7 @@ function ChartBuilder() {
     setError(null);
     setJustAdded(null);
     try {
-      const { tempPassword, emailSent } = await api.addPerson(orgId, {
+      const { tempPassword, emailSent, linkedExistingAccount } = await api.addPerson(orgId, {
         name: form.name.trim(),
         title: form.title.trim(),
         team: form.team.trim(),
@@ -157,7 +166,10 @@ function ChartBuilder() {
         agentDeployed: form.agentDeployed,
         email: form.email.trim() || undefined,
       });
-      if (tempPassword) setJustAdded({ name: form.name.trim(), email: form.email.trim(), tempPassword, emailSent });
+      const addedName = form.name.trim();
+      const addedEmail = form.email.trim();
+      if (tempPassword) setJustAdded({ kind: 'new', name: addedName, email: addedEmail, tempPassword, emailSent });
+      else if (linkedExistingAccount) setJustAdded({ kind: 'linked', name: addedName, email: addedEmail, emailSent });
       setForm(EMPTY_FORM);
       await load();
       await refresh();
@@ -165,6 +177,21 @@ function ChartBuilder() {
       setError(e instanceof Error ? e.message : 'could not add person');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Admin-initiated reset — the no-email half of "I forgot my password". The server
+   *  refuses (409) for an account that also belongs to another organization, since an
+   *  `accounts` row is a global login rather than something this org owns; that error is
+   *  surfaced as-is rather than second-guessed here. */
+  const resetPassword = async (id: number, name: string) => {
+    setError(null);
+    setResetFor(null);
+    try {
+      const { tempPassword, email } = await runWithStepUp(() => api.resetPersonPassword(orgId, id));
+      setResetFor({ name, email, tempPassword });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not reset that password');
     }
   };
 
@@ -253,7 +280,7 @@ function ChartBuilder() {
           </button>
         </div>
         {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
-        {justAdded && (
+        {justAdded?.kind === 'new' && (
           <div className="coverage-note" style={{ marginTop: 10 }}>
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: justAdded.emailSent ? 'var(--good, #2c6e4f)' : 'var(--hold)' }}>
               {justAdded.emailSent
@@ -264,10 +291,41 @@ function ChartBuilder() {
               {justAdded.email} &middot; {justAdded.tempPassword}
             </p>
             <p style={{ fontSize: 11, color: 'var(--ink3)', margin: 0 }}>
-              They can log in with this (same sign-in form) and switch to "My agent" to
-              see themselves as their real identity there. Leaving the email field blank
-              next time keeps a new person as a structural chart entry with no login,
-              same as before this existed.
+              They&rsquo;ll be asked to choose their own password the first time they sign in
+              with this, then land in &ldquo;My agent&rdquo; as their real identity here.
+              Leaving the email field blank next time keeps a new person as a structural
+              chart entry with no login, same as before this existed.
+            </p>
+          </div>
+        )}
+        {resetFor && (
+          <div className="coverage-note" style={{ marginTop: 10 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
+              Shown once &mdash; new temporary password for {resetFor.name}
+            </span>
+            <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
+              {resetFor.email ? `${resetFor.email} · ` : ''}{resetFor.tempPassword}
+            </p>
+            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: 0 }}>
+              Their old password no longer works and they&rsquo;ve been signed out
+              everywhere. Hand this over through a channel you trust &mdash; they&rsquo;ll
+              have to choose their own password the moment they sign in with it.
+            </p>
+          </div>
+        )}
+        {justAdded?.kind === 'linked' && (
+          <div className="coverage-note" style={{ marginTop: 10 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--good, #2c6e4f)' }}>
+              {justAdded.email} already had an account &mdash; linked, not re-created
+            </span>
+            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+              {justAdded.name} keeps the password they already use. There&rsquo;s no
+              temporary password to pass along, and nothing for them to set up: this
+              organization simply shows up alongside their existing one(s) next time they
+              sign in.{' '}
+              {justAdded.emailSent
+                ? 'They were emailed a note that they were added here.'
+                : 'No email went out (none is configured), so tell them yourself if they should know.'}
             </p>
           </div>
         )}
@@ -302,7 +360,20 @@ function ChartBuilder() {
                 <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{p.title}</span>
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>{p.team}</span>
               </div>
-              {canEdit && <button className="chip" onClick={() => removePerson(p.id)}>Remove</button>}
+              {canEdit && (
+                <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  {p.accountId != null && (
+                    <button
+                      className="chip"
+                      title={`Issue ${p.name} a new temporary password`}
+                      onClick={() => resetPassword(p.id, p.name)}
+                    >
+                      Reset password
+                    </button>
+                  )}
+                  <button className="chip" onClick={() => removePerson(p.id)}>Remove</button>
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -329,7 +400,13 @@ function OrgAdmins() {
   const [invite, setInvite] = useState(EMPTY_INVITE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [justInvited, setJustInvited] = useState<{ email: string; tempPassword: string; emailSent: boolean } | null>(null);
+  // Same two outcomes as adding a person (see OrgChart's own `justAdded`): a new account
+  // with a one-time temp password, or an existing account simply granted a role here.
+  const [justInvited, setJustInvited] = useState<
+    | { kind: 'new'; email: string; tempPassword: string; emailSent: boolean }
+    | { kind: 'linked'; email: string; emailSent: boolean }
+    | null
+  >(null);
 
   const load = () => api.orgAdmins(orgId).then((d) => setAdmins(d.admins)).catch(() => setAdmins([]));
   // Only fetch once `orgId` is confirmed to be one of this account's real orgs (`org`
@@ -349,10 +426,11 @@ function OrgAdmins() {
     setBusy(true);
     setError(null);
     try {
-      const { admin, tempPassword, emailSent } = await runWithStepUp(() => api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role));
+      const { admin, tempPassword, emailSent, linkedExistingAccount } = await runWithStepUp(() => api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role));
       setInvite(EMPTY_INVITE);
       await load();
-      if (tempPassword) setJustInvited({ email: admin.email, tempPassword, emailSent });
+      if (tempPassword) setJustInvited({ kind: 'new', email: admin.email, tempPassword, emailSent });
+      else if (linkedExistingAccount) setJustInvited({ kind: 'linked', email: admin.email, emailSent });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not invite admin');
     } finally {
@@ -470,7 +548,7 @@ function OrgAdmins() {
 
         {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
 
-        {justInvited && (
+        {justInvited?.kind === 'new' && (
           <div className="coverage-note" style={{ marginTop: 14 }}>
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: justInvited.emailSent ? 'var(--good, #2c6e4f)' : 'var(--hold)' }}>
               {justInvited.emailSent
@@ -481,7 +559,22 @@ function OrgAdmins() {
               {justInvited.tempPassword}
             </p>
             <p style={{ fontSize: 11, color: 'var(--ink3)', margin: 0 }}>
-              They can log in with this and change it afterward.
+              They&rsquo;ll be asked to choose their own password the first time they sign in
+              with this.
+            </p>
+          </div>
+        )}
+        {justInvited?.kind === 'linked' && (
+          <div className="coverage-note" style={{ marginTop: 14 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--good, #2c6e4f)' }}>
+              {justInvited.email} already had an account &mdash; given the role, not re-created
+            </span>
+            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
+              They keep the password they already use, so there&rsquo;s nothing to pass
+              along.{' '}
+              {justInvited.emailSent
+                ? 'They were emailed a note that they now administer this organization.'
+                : 'No email went out (none is configured), so tell them yourself if they should know.'}
             </p>
           </div>
         )}

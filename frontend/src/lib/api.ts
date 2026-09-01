@@ -123,7 +123,10 @@ export interface ConnectorDef {
 /** The one real login identity in this app — a human, not a role. The same account can
  *  administer one or more orgs (org_admins) and/or be linked from one or more `people`
  *  rows (an org-chart identity, one per org) at the same time. */
-export interface Account { id: number; name: string; email: string; }
+/** `mustChangePassword` is true while this account is still on a temp password someone
+ *  else generated for it (an invite, or an admin-initiated reset) — App.tsx's Shell forces
+ *  the change before anything else renders. */
+export interface Account { id: number; name: string; email: string; mustChangePassword: boolean; }
 /** 'owner' can invite/remove/promote other admins for an org (and can't be removed as
  *  the last one); 'admin' can do everything else that mutates org state; 'viewer' can
  *  see admin screens but not change anything. */
@@ -200,10 +203,15 @@ export const api = {
       method: 'POST', body: JSON.stringify({ currentPassword, newPassword }),
     }),
   orgAdmins: (orgId: number) => req<{ admins: OrgAdmin[] }>(`/organizations/${orgId}/admins`),
+  /** `tempPassword` is null — and `linkedExistingAccount` true — when this email already
+   *  had a real account: they keep the login they already have, there's no new credential
+   *  to hand over. The two cases read very differently to whoever invited them, so the UI
+   *  has to tell them apart rather than just showing nothing. */
   inviteOrgAdmin: (orgId: number, email: string, name: string, role: OrgRole) =>
-    req<{ admin: OrgAdmin; tempPassword: string | null; emailSent: boolean }>(`/organizations/${orgId}/admins`, {
-      method: 'POST', body: JSON.stringify({ email, name, role }),
-    }),
+    req<{ admin: OrgAdmin; tempPassword: string | null; emailSent: boolean; linkedExistingAccount: boolean }>(
+      `/organizations/${orgId}/admins`,
+      { method: 'POST', body: JSON.stringify({ email, name, role }) },
+    ),
   setOrgAdminRole: (orgId: number, accountId: number, role: OrgRole) =>
     req<{ ok: true }>(`/organizations/${orgId}/admins/${accountId}`, {
       method: 'PATCH', body: JSON.stringify({ role }),
@@ -218,10 +226,24 @@ export const api = {
    *  org actually gets created, for a brand-new individual or an existing admin alike. */
   createOrganization: (name: string) =>
     req<{ organization: Organization; person: Person }>('/organizations', { method: 'POST', body: JSON.stringify({ name }) }),
+  /** Same two cases as inviteOrgAdmin above: a brand-new account gets a one-time
+   *  `tempPassword`, an email that already has an account gets linked instead
+   *  (`linkedExistingAccount`) and keeps its own password. */
   addPerson: (orgId: number, person: NewPerson) =>
-    req<{ person: Person; tempPassword: string | null; emailSent: boolean }>(`/organizations/${orgId}/people`, { method: 'POST', body: JSON.stringify(person) }),
+    req<{ person: Person; tempPassword: string | null; emailSent: boolean; linkedExistingAccount: boolean }>(
+      `/organizations/${orgId}/people`,
+      { method: 'POST', body: JSON.stringify(person) },
+    ),
   removePerson: (orgId: number, personId: number) =>
     req<{ ok: true }>(`/organizations/${orgId}/people/${personId}`, { method: 'DELETE' }),
+  /** Admin-initiated reset — the no-email half of "I forgot my password". Returns a fresh
+   *  one-time temp password to hand over; 409s for an account that also belongs to another
+   *  organization (see the endpoint's own comment in server.ts). */
+  resetPersonPassword: (orgId: number, personId: number) =>
+    req<{ tempPassword: string; email: string | null }>(
+      `/organizations/${orgId}/people/${personId}/reset-password`,
+      { method: 'POST' },
+    ),
 
   org: (orgId: number) => req<{ people: Person[]; surfaces: Surface[]; neverIngested: string[] }>(`/org?orgId=${orgId}`),
   overview: (orgId: number) => req<{

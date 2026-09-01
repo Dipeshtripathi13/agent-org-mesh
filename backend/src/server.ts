@@ -414,7 +414,20 @@ app.post('/api/auth/change-password', { config: { rateLimit: { max: 10, timeWind
     reply.code(401);
     return { error: 'current password is incorrect' };
   }
+  if (newPassword === currentPassword) {
+    reply.code(400);
+    return { error: 'the new password must be different from the current one' };
+  }
+  // Clears must_change_password in the same statement — this is the only path out of a
+  // forced change, and reaching it required proving the current password.
   await repo.setAccountPassword(accountId, hashPassword(newPassword));
+  // OWASP's Forgot Password guidance: a successful change invalidates every *other*
+  // session, so a cookie stolen before the change stops working. The caller's own session
+  // is spared so changing your password doesn't log you out of the tab you did it in.
+  const token = req.cookies[SESSION_COOKIE];
+  if (token) {
+    await repo.revokeOtherSessionsForAccount(accountId, hashSessionToken(token), new Date().toISOString());
+  }
   return { ok: true };
 });
 
@@ -482,14 +495,21 @@ app.post('/api/organizations/:orgId/admins', async (req, reply) => {
   let target = await repo.getAccountByEmail(normalizedEmail);
   let tempPassword: string | null = null;
   let emailSent = false;
+  const linkedExistingAccount = target != null;
   if (!target) {
     tempPassword = generateTempPassword();
-    const created = await repo.insertAccount(name?.trim() || normalizedEmail, normalizedEmail, hashPassword(tempPassword));
+    // mustChangePassword: this password was generated for them, not chosen by them.
+    const created = await repo.insertAccount(
+      name?.trim() || normalizedEmail,
+      normalizedEmail,
+      hashPassword(tempPassword),
+      true,
+    );
     target = { ...created, passwordHash: null };
   }
   await repo.addOrgAdmin(orgId, target.id, role, new Date().toISOString());
+  const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
   if (tempPassword) {
-    const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
     emailSent = await sendInviteEmail({
       to: target.email,
       recipientName: target.name,
@@ -499,8 +519,26 @@ app.post('/api/organizations/:orgId/admins', async (req, reply) => {
       tempPassword,
       loginUrl: FRONTEND_URL,
     });
+  } else {
+    // Granting an existing account an admin role used to happen in total silence — no
+    // temp password to show (correctly: they already have their own login), but also no
+    // notice to them at all, unlike the add-a-person path right below which has sent one
+    // since a security audit added it. Same gap, same fix, on both paths now.
+    emailSent = await sendAddedToOrgEmail({
+      to: target.email,
+      recipientName: target.name,
+      addedByName: inviter?.name ?? 'A teammate',
+      orgName: org.name,
+      roleDescription: `an admin (${role}) for ${org.name}`,
+      loginUrl: FRONTEND_URL,
+    });
   }
-  return { admin: { accountId: target.id, name: target.name, email: target.email, role }, tempPassword, emailSent };
+  return {
+    admin: { accountId: target.id, name: target.name, email: target.email, role },
+    tempPassword,
+    emailSent,
+    linkedExistingAccount,
+  };
 });
 
 app.patch('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
@@ -590,7 +628,8 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
       linkedExistingAccount = true;
     } else {
       tempPassword = generateTempPassword();
-      const created = await repo.insertAccount(body.name.trim(), email, hashPassword(tempPassword));
+      // mustChangePassword: generated for them, not chosen by them — see schema.sql.
+      const created = await repo.insertAccount(body.name.trim(), email, hashPassword(tempPassword), true);
       accountId = created.id;
     }
   }
@@ -631,6 +670,56 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
     });
   }
   return { person, tempPassword, emailSent, linkedExistingAccount };
+});
+
+/** Admin-initiated password reset for a person in this org's chart — the no-email half of
+ *  "I forgot my password" (see CLAUDE.md's auth notes). Issues a fresh temp password shown
+ *  once to the admin, exactly like an invite, flags the account so its owner is forced to
+ *  choose their own on next login, and revokes every session that account had (locking it
+ *  out of anything already signed in is the point of a reset, not a side effect).
+ *
+ *  Deliberately refuses for an account that also belongs to another organization: an
+ *  `accounts` row is a global login, not a tenant-owned identity, so minting a password
+ *  for one would hand this org's admin a working login to someone else's org. See
+ *  repo.accountBelongsToOtherOrgs for the full reasoning. Those accounts need a
+ *  self-service reset instead — the email-token flow this project hasn't built yet. */
+app.post('/api/organizations/:orgId/people/:personId/reset-password', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization', { elevated: true });
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+
+  const personId = Number((req.params as { personId: string }).personId);
+  const person = await repo.getPerson(personId).catch(() => null);
+  const personOrgId = person ? await repo.getOrgIdOfPerson(personId).catch(() => null) : null;
+  if (!person || personOrgId !== orgId) {
+    reply.code(404);
+    return { error: 'no such person in this organization' };
+  }
+  if (person.accountId == null) {
+    reply.code(400);
+    return { error: `${person.name} has no login to reset — add an email for them first.` };
+  }
+  if (person.accountId === check.accountId) {
+    reply.code(400);
+    return { error: 'Use "Change password" for your own account rather than resetting it here.' };
+  }
+  if (await repo.accountBelongsToOtherOrgs(person.accountId, orgId)) {
+    reply.code(409);
+    return {
+      error:
+        `${person.name} also belongs to another organization, so their login isn't yours to reset — ` +
+        'they need to reset it themselves.',
+    };
+  }
+
+  const tempPassword = generateTempPassword();
+  await repo.setAccountPassword(person.accountId, hashPassword(tempPassword), true);
+  await repo.revokeAllSessionsForAccount(person.accountId, new Date().toISOString());
+  const account = await repo.getAccount(person.accountId);
+  return { tempPassword, email: account?.email ?? null };
 });
 
 app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
