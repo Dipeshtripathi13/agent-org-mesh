@@ -140,7 +140,7 @@ for (const p of PROBES) {
     inconclusive += 1;
     const msg = e instanceof Error ? e.message : String(e);
     console.log(`??   ${label} ---  network/TLS error: ${msg}`);
-    console.log(`     ${' '.repeat(label.length)}      probably local egress, not the vendor — re-run from the deployed container before concluding anything`);
+    console.log('       -> probably your egress, not the vendor. Re-run from the deployed container before concluding the endpoint is gone.');
   }
 }
 
