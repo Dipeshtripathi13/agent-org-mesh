@@ -75,7 +75,13 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   // never become a real ConnectorDef; see the module comment above). `openKey === 'gmail'`
   // is a reserved sentinel that can never collide with a real SurfaceKey or runtime key.
   const [gmail, setGmail] = useState<{ connected: boolean; email: string | null } | null>(null);
-  const gmailAvailable = owner.kind === 'person';
+  // Whether this *deployment* has Google OAuth credentials at all, straight from the
+  // catalog endpoint. Without it, "Connect Gmail" is a link to a 503 that renders as raw
+  // JSON in a new tab — found on the real deployment, which has no Google credentials.
+  // Starts true so the entry doesn't flicker out of the list on first paint for the
+  // deployments where it does work.
+  const [googleOAuthConfigured, setGoogleOAuthConfigured] = useState(true);
+  const gmailAvailable = owner.kind === 'person' && googleOAuthConfigured;
 
   // GitHub/Jira/Calendar used to have their own dedicated sections elsewhere on the page;
   // now only Calendar stays excluded, and only for a personal (no-org) account, since it
@@ -102,6 +108,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   const load = () =>
     Promise.all([api.connectorsCatalog(), statusReq(), tokensReq(), runtimesReq(), gmailReq()]).then(
       ([catRes, statusRes, tokensRes, runtimeRes, gmailRes]) => {
+        setGoogleOAuthConfigured(catRes.oauth.google);
         setCatalog(catRes.catalog.filter((c) => !handledElsewhere.has(c.key)));
         setStatuses(statusRes.statuses);
         setTokens(tokensRes.tokens);

@@ -1757,7 +1757,23 @@ const STATUS_HANDLERS: Partial<Record<SurfaceKey, StatusHandler>> = {
 
 /** No auth needed — same posture as GET /api/runtimes: this is catalog metadata, not
  *  anyone's connection state. */
-app.get('/api/connectors/catalog', async () => ({ catalog: CONNECTOR_CATALOG }));
+app.get('/api/connectors/catalog', async () => {
+  // The catalog is static product surface, but whether a connector can *actually* be
+  // connected on this deployment isn't: the Google-backed ones need GOOGLE_CLIENT_ID/
+  // SECRET/REDIRECT_URI set by whoever runs the platform, exactly like the 'coming-soon'
+  // tier's "needs a developer app registered with that vendor first". Found live on the
+  // real deployment, which has no Google credentials at all: the dropdown offered Google
+  // Calendar as 'live' and Gmail as a plain link, and clicking either opened a new tab
+  // showing the raw JSON `{"error":"Google OAuth is not configured on the backend — see
+  // backend/.env.example"}`. Reporting the real per-deployment status here reuses the
+  // disabled-option path the catalog already drives, instead of offering a button that
+  // cannot work and blaming a .env file the person reading it has never heard of.
+  const google = googleConfigured();
+  const catalog = google
+    ? CONNECTOR_CATALOG
+    : CONNECTOR_CATALOG.map((c) => (c.authType === 'oauth-google' ? { ...c, status: 'coming-soon' as const } : c));
+  return { catalog, oauth: { google } };
+});
 
 /** Status for every connector at once — the ConnectorsPanel's one fetch on load. GitHub
  *  and Jira also keep their own bespoke status endpoints (kept for backward

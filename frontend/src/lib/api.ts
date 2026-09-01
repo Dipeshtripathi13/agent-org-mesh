@@ -446,7 +446,12 @@ export const api = {
   /** The generic plug-and-play framework for every connector beyond GitHub/Jira/Gmail —
    *  one catalog, one connect/disconnect/status shape, driving ConnectorsPanel's dropdown
    *  and dynamic per-tool form entirely from data instead of one component per tool. */
-  connectorsCatalog: () => req<{ catalog: ConnectorDef[] }>('/connectors/catalog'),
+  /** `oauth.google` is whether *this deployment* has Google OAuth credentials configured.
+   *  The catalog itself is static product surface; this isn't. When it's false the server
+   *  already reports the Google-backed connectors as 'coming-soon', and the panel hides
+   *  the bespoke Gmail entry — otherwise "Connect Gmail" opens a tab of raw JSON. */
+  connectorsCatalog: () =>
+    req<{ catalog: ConnectorDef[]; oauth: { google: boolean } }>('/connectors/catalog'),
   personConnectors: (personId: number) =>
     req<{ statuses: Record<string, { connected: boolean; label: string | null }> }>(`/person/${personId}/connectors`),
   connectConnector: (personId: number, key: string, fields: Record<string, string>) =>
