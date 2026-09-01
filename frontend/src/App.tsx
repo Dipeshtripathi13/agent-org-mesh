@@ -22,15 +22,6 @@ import { SetUpMyAgent } from './pages/SetUpMyAgent';
 import { WhatItKnows } from './pages/WhatItKnows';
 import { WhoAsked } from './pages/WhoAsked';
 
-function useClock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
-
 const ADMIN = [
   { key: 'overview', label: 'Overview', el: <Overview /> },
   { key: 'organizations', label: 'Organizations', el: <OrgSetup /> },
@@ -185,17 +176,12 @@ function Topbar({
     }
   }, [panel, meId, account, hasOwnIdentity]);
 
-  const now = useClock();
-  const clock = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const date = now.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
-
   return (
     <header className="topbar">
       <span className="brand">Agent Org Mesh</span>
       {panel === 'admin' && account && <OrgSwitcher />}
       {showMeSwitcher && <MeSwitcher />}
       <span className="spacer" />
-      <span className="clock">{date} &middot; {clock}</span>
       <span className="readonly"><i className="dot-live" />Read-only &middot; no write scope</span>
       {account && (
         <ProfileMenu
