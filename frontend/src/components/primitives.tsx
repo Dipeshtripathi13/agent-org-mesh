@@ -1,4 +1,40 @@
+import { useEffect, useRef, useState } from 'react';
 import type { ResponseItem, SurfaceState, Tier } from '../lib/api';
+
+/** A metric tile's number counting up from 0 on first mount instead of just appearing —
+ *  the one place in this pass motion touches real data, not just chrome. Re-triggers
+ *  whenever `value` itself changes (a different org selected, a refetch), not on every
+ *  render. Skips the animation entirely under prefers-reduced-motion or for a value that
+ *  can't sensibly count up (NaN) — jumps straight to the final number either way. */
+export function AnimatedNumber({ value, durationMs = 700 }: { value: number; durationMs?: number }) {
+  const [display, setDisplay] = useState(value);
+  const prevValue = useRef(value);
+  const reduceMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  useEffect(() => {
+    if (reduceMotion || !Number.isFinite(value) || value === prevValue.current) {
+      setDisplay(value);
+      prevValue.current = value;
+      return;
+    }
+    const from = prevValue.current;
+    const delta = value - from;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - (1 - t) * (1 - t) * (1 - t); // ease-out-cubic
+      setDisplay(Math.round(from + delta * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else prevValue.current = value;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return <>{display}</>;
+}
 
 const TIER_LABEL: Record<Tier, string> = {
   T1: 'T1', T2: 'T2', T3: 'T3', WONT: "\u25EB won't", CANT: '\u2298 can\u0027t',

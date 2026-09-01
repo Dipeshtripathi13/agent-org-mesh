@@ -27,7 +27,7 @@ export function AuditLog() {
         never re-derived &mdash; so a later policy change cannot rewrite it.
       </p>
 
-      <div className="panel">
+      <div className="panel stagger">
         <header>
           <span className="label">
             {data.entries.length} exchanges &middot; chain {data.integrity.valid ? 'verified' : 'BROKEN'}

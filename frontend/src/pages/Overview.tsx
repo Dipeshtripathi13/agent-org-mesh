@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useOrg } from '../lib/OrgContext';
-import { CoverageKey, swatchStyle } from '../components/primitives';
+import { AnimatedNumber, CoverageKey, swatchStyle } from '../components/primitives';
 
 type Data = Awaited<ReturnType<typeof api.overview>>;
 
@@ -44,10 +44,10 @@ export function Overview() {
         the denominator rather than counted as failures.
       </p>
 
-      <div className="cards">
+      <div className="cards stagger">
         <div className="card">
           <h3>Org coverage</h3>
-          <div className="metric">{data.coverage.percent}<small>%</small></div>
+          <div className="metric"><AnimatedNumber value={data.coverage.percent} /><small>%</small></div>
           <div className="bar">
             <div style={{ flex: bands.connected / total, ...swatchStyle('connected') }} />
             <div style={{ flex: bands.partial / total, ...swatchStyle('partial') }} />
@@ -60,7 +60,7 @@ export function Overview() {
         <div className="card">
           <h3>Agents live</h3>
           <div className="metric">
-            {data.coverage.agentsLive}<small>/{data.coverage.totalPeople}</small>
+            <AnimatedNumber value={data.coverage.agentsLive} /><small>/{data.coverage.totalPeople}</small>
           </div>
           <p className="note">
             {data.coverage.agentsLive === data.coverage.totalPeople
@@ -71,13 +71,13 @@ export function Overview() {
 
         <div className="card">
           <h3>Queries logged</h3>
-          <div className="metric">{data.queries}</div>
+          <div className="metric"><AnimatedNumber value={data.queries} /></div>
           <p className="note">Each written to the subject&rsquo;s own log, attributed</p>
         </div>
 
         <div className="card">
           <h3>Refusals</h3>
-          <div className="metric">{data.refusals.total}</div>
+          <div className="metric"><AnimatedNumber value={data.refusals.total} /></div>
           <p className="note">
             {data.refusals.wont} won&rsquo;t answer &middot; {data.refusals.cant} can&rsquo;t answer
           </p>
@@ -85,7 +85,7 @@ export function Overview() {
 
         <div className="card accent">
           <h3>Silent gaps</h3>
-          <div className="metric">{data.silentGaps}</div>
+          <div className="metric"><AnimatedNumber value={data.silentGaps} /></div>
           <p className="note">Confident answers on incomplete coverage &mdash; drive this to zero</p>
         </div>
       </div>

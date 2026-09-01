@@ -39,7 +39,7 @@ export function WhatItKnows() {
         out of every future answer immediately, but stays visible here as history.
       </p>
 
-      <div style={{ display: 'grid', gap: 12, marginTop: 18 }}>
+      <div className="stagger" style={{ display: 'grid', gap: 12, marginTop: 18 }}>
         {active.map((c) => (
           <div key={c.id} className={`item t-${c.tier}`} style={{ marginBottom: 0 }}>
             <div className="row">

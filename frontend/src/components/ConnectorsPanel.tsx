@@ -294,7 +294,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
         {totalConnectedCount === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--ink3)', margin: 0 }}>Nothing connected yet.</p>
         ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
+          <div className="stagger" style={{ display: 'grid', gap: 8 }}>
             {connected.map((c) => (
               <div key={c.key} className="runtime-card" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>

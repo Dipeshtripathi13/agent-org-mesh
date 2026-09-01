@@ -1,33 +1,63 @@
 :root {
   --ink: #10161a; --ink2: #3f4b53; --ink3: #6b7780; --ink4: #93a0a8;
-  --rule: #dfe3e6; --rule2: #c5ccd1; --bg: #f6f7f8; --panel: #fff;
+  --rule: #dfe3e6; --rule2: #c5ccd1; --bg: #f6f5f3; --panel: #fff;
   --ok: #157f6d; --partial: #9a6b12; --stale: #8a7a55;
   --t1: #1f5f8b; --t2: #8a6410; --t3: #6a5f8f; --hold: #4a5a6e;
   --hatch: repeating-linear-gradient(135deg, #c5ccd1 0 3px, #eef1f3 3px 6px);
   --hold-bg: repeating-linear-gradient(135deg, #e7ebee 0 4px, #f2f4f6 4px 8px);
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
 
   /* Primary accent — deliberately a berry/plum, outside every hue already claimed by a
      tier or status color (t1 blue, t2/partial amber, t3 purple, ok teal-green, stale
      khaki) so an interactive/brand element is never mistaken for a disclosure-tier or
      connector-health signal. Kept at the same muted, document-like saturation as the
      rest of the palette rather than a bright SaaS-purple, so it reads as this product's
-     own accent, not a bolt-on. */
+     own accent, not a bolt-on. Unchanged in this redesign pass — only the surrounding
+     type/space/motion system got more expressive, not the color itself. */
   --accent: #7a2e54;
   --accent-hover: #5e2340;
   --accent-bg: #fbeef4;
   --accent-border: #e3bdd0;
-  --shadow-1: 0 1px 2px rgba(16, 22, 26, 0.06);
-  --shadow-2: 0 4px 14px rgba(16, 22, 26, 0.10);
-  --radius: 3px;
+  --accent-rgb: 122, 46, 84;
+
+  /* ---------- type scale ----------
+     A real scale (1.25 ratio-ish, hand-tuned) replacing the old flat 10-19px range —
+     headings and hero numbers now have somewhere to go, while data/label text (still
+     IBM Plex Mono, unchanged pairing) stays exactly where it was for density. */
+  --text-2xs: 10px; --text-xs: 11px; --text-sm: 12.5px; --text-base: 14.5px;
+  --text-md: 16.5px; --text-lg: 20px; --text-xl: 25px; --text-2xl: 32px; --text-3xl: 42px;
+
+  /* ---------- spacing scale ----------
+     4px base. Replaces the ad hoc 6/7/9/10/11/12/14/18px values scattered through
+     inline styles with one consistent rhythm. */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px;
+  --sp-6: 28px; --sp-7: 36px; --sp-8: 48px; --sp-9: 64px;
+
+  /* ---------- elevation ----------
+     Tinted with the accent instead of pure black, so a raised card reads as *this
+     product's* depth, not a generic Material shadow. Three stops: resting, hover, raised
+     (modals/dropdowns). */
+  --shadow-1: 0 1px 2px rgba(var(--accent-rgb), 0.04), 0 1px 1px rgba(16, 22, 26, 0.03);
+  --shadow-2: 0 6px 20px rgba(var(--accent-rgb), 0.08), 0 2px 6px rgba(16, 22, 26, 0.05);
+  --shadow-3: 0 20px 48px rgba(var(--accent-rgb), 0.14), 0 6px 16px rgba(16, 22, 26, 0.08);
+
+  --radius: 10px; --radius-sm: 6px; --radius-lg: 16px;
+
+  /* ---------- motion ----------
+     --ease kept for every pre-existing color/border transition; the two new curves are
+     for the entrance/reveal system below (an expo-out landing feels less mechanical than
+     linear ease for a card arriving on screen). */
   --ease: 150ms ease;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 140ms; --dur-base: 240ms; --dur-slow: 420ms;
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--ink);
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  font-family: var(--sans);
+  font-size: var(--text-base); line-height: 1.55; -webkit-font-smoothing: antialiased;
 }
 button { font: inherit; cursor: pointer; }
 a { color: var(--accent); }
@@ -37,63 +67,112 @@ a:hover { color: var(--accent-hover); }
    treatment instead of relying on the browser default (or nothing) per form. */
 input, select, textarea {
   transition: border-color var(--ease), box-shadow var(--ease);
+  font-family: var(--sans); font-size: var(--text-sm);
 }
 input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--ink4); }
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-bg); outline: none;
 }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 1px; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* ---------- motion system ----------
+   A page's content fades and rises into place on mount/route-change (.main), and any
+   list container marked .stagger reveals its children one after another instead of all
+   at once — claims, connectors, escalations, audit rows, org-tree rows. Both degrade to
+   an instant, fully-visible state under reduced motion (the opacity:0 base state must
+   never be the one a reduced-motion visitor gets stuck on). */
+@keyframes fade-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes skeleton-shimmer { 0% { background-position: 160% 0; } 100% { background-position: -60% 0; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+.main { animation: fade-rise var(--dur-slow) var(--ease-out) both; }
+
+.stagger > * { opacity: 0; animation: fade-rise var(--dur-base) var(--ease-out) both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 28ms; }
+.stagger > *:nth-child(3) { animation-delay: 56ms; }
+.stagger > *:nth-child(4) { animation-delay: 84ms; }
+.stagger > *:nth-child(5) { animation-delay: 112ms; }
+.stagger > *:nth-child(6) { animation-delay: 140ms; }
+.stagger > *:nth-child(7) { animation-delay: 168ms; }
+.stagger > *:nth-child(8) { animation-delay: 196ms; }
+.stagger > *:nth-child(9) { animation-delay: 224ms; }
+.stagger > *:nth-child(10) { animation-delay: 252ms; }
+.stagger > *:nth-child(11) { animation-delay: 280ms; }
+.stagger > *:nth-child(12) { animation-delay: 308ms; }
+.stagger > *:nth-child(n+13) { animation-delay: 330ms; }
+
+.skeleton {
+  position: relative; overflow: hidden; border-radius: var(--radius-sm);
+  background: var(--rule); color: transparent !important; pointer-events: none;
+}
+.skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.75) 50%, transparent 100%);
+  background-size: 60% 100%; background-repeat: no-repeat; background-position: 160% 0;
+  animation: skeleton-shimmer 1.3s ease-in-out infinite;
+}
+.skeleton-text { height: 0.9em; margin: 3px 0; }
+.skeleton-block { height: 64px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+  .main, .stagger > *, .skeleton::after, .card, .btn, .chip, .navitem { animation: none !important; }
+  .stagger > * { opacity: 1 !important; transform: none !important; }
+}
 
 /* ---------- shared interactive primitives ----------
-   Most buttons across this app are still one-off inline styles (pre-dating this pass);
-   these two classes are the reusable, accent-aware alternative, applied at the highest-
-   traffic call sites (auth, primary "create/save" actions) rather than a full rewrite of
-   every button in one pass. */
+   The reusable, accent-aware button/chip system every page should build on instead of
+   one-off inline styles — expanded this pass with real hover motion (lift + shadow, not
+   just a color swap) and a slightly larger touch target to match the bigger type scale. */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 34px; padding: 0 14px; font-size: 12.5px; font-weight: 500;
-  border-radius: var(--radius); border: 1px solid transparent; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 16px; font-size: var(--text-sm); font-weight: 500;
+  border-radius: var(--radius-sm); border: 1px solid transparent; cursor: pointer;
   transition: background-color var(--ease), border-color var(--ease), color var(--ease),
-    transform 100ms ease, box-shadow var(--ease);
+    transform var(--dur-fast) var(--ease-out), box-shadow var(--ease);
 }
-.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.98); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-1); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-2); transform: translateY(-1px); }
 .btn-secondary { background: #fff; border-color: var(--rule2); color: var(--ink2); }
-.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); transform: translateY(-1px); box-shadow: var(--shadow-1); }
 
 .app { display: flex; flex-direction: column; min-height: 100%; }
 .topbar {
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  min-height: 48px; padding: 8px 16px; background: var(--panel);
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  min-height: 58px; padding: 10px 22px; background: var(--panel);
   border-bottom: 1px solid var(--rule2); position: sticky; top: 0; z-index: 10;
+  box-shadow: var(--shadow-1);
 }
-.brand { font-weight: 600; letter-spacing: -0.01em; }
-.tenant { font-family: var(--mono); font-size: 10px; color: var(--ink4); }
+.brand { font-weight: 700; letter-spacing: -0.02em; font-size: var(--text-md); }
+.tenant { font-family: var(--mono); font-size: var(--text-xs); color: var(--ink4); }
 .spacer { flex: 1; }
 .readonly {
-  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
-  border: 1px solid var(--rule2); color: var(--ink2); padding: 2px 7px; border-radius: 2px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs);
+  border: 1px solid var(--rule2); color: var(--ink2); padding: 4px 10px; border-radius: 999px;
+  background: #fff;
 }
-.dot-live { width: 5px; height: 5px; background: var(--ok); border-radius: 50%; }
+.dot-live { width: 6px; height: 6px; background: var(--ok); border-radius: 50%; box-shadow: 0 0 0 3px rgba(21,127,109,0.15); }
 
-.clock { font-family: var(--mono); font-size: 11px; color: var(--ink3); white-space: nowrap; }
+.clock { font-family: var(--mono); font-size: var(--text-xs); color: var(--ink3); white-space: nowrap; }
 
-.whoami { display: inline-flex; align-items: center; gap: 7px; }
+.whoami { display: inline-flex; align-items: center; gap: 8px; }
 .avatar-dot {
-  width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
-  color: #fff; font-style: normal; font-size: 11px; font-weight: 600;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: linear-gradient(155deg, var(--accent), var(--accent-hover));
+  color: #fff; font-style: normal; font-size: var(--text-xs); font-weight: 700;
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  box-shadow: var(--shadow-1);
 }
-.whoami-text { display: flex; flex-direction: column; line-height: 1.2; }
-.whoami-text strong { font-size: 12px; font-weight: 500; }
-.whoami-title { font-size: 10px; color: var(--ink4); white-space: nowrap; }
+.whoami-text { display: flex; flex-direction: column; line-height: 1.25; }
+.whoami-text strong { font-size: var(--text-sm); font-weight: 600; }
+.whoami-title { font-size: var(--text-2xs); color: var(--ink4); white-space: nowrap; }
 
-.tabs { display: flex; border: 1px solid var(--rule2); border-radius: 2px; overflow: hidden; }
+.tabs { display: flex; border: 1px solid var(--rule2); border-radius: var(--radius-sm); overflow: hidden; background: #fff; }
 .tabs button {
-  height: 32px; padding: 0 12px; font-size: 12px; border: 0; background: #fff; color: var(--ink2);
+  height: 36px; padding: 0 14px; font-size: var(--text-sm); border: 0; background: #fff; color: var(--ink2);
   transition: background-color var(--ease), color var(--ease);
 }
 .tabs button:hover[aria-pressed='false'] { background: var(--accent-bg); color: var(--accent-hover); }
@@ -104,60 +183,69 @@ input:focus, select:focus, textarea:focus {
    live here now, one menu instead of scattered topbar buttons. See App.tsx's ProfileMenu. */
 .profile-menu { position: relative; }
 button.whoami {
-  border: 1px solid transparent; border-radius: 2px; background: none; cursor: pointer;
-  padding: 3px 6px; transition: background-color var(--ease), border-color var(--ease);
+  border: 1px solid transparent; border-radius: var(--radius-sm); background: none; cursor: pointer;
+  padding: 5px 9px; transition: background-color var(--ease), border-color var(--ease);
 }
 button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--accent-bg); border-color: var(--accent-border); }
 .profile-dropdown {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 160px;
-  background: var(--panel); border: 1px solid var(--rule2); border-radius: 2px;
-  box-shadow: var(--shadow-2); padding: 4px; display: flex; flex-direction: column;
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; min-width: 180px;
+  background: var(--panel); border: 1px solid var(--rule2); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-3); padding: 6px; display: flex; flex-direction: column;
+  animation: pop-in var(--dur-fast) var(--ease-out) both;
 }
 .profile-dropdown button {
-  text-align: left; padding: 7px 9px; font-size: 12px; border: 0; background: none;
-  color: var(--ink2); border-radius: 2px; cursor: pointer;
+  text-align: left; padding: 9px 11px; font-size: var(--text-sm); border: 0; background: none;
+  color: var(--ink2); border-radius: var(--radius-sm); cursor: pointer; transition: background-color var(--ease), color var(--ease);
 }
 .profile-dropdown button:hover { background: var(--accent-bg); color: var(--accent-hover); }
-.profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 4px; padding-top: 9px; }
+.profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 5px; padding-top: 11px; }
+.profile-dropdown button.danger:hover { background: var(--hold-bg); color: var(--hold); }
 
 /* Step-up re-auth prompt — an inline modal over whatever sensitive action triggered it
    (StepUpContext.tsx), not a full-page gate. */
 .stepup-overlay {
-  position: fixed; inset: 0; background: rgba(23,24,28,0.35); z-index: 100;
+  position: fixed; inset: 0; background: rgba(16,17,20,0.45); backdrop-filter: blur(2px); z-index: 100;
   display: flex; align-items: center; justify-content: center; padding: 20px;
+  animation: fade-rise var(--dur-fast) var(--ease-out) both;
 }
 
 .org-switcher {
-  height: 32px; border: 1px solid var(--rule2); border-radius: 2px; background: #fff;
-  font-size: 12px; padding: 0 8px; color: var(--ink); max-width: 200px;
-  transition: border-color var(--ease);
+  height: 36px; border: 1px solid var(--rule2); border-radius: var(--radius-sm); background: #fff;
+  font-size: var(--text-sm); padding: 0 10px; color: var(--ink); max-width: 200px;
+  transition: border-color var(--ease), box-shadow var(--ease);
 }
-.org-switcher:hover { border-color: var(--accent); }
+.org-switcher:hover { border-color: var(--accent); box-shadow: var(--shadow-1); }
 
 .body { display: flex; flex: 1; align-items: stretch; flex-wrap: wrap; }
 .sidebar {
-  width: 214px; min-width: 180px; flex-shrink: 0; background: var(--panel);
-  border-right: 1px solid var(--rule); padding: 14px 0;
+  width: 232px; min-width: 190px; flex-shrink: 0; background: var(--panel);
+  border-right: 1px solid var(--rule); padding: var(--sp-5) 0;
 }
 .sidebar h2 {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--ink4); padding: 0 14px 8px; margin: 0; font-weight: 400;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink4); padding: 0 var(--sp-4) var(--sp-2); margin: 0; font-weight: 400;
 }
-.navlist { display: flex; flex-direction: column; }
+.navlist { display: flex; flex-direction: column; gap: 1px; }
 .navitem {
   width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 8px;
-  border: 0; background: transparent; color: var(--ink2); font-size: 12.5px; padding: 7px 14px;
-  transition: background-color var(--ease), color var(--ease);
+  border: 0; background: transparent; color: var(--ink2); font-size: var(--text-sm);
+  padding: 9px var(--sp-4); margin: 0 var(--sp-2); width: calc(100% - var(--sp-2) * 2);
+  border-radius: var(--radius-sm); position: relative;
+  transition: background-color var(--ease), color var(--ease), transform var(--dur-fast) var(--ease-out);
 }
-.navitem:hover:not([aria-current]) { background: #f1f3f4; color: var(--ink); }
+.navitem:hover:not([aria-current]) { background: #efeeec; color: var(--ink); transform: translateX(2px); }
 .navitem[aria-current='page'] {
-  background: var(--accent-bg); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); font-weight: 500;
+  background: var(--accent-bg); color: var(--accent); font-weight: 600;
+}
+.navitem[aria-current='page']::before {
+  content: ''; position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 60%; background: var(--accent); border-radius: 0 3px 3px 0;
 }
 .navfoot {
-  margin: 14px 14px 0; padding-top: 12px; border-top: 1px solid #f1f3f4;
-  font-size: 11px; color: var(--ink3);
+  margin: var(--sp-4) var(--sp-4) 0; padding-top: var(--sp-3); border-top: 1px solid #f1f3f4;
+  font-size: var(--text-xs); color: var(--ink3);
 }
-.main { flex: 1; min-width: 340px; padding: 20px 22px 60px; }
+.main { flex: 1; min-width: 340px; padding: var(--sp-6) var(--sp-7) 72px; }
 
 /* ---------- responsive: narrow viewports ----------
    Sidebar becomes a horizontal, scrollable strip above the content instead of a fixed
@@ -165,52 +253,54 @@ button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--acc
    the primary nav so it doesn't eat a third of a phone's width. */
 @media (max-width: 720px) {
   .body { flex-direction: column; flex-wrap: nowrap; }
-  .sidebar { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid var(--rule); padding: 8px 0; }
+  .sidebar { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid var(--rule); padding: var(--sp-2) 0; }
   .sidebar h2 { display: none; }
-  .navlist { flex-direction: row; overflow-x: auto; gap: 2px; padding: 0 10px; -webkit-overflow-scrolling: touch; }
-  .navitem { width: auto; flex: none; white-space: nowrap; border-radius: var(--radius); padding: 7px 11px; }
-  .navitem[aria-current='page'] { box-shadow: none; }
+  .navlist { flex-direction: row; overflow-x: auto; gap: 2px; padding: 0 var(--sp-3); -webkit-overflow-scrolling: touch; }
+  .navitem { width: auto; flex: none; white-space: nowrap; padding: 8px 13px; }
+  .navitem[aria-current='page']::before { display: none; }
   .navfoot { display: none; }
-  .main { min-width: 0; padding: 16px 14px 40px; }
+  .main { min-width: 0; padding: var(--sp-4) var(--sp-3) 40px; }
 }
 @media (max-width: 480px) {
   .clock { display: none; }
-  .topbar { gap: 10px; padding: 0 10px; }
+  .topbar { gap: 10px; padding: 0 var(--sp-3); }
 }
 .crumb {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--ink4);
 }
-h1 { font-size: 19px; font-weight: 600; margin: 4px 0 0; letter-spacing: -0.01em; }
-.sub { font-size: 12px; color: var(--ink3); margin-top: 3px; max-width: 78ch; text-wrap: pretty; }
+h1 { font-size: var(--text-2xl); font-weight: 700; margin: 6px 0 0; letter-spacing: -0.025em; text-wrap: balance; }
+.sub { font-size: var(--text-base); color: var(--ink3); margin-top: 6px; max-width: 68ch; text-wrap: pretty; line-height: 1.6; }
 
-.cards { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.cards { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-top: var(--sp-6); }
 .card {
-  background: var(--panel); border: 1px solid var(--rule); padding: 12px 14px;
-  flex: 1 1 178px; min-width: 178px; transition: box-shadow var(--ease), border-color var(--ease);
+  background: var(--panel); border: 1px solid var(--rule); padding: var(--sp-4) var(--sp-5);
+  flex: 1 1 190px; min-width: 190px; border-radius: var(--radius);
+  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--ease), transform var(--dur-base) var(--ease-out);
 }
-.card:hover { box-shadow: var(--shadow-1); border-color: var(--rule2); }
-.card.accent { border-color: var(--accent); }
+.card:hover { box-shadow: var(--shadow-2); border-color: var(--rule2); transform: translateY(-2px); }
+.card.accent { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .card h3 {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--ink3); margin: 0; font-weight: 400;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink3); margin: 0; font-weight: 500;
 }
-.metric { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin-top: 4px; }
-.metric small { font-size: 15px; color: var(--ink3); font-weight: 400; }
-.note { font-size: 11px; color: var(--ink3); margin-top: 12px; }
+.metric { font-size: var(--text-3xl); font-weight: 700; letter-spacing: -0.03em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.metric small { font-size: var(--text-md); color: var(--ink3); font-weight: 400; }
+.note { font-size: var(--text-xs); color: var(--ink3); margin-top: var(--sp-4); }
 
-.bar { display: flex; gap: 2px; height: 6px; margin-top: 8px; }
-.key { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; }
-.key span { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink3); }
-.swatch { width: 9px; height: 9px; display: inline-block; }
+.bar { display: flex; gap: 2px; height: 7px; margin-top: var(--sp-2); border-radius: 4px; overflow: hidden; }
+.bar > div { transition: flex-basis var(--dur-slow) var(--ease-out); }
+.key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: var(--sp-2); }
+.key span { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--ink3); }
+.swatch { width: 9px; height: 9px; display: inline-block; border-radius: 2px; }
 
-.panel { background: var(--panel); border: 1px solid var(--rule); margin-top: 18px; }
+.panel { background: var(--panel); border: 1px solid var(--rule); margin-top: var(--sp-6); border-radius: var(--radius); overflow: hidden; }
 .panel > header {
-  padding: 12px 14px; border-bottom: 1px solid var(--rule);
-  display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline;
+  padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--rule);
+  display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: baseline;
 }
 .panel > header .label {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--ink3);
 }
 /* overflow-x: auto here (not hidden) is a defensive backstop, not the primary fix for
@@ -220,37 +310,40 @@ h1 { font-size: 19px; font-weight: 600; margin: 4px 0 0; letter-spacing: -0.01em
    this keeps it to a scrollbar on the one panel instead of dragging the whole page into
    horizontal scroll. Native <select> dropdowns render above page content regardless of
    an ancestor's overflow, so this doesn't clip them. */
-.panel .inner { padding: 14px; overflow-x: auto; }
+.panel .inner { padding: var(--sp-5); overflow-x: auto; }
 
 table { border-collapse: collapse; width: 100%; }
 th {
-  text-align: left; padding: 8px 10px; background: #f1f3f4; font-weight: 500;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  text-align: left; padding: var(--sp-3) var(--sp-3); background: #f3f2ef; font-weight: 600;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--ink3); border-bottom: 1px solid var(--rule2);
 }
-td { padding: 6px 10px; border-bottom: 1px solid #f1f3f4; }
+td { padding: var(--sp-3) var(--sp-3); border-bottom: 1px solid #f1f3f4; font-size: var(--text-sm); }
 tbody tr { transition: background-color var(--ease); }
-tbody tr:hover { background: #fafbfb; }
+tbody tr:hover { background: #faf9f7; }
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-.cell { width: 34px; height: 18px; border-radius: 2px; border: 1px solid transparent; }
-.pct { font-family: var(--mono); font-size: 11px; }
+.cell { width: 36px; height: 20px; border-radius: 3px; border: 1px solid transparent; transition: transform var(--dur-fast) var(--ease-out); }
+.cell:hover { transform: scale(1.18); position: relative; z-index: 1; box-shadow: var(--shadow-2); }
+.pct { font-family: var(--mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 
 .chip {
-  font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 2px;
+  font-family: var(--mono); font-size: var(--text-xs); padding: 4px 10px; border-radius: 999px;
   border: 1px solid var(--rule2); background: #fff; color: var(--ink2); cursor: pointer;
-  transition: background-color var(--ease), border-color var(--ease), color var(--ease);
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease), transform var(--dur-fast) var(--ease-out);
 }
-.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); transform: translateY(-1px); }
 .chip[aria-pressed='true'] { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 .chip[aria-pressed='true']:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* Evidence chip — tier-tinted, distinct from filter/toggle chips. Solid border for a
    resolvable T1 artifact, dashed for a T3 inference the reader shouldn't treat as fact. */
 .evidence-chip {
-  font-family: var(--mono); font-size: 11px; padding: 2px 6px; border-radius: 2px;
-  cursor: pointer; margin-top: 8px; border: 1px solid;
+  font-family: var(--mono); font-size: var(--text-xs); padding: 4px 9px; border-radius: var(--radius-sm);
+  cursor: pointer; margin-top: var(--sp-2); border: 1px solid;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--ease);
 }
+.evidence-chip:hover { transform: translateY(-1px); box-shadow: var(--shadow-1); }
 .evidence-chip.e-T1 { background: #eef4f8; border-color: #bcd2e0; color: var(--t1); }
 .evidence-chip.e-T2 { background: #fdf6e7; border-color: #d9bd7a; color: #6f5010; }
 .evidence-chip.e-T3 { background: #f7f5fb; border-color: #a99fc4; border-style: dashed; color: #574c7d; }
@@ -259,22 +352,25 @@ tbody tr:hover { background: #fafbfb; }
 }
 
 .search-field {
-  display: inline-flex; align-items: center; gap: 6px; height: 32px;
-  border: 1px solid var(--rule2); background: #fff; border-radius: 2px; padding: 0 9px;
+  display: inline-flex; align-items: center; gap: 7px; height: 38px;
+  border: 1px solid var(--rule2); background: #fff; border-radius: var(--radius-sm); padding: 0 12px;
+  transition: border-color var(--ease), box-shadow var(--ease);
 }
-.search-field .glass { color: var(--ink4); font-size: 12px; line-height: 1; }
+.search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.search-field .glass { color: var(--ink4); font-size: var(--text-sm); line-height: 1; }
 .search-field input {
-  border: 0; outline: 0; font: inherit; font-size: 12px; padding: 0; background: transparent;
-  min-width: 160px;
+  border: 0; outline: 0; font: inherit; font-size: var(--text-sm); padding: 0; background: transparent;
+  min-width: 170px;
 }
 
-.item { padding: 9px 11px; border-radius: 2px; margin-bottom: 8px; }
+.item { padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-sm); margin-bottom: var(--sp-2); transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+.item:hover { box-shadow: var(--shadow-1); transform: translateY(-1px); }
 .item .badge {
-  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
-  padding: 2px 5px; border-radius: 2px; white-space: nowrap;
+  font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.08em;
+  padding: 3px 6px; border-radius: var(--radius-sm); white-space: nowrap;
 }
-.item p { margin: 0; font-size: 12px; text-wrap: pretty; }
-.item .row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.item p { margin: 0; font-size: var(--text-sm); text-wrap: pretty; }
+.item .row { display: flex; gap: var(--sp-2); align-items: baseline; flex-wrap: wrap; }
 
 .t-T1 { background: #fff; border: 1px solid var(--rule); border-left: 3px solid var(--t1); }
 .t-T1 .badge { background: var(--t1); color: #fff; }
@@ -291,29 +387,29 @@ tbody tr:hover { background: #fafbfb; }
 .t-CANT .badge { border: 1px solid var(--rule2); color: var(--hold); background: var(--hold-bg); }
 
 .coverage-note {
-  background: #f1f3f4; border-left: 2px solid var(--rule2); padding: 9px 11px;
-  font-size: 12px; color: var(--ink2); margin-top: 12px; text-wrap: pretty;
+  background: #f3f2ef; border-left: 3px solid var(--accent-border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: var(--sp-3) var(--sp-4); font-size: var(--text-sm); color: var(--ink2); margin-top: var(--sp-4); text-wrap: pretty;
 }
-.glossary { font-size: 11px; color: var(--ink3); margin-top: 9px; text-wrap: pretty; }
+.glossary { font-size: var(--text-xs); color: var(--ink3); margin-top: var(--sp-3); text-wrap: pretty; line-height: 1.6; }
 .disp {
-  font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 2px;
+  font-family: var(--mono); font-size: var(--text-xs); padding: 4px 9px; border-radius: var(--radius-sm);
   min-width: 84px; text-align: left; border: 1px solid;
 }
 .d-allow { border-color: #a9cfc6; background: #eff7f5; color: #0f6357; }
 .d-redact { border-color: #d9bd7a; background: #fdf6e7; color: #6f5010; }
 .d-refuse { border-color: var(--rule2); background: var(--hold-bg); color: var(--hold); }
 .locked {
-  font-family: var(--mono); font-size: 11px; color: var(--hold);
-  border: 1px solid var(--rule2); padding: 2px 7px; border-radius: 2px; background: #fff;
+  font-family: var(--mono); font-size: var(--text-xs); color: var(--hold);
+  border: 1px solid var(--rule2); padding: 3px 9px; border-radius: var(--radius-sm); background: #fff;
 }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 18px; align-items: start; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-5); align-items: start; }
 
 /* Side-by-side "what's connected" / "ask yourself" split (MyAgent.tsx) — whichever side
    the user is actively in (hovering, or focused inside its inputs) grows; the other
    shrinks. min-width:0 lets a flex child actually shrink below its content's natural
    width instead of overflowing. */
-.split-row { display: flex; gap: 18px; align-items: flex-start; }
-.split-row > .split-col { min-width: 0; flex: 1 1 50%; transition: flex-basis 240ms ease; }
+.split-row { display: flex; gap: var(--sp-5); align-items: flex-start; }
+.split-row > .split-col { min-width: 0; flex: 1 1 50%; transition: flex-basis var(--dur-slow) var(--ease-out); }
 .split-row > .split-col.split-wide { flex-basis: 62%; }
 .split-row > .split-col.split-narrow { flex-basis: 38%; }
 @media (max-width: 860px) {
@@ -323,63 +419,65 @@ tbody tr:hover { background: #fafbfb; }
 
 /* "Ask yourself" conversation thread (MyAgent.tsx) — scrolls internally once it grows,
    rather than pushing the input further down the page with every turn. */
-.ask-thread { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding-right: 4px; margin-bottom: 4px; }
-.ask-turn { border-top: 1px solid var(--rule); padding-top: 12px; }
+.ask-thread { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-5); padding-right: var(--sp-1); margin-bottom: var(--sp-1); }
+.ask-turn { border-top: 1px solid var(--rule); padding-top: var(--sp-3); animation: fade-rise var(--dur-base) var(--ease-out) both; }
 .ask-turn:first-child { border-top: none; padding-top: 0; }
-.ask-turn-q { font-weight: 700; font-size: 13px; margin: 0 0 8px; color: var(--ink); }
+.ask-turn-q { font-weight: 700; font-size: var(--text-md); margin: 0 0 var(--sp-2); color: var(--ink); }
 
 /* Chat list rail + main conversation area inside "Ask yourself" (MyAgent.tsx) — a real
    multi-chat switcher, ChatGPT-style, over the same real audit-log-backed history. */
 .chat-rail {
-  width: 148px; flex: none; border-right: 1px solid var(--rule);
-  padding: 12px 10px; display: flex; flex-direction: column; gap: 8px;
+  width: 168px; flex: none; border-right: 1px solid var(--rule);
+  padding: var(--sp-3) var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2);
 }
 .chat-new-btn {
-  font-size: 11px; font-weight: 600; text-align: left; padding: 6px 8px; border-radius: 2px;
+  font-size: var(--text-xs); font-weight: 600; text-align: left; padding: 8px 10px; border-radius: var(--radius-sm);
   border: 1px dashed var(--rule2); background: #fff; color: var(--ink2); cursor: pointer;
+  transition: background-color var(--ease), border-color var(--ease), transform var(--dur-fast) var(--ease-out);
 }
-.chat-new-btn:hover { background: var(--panel-bg, #f4f4f2); }
-.chat-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 420px; }
-.chat-list-empty { font-size: 11px; color: var(--ink3); margin: 4px 2px; }
+.chat-new-btn:hover { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-hover); transform: translateY(-1px); }
+.chat-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 440px; }
+.chat-list-empty { font-size: var(--text-xs); color: var(--ink3); margin: var(--sp-1) 2px; }
 .chat-list-item {
   display: flex; align-items: center; gap: 2px;
-  border-radius: 2px; border: 1px solid transparent; background: none;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
+  transition: background-color var(--ease);
 }
-.chat-list-item:hover { background: var(--panel-bg, #f4f4f2); }
-.chat-list-item.active { background: var(--panel-bg, #f4f4f2); border-color: var(--rule2); }
+.chat-list-item:hover { background: #f1f0ee; }
+.chat-list-item.active { background: var(--accent-bg); border-color: var(--accent-border); }
 .chat-list-item-select {
   flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  text-align: left; padding: 6px 8px; background: none; cursor: pointer;
+  text-align: left; padding: 7px 9px; background: none; cursor: pointer;
 }
 .chat-list-title {
-  font-size: 12px; color: var(--ink); max-width: 100%; overflow: hidden;
+  font-size: var(--text-sm); color: var(--ink); max-width: 100%; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-list-meta { font-size: 10px; color: var(--ink3); font-family: var(--mono); }
+.chat-list-meta { font-size: var(--text-2xs); color: var(--ink3); font-family: var(--mono); }
 .chat-list-delete {
-  flex: none; width: 20px; height: 20px; margin-right: 4px; padding: 0;
-  font-size: 14px; line-height: 1; color: var(--ink3); background: none; cursor: pointer;
-  border-radius: 2px; opacity: 0; transition: opacity 0.1s;
+  flex: none; width: 22px; height: 22px; margin-right: 4px; padding: 0;
+  font-size: var(--text-md); line-height: 1; color: var(--ink3); background: none; cursor: pointer;
+  border-radius: var(--radius-sm); opacity: 0; transition: opacity var(--dur-fast), background-color var(--ease), color var(--ease);
 }
 .chat-list-item:hover .chat-list-delete, .chat-list-item.active .chat-list-delete { opacity: 1; }
-.chat-list-delete:hover { color: var(--hold, #b3261e); background: var(--panel-bg2, #eae8e3); }
-.chat-main { flex: 1; min-width: 0; padding: 14px; }
+.chat-list-delete:hover { color: var(--hold, #b3261e); background: var(--hold-bg); }
+.chat-main { flex: 1; min-width: 0; padding: var(--sp-4); }
 .chat-panel-body { display: flex; }
 @media (max-width: 560px) {
   /* Narrow viewports: the rail becomes a horizontal strip above the conversation instead
      of a side column — still real "New chat" + real chat switching, never just hidden. */
   .chat-panel-body { flex-direction: column; }
-  .chat-rail { width: 100%; flex-direction: row; align-items: stretch; gap: 6px; border-right: none; border-bottom: 1px solid var(--rule); padding: 8px 10px; }
+  .chat-rail { width: 100%; flex-direction: row; align-items: stretch; gap: var(--sp-2); border-right: none; border-bottom: 1px solid var(--rule); padding: var(--sp-2) var(--sp-3); }
   .chat-new-btn { flex: none; white-space: nowrap; }
-  .chat-list { flex-direction: row; gap: 6px; max-height: none; overflow-x: auto; overflow-y: visible; padding-bottom: 2px; }
+  .chat-list { flex-direction: row; gap: var(--sp-2); max-height: none; overflow-x: auto; overflow-y: visible; padding-bottom: 2px; }
   .chat-list-item { flex: none; min-width: 130px; max-width: 170px; }
   .chat-list-delete { opacity: 1; } /* no hover state on touch — always visible instead */
 }
-.changed { font-size: 11px; color: var(--partial); font-family: var(--mono); }
+.changed { font-size: var(--text-xs); color: var(--partial); font-family: var(--mono); }
 
 .pill {
-  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
-  padding: 1px 7px; border-radius: 2px; white-space: nowrap; border: 1px solid;
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs);
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap; border: 1px solid;
 }
 .pill i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .pill-live { border-color: #a9cfc6; background: #eff7f5; color: #0f6357; }
@@ -398,28 +496,29 @@ tbody tr:hover { background: #fafbfb; }
 .pill-blocked i { background: var(--hold); }
 
 .runtime-card {
-  border: 1px solid var(--rule2); border-radius: 3px; padding: 12px 14px; background: #fff;
-  margin-bottom: 10px; transition: box-shadow var(--ease), border-color var(--ease);
+  border: 1px solid var(--rule2); border-radius: var(--radius); padding: var(--sp-4) var(--sp-5); background: #fff;
+  margin-bottom: var(--sp-3); transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--ease), transform var(--dur-base) var(--ease-out);
 }
-.runtime-card:hover { border-color: var(--rule2); box-shadow: var(--shadow-1); }
+.runtime-card:hover { border-color: var(--rule2); box-shadow: var(--shadow-2); transform: translateY(-2px); }
 .runtime-card.is-blocked { background: repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px); }
 
 .tree-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 5px 12px; border-bottom: 1px solid #f1f3f4; transition: background-color var(--ease);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: 8px var(--sp-3); border-bottom: 1px solid #f1f3f4; border-radius: var(--radius-sm);
+  transition: background-color var(--ease);
 }
-.tree-row:hover { background: #fafbfb; }
+.tree-row:hover { background: #f6f5f3; }
 .tree-row.no-agent { background: repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px); }
 .tree-toggle {
-  width: 18px; height: 18px; flex-shrink: 0; border: 1px solid var(--rule2); background: #fff;
-  color: var(--ink3); font-family: var(--mono); font-size: 11px; border-radius: 2px;
+  width: 20px; height: 20px; flex-shrink: 0; border: 1px solid var(--rule2); background: #fff;
+  color: var(--ink3); font-family: var(--mono); font-size: var(--text-xs); border-radius: var(--radius-sm);
   transition: border-color var(--ease), color var(--ease);
 }
 .tree-toggle:hover:not(.leaf) { border-color: var(--accent); color: var(--accent); }
 .tree-toggle.leaf { border: 0; color: var(--ink4); }
-.tree-name { background: transparent; border: 0; padding: 0; text-align: left; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.tree-name { background: transparent; border: 0; padding: 0; text-align: left; display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
 
-.esc-path { font-family: var(--mono); font-size: 11px; color: var(--ink3); }
+.esc-path { font-family: var(--mono); font-size: var(--text-xs); color: var(--ink3); }
 
 /* ---------- print ----------
    Navigation chrome and controls have no meaning on paper; what's worth printing is the
@@ -427,7 +526,7 @@ tbody tr:hover { background: #fafbfb; }
 @media print {
   .topbar, .sidebar, .navfoot, button, .search-field, .readonly { display: none !important; }
   .body { display: block; }
-  .main { padding: 0; min-width: 0; }
+  .main { padding: 0; min-width: 0; animation: none !important; }
   body { background: #fff; }
   .panel, .card { box-shadow: none !important; break-inside: avoid; }
   a { color: var(--ink); text-decoration: none; }

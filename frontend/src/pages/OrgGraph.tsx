@@ -88,7 +88,7 @@ export function OrgGraph() {
           </span>
         </header>
 
-        <div>
+        <div className="stagger">
           {rows.map(({ person: p, depth, hasKids }) => (
             <div key={p.id} className={`tree-row${p.agentDeployed ? '' : ' no-agent'}`}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingLeft: depth * 18, minWidth: 0 }}>

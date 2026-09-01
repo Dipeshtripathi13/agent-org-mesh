@@ -68,7 +68,7 @@ export function Escalations() {
       {escalations.length === 0 && (
         <p className="sub" style={{ marginTop: 18 }}>Nothing has escalated for this organization yet.</p>
       )}
-      <div style={{ display: 'grid', gap: 12, marginTop: 18 }}>
+      <div className="stagger" style={{ display: 'grid', gap: 12, marginTop: 18 }}>
         {escalations.map((e) => (
           <div key={e.id} className={`item t-${e.kind}`} style={{ marginBottom: 0 }}>
             <div className="row">
