@@ -174,10 +174,13 @@ cd backend  && npm run db:seed       # load the seed.ts dataset into Postgres
 cd backend  && npm run dev           # API on :3001, reads DATABASE_URL (defaults to
                                       #   the mesh_app role against the compose db)
 cd frontend && npm run dev           # UI on :5173, proxies /api
-cd backend  && npm test              # 162 golden tests — pure in-memory, no DB required
-cd frontend && npm test              # 26 tests for pure lib/ logic — deriveAllowedRoles'
+cd backend  && npm test              # 215 golden tests — pure in-memory, no DB required
+cd frontend && npm test              # 32 tests for pure lib/ logic — deriveAllowedRoles'
                                       #   client-side mirror, escalation status text,
                                       #   Ask-yourself chat-history reconstruction
+cd backend  && npm run check:connectors  # are every connector's real read endpoints still
+                                      #   there? run it from the deployed container, not
+                                      #   here — see the Jira/Notion verification note
 ```
 Both `mesh_admin` (schema owner, used only by migrate/seed) and `mesh_app` (least-privilege
 runtime role) credentials default to the values in `backend/db/schema.sql` /
@@ -1172,6 +1175,28 @@ everything for the life of the deployment. Two independent connector investigati
 on "the UI says it failed and the server says nothing at all" before that was traced. A
 deployment whose error logs go nowhere doesn't have a connector problem, it has an
 observability problem wearing a connector problem's clothes.
+
+That lesson is now a command rather than a paragraph: `cd backend && npm run
+check:connectors` (`scripts/check-connector-endpoints.ts`) sends a deliberately invalid
+credential to the **read** endpoint of every connector on a fixed, public host and reads
+the *status code* as the signal — `401/403` means alive and rejecting, `404/410` means the
+endpoint is gone, which is precisely the Jira failure mode nothing here could previously
+see. It checks reads rather than identity on purpose: Jira's `/rest/api/3/myself` kept
+working the entire time the connector was broken, so an identity check would have reported
+everything healthy. Per-tenant hosts (Jira, Confluence, Zendesk, Airflow, Snowflake,
+Databricks, self-hosted GitLab) have no fixed URL to probe and still depend on a real
+connect. First real run, from production: **14/14 alive, nothing else has rotted.**
+
+**Run it from the deployed container, not a laptop** — `railway ssh 'cd /app/backend &&
+npx tsx scripts/check-connector-endpoints.ts'`. Found immediately: `api.githubcopilot.com`
+(GitHub's MCP server, which backs the commit read) resets every connection from this dev
+machine while `api.github.com` from the same machine is fine, so locally it looks exactly
+like GitHub deleted the endpoint. From production the same request returns `401
+unauthorized: AuthenticateToken authentication failed` — completely healthy. A network
+failure in that script is a claim about your egress until it reproduces somewhere that
+serves users. (Also worth knowing: GitHub's MCP server 400s on a malformed Authorization
+header *before* evaluating the credential, so it has to be probed with something PAT-shaped
+to get the meaningful 401 instead of a shape complaint.)
 
 `resourceProviders.ts`, `jira.ts`, and `notion.ts` all carry their real status now. Still
 genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,

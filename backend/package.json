@@ -17,7 +17,8 @@
     "db:down": "docker compose -f ../docker-compose.yml down",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-db.ts",
-    "db:reset": "npm run db:migrate && npm run db:seed"
+    "db:reset": "npm run db:migrate && npm run db:seed",
+    "check:connectors": "tsx scripts/check-connector-endpoints.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
