@@ -307,7 +307,19 @@ app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 mi
     return { error: 'invalid email or password' };
   }
   await setSessionCookie(reply, account.id);
-  return { account: { id: account.id, name: account.name, email: account.email } };
+  // Typed as repo.Account deliberately, rather than an inline object literal: this has to
+  // stay an explicit allowlist (getAccountByEmail also carries passwordHash, which must
+  // never leave the server), but an allowlist silently goes stale when the type grows —
+  // which is exactly what happened when `mustChangePassword` was added and this response
+  // kept claiming to be an Account without it. Annotating it makes that a compile error
+  // instead of a field that quietly arrives as undefined.
+  const safeAccount: repo.Account = {
+    id: account.id,
+    name: account.name,
+    email: account.email,
+    mustChangePassword: account.mustChangePassword,
+  };
+  return { account: safeAccount };
 });
 
 /** Self-serve signup — creates a personal account *and* a one-person organization for it,

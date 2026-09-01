@@ -60,10 +60,16 @@ CREATE TABLE IF NOT EXISTS accounts (
   id             serial PRIMARY KEY,
   name           text NOT NULL,
   email          text NOT NULL UNIQUE,
-  -- 'scrypt$<saltHex>$<hashHex>', see backend/src/domain/auth.ts. Null means no password
-  -- set yet (a just-invited admin, or a person linked to an org chart by email who
-  -- hasn't claimed their account) — also doubles as the future "SSO-only account" state
-  -- once SSO lands, so a real account never needs a throwaway password.
+  -- 'scrypt$<saltHex>$<hashHex>', see backend/src/domain/auth.ts. Nullable, but nothing
+  -- writes null today: all three insertAccount call sites (signup, org-admin invite, and
+  -- adding a person with an email) set a real hash, the latter two a generated temp
+  -- password with must_change_password below. This comment used to claim a just-invited
+  -- admin had null here, which was never true and would mislead anyone building a "claim
+  -- your account" flow on top of it. The column stays nullable for the future "SSO-only
+  -- account" state — an account that authenticates entirely through an identity provider
+  -- and never needs a password at all. Until SSO lands, treat null as unreachable rather
+  -- than as a state to handle: login and change-password both already refuse it (a
+  -- constant-time dummy comparison on login, so a null hash can't be probed by timing).
   password_hash  text,
   -- True while the current password is a system-generated temp one (an invite, or an
   -- admin-initiated reset) that the account holder never chose. The app forces a change
