@@ -158,29 +158,27 @@ function Topbar({
   panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; hasOwnIdentity: boolean;
   onChangePassword: () => void;
 }) {
-  const { meId } = useMe();
+  const { meId, identities } = useMe();
   const { account, logout } = useAuth();
-  const [who, setWho] = useState<{ name: string; subtitle: string } | null>(null);
   // MeSwitcher (when it renders at all) only ever lists the account's own real
   // identities now — see MeContext's module comment — so there's no separate "wrong to
   // show on the empty state" concern left here; it's just meaningless with no identity.
   const showMeSwitcher = panel === 'me' && account && hasOwnIdentity;
 
-  // Nothing here — the panel switcher, org/person switchers, whoami, logout — is
-  // meaningful before a real login. Fetching even the display name of "who" pre-login
-  // would mean quietly reading a real person's data before anyone proved they're allowed
-  // to; gating the effect itself, not just what renders from it, keeps that from
-  // happening at all.
-  useEffect(() => {
-    if (!account) { setWho(null); return; }
-    if (panel === 'admin') {
-      setWho({ name: account.name, subtitle: 'Platform admin' });
-    } else if (!hasOwnIdentity) {
-      setWho(null);
-    } else {
-      api.person(meId).then((d) => setWho({ name: d.person.name, subtitle: d.person.title }));
-    }
-  }, [panel, meId, account, hasOwnIdentity]);
+  // Who you are is the *account*, always — not the org-chart row. This used to render
+  // `person.name`/`person.title` from whichever org was active, which got two things
+  // wrong: the name became whatever an admin happened to type when adding you (log in as
+  // yourself, get greeted as "trip"), and the title read as an identity rather than a role
+  // — "manager" full stop, when the same human is a manager in one org and an engineer in
+  // the next. Titles are org-scoped by design (a `people` row per org, see MeContext), so
+  // the title is only ever shown *with the org it belongs to*. Derived synchronously from
+  // identities the AuthProvider already loaded, so there's no extra request and no window
+  // where the header shows a stale org's title after switching.
+  const activeIdentity = identities.find((p) => p.id === meId) ?? null;
+  const subtitle =
+    panel === 'admin' ? 'Platform admin'
+    : activeIdentity ? `${activeIdentity.title} · ${activeIdentity.orgName}`
+    : 'Personal account';
 
   return (
     <header className="topbar">
@@ -193,8 +191,8 @@ function Topbar({
         <ProfileMenu
           panel={panel}
           switchPanel={switchPanel}
-          name={who?.name ?? account.name}
-          subtitle={who?.subtitle ?? 'Account'}
+          name={account.name}
+          subtitle={subtitle}
           logout={() => void logout()}
           onChangePassword={onChangePassword}
         />
