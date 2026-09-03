@@ -60,7 +60,7 @@ import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './in
 import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
 import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
 import { saveDatabricksConnection, getDatabricksStatus, disconnectDatabricks } from './integrations/databricks.js';
-import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS } from './integrations/personalConnectors.js';
+import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS, accountCustomAgentProviders } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -2085,6 +2085,46 @@ app.delete('/api/accounts/me/ingest-tokens/:tokenId', async (req, reply) => {
   return { tokens: await listAccountTokens(accountId) };
 });
 
+/** Register/list/remove your own freely-named custom sub-agent — a finance agent, a
+ *  marketing agent, anything you describe for yourself — generalizing the fixed
+ *  claude-code/codex/gemini-cli ingest sources into an open-ended one. Registering just
+ *  reserves a source_key to push under; it authenticates with the SAME ingest tokens
+ *  generated above, not a new secret of its own. Account-only, same as every other
+ *  personal-agent piece — see account_custom_agents' own schema.sql comment for why this
+ *  never touches SurfaceKey or the claims/policy pipeline. */
+app.post('/api/accounts/me/custom-agents', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { name, purpose } = req.body as { name?: string; purpose?: string };
+  if (!name?.trim() || !purpose?.trim()) {
+    reply.code(400);
+    return { error: 'name and purpose are required' };
+  }
+  const agent = await repo.createAccountCustomAgent(accountId, name.trim(), purpose.trim());
+  return { agent };
+});
+app.get('/api/accounts/me/custom-agents', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return { agents: await repo.listAccountCustomAgents(accountId) };
+});
+app.delete('/api/accounts/me/custom-agents/:id', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const id = (req.params as { id: string }).id;
+  await repo.deleteAccountCustomAgent(accountId, id);
+  return { agents: await repo.listAccountCustomAgents(accountId) };
+});
+
 /* ---------- self-service: connect your own tool ----------
    The general, non-hardcoded mechanism (docs/agent-to-agent-communication.md §13): a
    person generates a token here, pastes it into their own tool's native hook/telemetry
@@ -2144,10 +2184,6 @@ app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req, reply) => {
  *  path, never a real ambiguity. */
 app.post('/api/ingest/:source', async (req, reply) => {
   const source = (req.params as { source: string }).source;
-  if (!INGEST_SOURCES.includes(source)) {
-    reply.code(404);
-    return { error: `unknown source — must be one of: ${INGEST_SOURCES.join(', ')}` };
-  }
   const auth = req.headers.authorization;
   const token = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : null;
   if (!token) {
@@ -2159,6 +2195,19 @@ app.post('/api/ingest/:source', async (req, reply) => {
   if (!resolved && !resolvedAccount) {
     reply.code(401);
     return { error: 'invalid or revoked token' };
+  }
+
+  // Beyond the three fixed sources, the only other valid case is a real custom agent this
+  // same account registered for itself (custom agents are account-only — a person's own
+  // token never resolves one). A source_key that doesn't resolve to one, or resolves to a
+  // different account's, is rejected exactly like an unrecognized fixed source — this is
+  // the ownership check, not just "does this string look like a real source."
+  if (!INGEST_SOURCES.includes(source)) {
+    const agent = resolvedAccount ? await repo.getAccountCustomAgentBySourceKey(source) : null;
+    if (!agent || agent.accountId !== resolvedAccount?.accountId) {
+      reply.code(404);
+      return { error: `unknown source — must be one of: ${INGEST_SOURCES.join(', ')}, or one of your own registered custom agents` };
+    }
   }
 
   const normalized = normalizeIngestPayload(req.body);
@@ -2825,12 +2874,24 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
         ACCOUNT_DIGEST_PROVIDERS.map((p) => ACCOUNT_STATUS_HANDLERS[p.surfaceKey]?.(accountId)),
       );
       const connectedProviders = ACCOUNT_DIGEST_PROVIDERS.filter((_, i) => statuses[i]?.connected);
-      if (connectedProviders.length > 0) {
+      // This account's own freely-named custom agents (a finance agent, a marketing
+      // agent, ...) — the open-ended counterpart to the fixed list above. Merged into the
+      // exact same router/gather/fallback logic below rather than a parallel code path,
+      // so a custom agent behaves identically to any other connected source from here on.
+      const customProviders = await accountCustomAgentProviders(accountId);
+      const allProviders: { surfaceKey: string; label: string; fetchDigest: (id: number, since: Date) => Promise<string | null> }[] = [
+        ...connectedProviders,
+        ...customProviders,
+      ];
+      if (allProviders.length > 0) {
         const surfaces = await repo.getSurfaces();
-        const candidates = connectedProviders.map((p) => ({
-          surfaceKey: p.surfaceKey as string,
-          reads: surfaces.find((s) => s.key === p.surfaceKey)?.reads ?? p.surfaceKey,
-        }));
+        const candidates = [
+          ...connectedProviders.map((p) => ({
+            surfaceKey: p.surfaceKey as string,
+            reads: surfaces.find((s) => s.key === p.surfaceKey)?.reads ?? p.surfaceKey,
+          })),
+          ...customProviders.map((p) => ({ surfaceKey: p.surfaceKey, reads: p.reads })),
+        ];
         // The router now decides both which surfaces are relevant *and* how many days
         // back each one should look, inferred from the question itself — replacing a fixed
         // "Today / This week" toggle a person had to pick by hand before every ask. Found
@@ -2839,7 +2900,7 @@ app.post('/api/agent/ask-personal', async (req, reply) => {
         // modelProvider.ts's selectRelevantSurfaces doc and orchestrator.ts's
         // DEFAULT_SINCE_DAYS for the exact inference/fail-open behavior.
         const relevant = await provider.selectRelevantSurfaces(question, candidates);
-        const toRun = connectedProviders.filter((p) => relevant.has(p.surfaceKey));
+        const toRun = allProviders.filter((p) => relevant.has(p.surfaceKey));
         const sinceFor = (surfaceKey: string) => {
           const d = new Date();
           d.setUTCDate(d.getUTCDate() - (relevant.get(surfaceKey) ?? DEFAULT_SINCE_DAYS));

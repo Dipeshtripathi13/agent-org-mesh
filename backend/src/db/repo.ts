@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { hashEntry, verifyChain } from '../domain/audit.js';
 import { computeEscalationAge } from '../domain/escalations.js';
 import type {
@@ -1319,4 +1319,56 @@ export async function getAccountIngestedEventsSince(accountId: number, source: s
     [accountId, source, since.toISOString()],
   );
   return rows.map((r) => ({ source: r.source, kind: r.kind, summary: r.summary, occurredAt: iso(r.occurred_at) }));
+}
+
+/** An account's own freely-named custom sub-agent — see account_custom_agents' own
+ *  schema.sql comment for why this is deliberately account-only and never a SurfaceKey. */
+export interface AccountCustomAgent {
+  id: string;
+  accountId: number;
+  sourceKey: string;
+  name: string;
+  purpose: string;
+  createdAt: string;
+}
+
+function toAccountCustomAgent(row: any): AccountCustomAgent {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    sourceKey: row.source_key,
+    name: row.name,
+    purpose: row.purpose,
+    createdAt: iso(row.created_at),
+  };
+}
+
+/** sourceKey is generated here, not supplied by the caller — it only has to be unique and
+ *  URL-safe, never secret (the ingest token is still the whole auth boundary; see
+ *  POST /api/ingest/:source in server.ts). */
+export async function createAccountCustomAgent(accountId: number, name: string, purpose: string): Promise<AccountCustomAgent> {
+  const id = randomUUID();
+  const sourceKey = `custom-${randomBytes(6).toString('hex')}`;
+  const { rows } = await pool.query(
+    `INSERT INTO account_custom_agents (id, account_id, source_key, name, purpose, created_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [id, accountId, sourceKey, name, purpose, new Date().toISOString()],
+  );
+  return toAccountCustomAgent(rows[0]);
+}
+
+export async function listAccountCustomAgents(accountId: number): Promise<AccountCustomAgent[]> {
+  const { rows } = await pool.query('SELECT * FROM account_custom_agents WHERE account_id = $1 ORDER BY created_at', [accountId]);
+  return rows.map(toAccountCustomAgent);
+}
+
+export async function deleteAccountCustomAgent(accountId: number, id: string): Promise<void> {
+  await pool.query('DELETE FROM account_custom_agents WHERE account_id = $1 AND id = $2', [accountId, id]);
+}
+
+/** The ownership check POST /api/ingest/:source uses once a pushed source isn't one of the
+ *  three fixed INGEST_SOURCES: does this source_key belong to a real, registered custom
+ *  agent at all, and (checked by the caller) does it belong to *this* resolved account. */
+export async function getAccountCustomAgentBySourceKey(sourceKey: string): Promise<AccountCustomAgent | null> {
+  const { rows } = await pool.query('SELECT * FROM account_custom_agents WHERE source_key = $1', [sourceKey]);
+  return rows[0] ? toAccountCustomAgent(rows[0]) : null;
 }

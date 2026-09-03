@@ -311,3 +311,39 @@ export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
     fetchDigest: async (id, since) => formatClaudeCodeDigest(await getClaudeCodeActivitySince(since, undefined, id)),
   },
 ];
+
+/** The open-ended counterpart to the fixed ACCOUNT_DIGEST_PROVIDERS list above — an
+ *  account's own freely-named custom agents (a finance agent, a marketing agent, anything
+ *  it describes for itself), generalizing the fixed claude-code/codex/gemini-cli ingest
+ *  sources the same way the rest of this codebase generalized one-off connectors into a
+ *  catalog. Unlike that static array, this can't be a module-level constant — the whole
+ *  point is a person registers these themselves, with no code change — so it's rebuilt
+ *  fresh from account_custom_agents on every ask. `surfaceKey` here is each agent's own
+ *  generated source_key, a plain string rather than the closed SurfaceKey union: these
+ *  never touch surfaces_catalog, coverage, or the claims/policy pipeline, the same
+ *  personal-only boundary Gmail's org-mode bridge and the rest of this file already keep
+ *  (see this module's own header comment). "Connected" means the same thing it does for
+ *  codex/gemini-cli above: at least one real event has actually been pushed, not just
+ *  registered — a name with nothing behind it yet isn't worth the router's attention. */
+export interface CustomAgentDigestProvider {
+  surfaceKey: string;
+  label: string;
+  reads: string;
+  fetchDigest(accountId: number, since: Date): Promise<string | null>;
+}
+
+export async function accountCustomAgentProviders(accountId: number): Promise<CustomAgentDigestProvider[]> {
+  const agents = await repo.listAccountCustomAgents(accountId);
+  if (agents.length === 0) return [];
+  const everPushed = await Promise.all(
+    agents.map((a) => getAccountEventsSince(accountId, a.sourceKey, new Date(0))),
+  );
+  return agents
+    .filter((_, i) => everPushed[i].length > 0)
+    .map((agent) => ({
+      surfaceKey: agent.sourceKey,
+      label: agent.name,
+      reads: agent.purpose,
+      fetchDigest: (id: number, since: Date) => getAccountEventsSince(id, agent.sourceKey, since).then(formatIngestedEventsDigest),
+    }));
+}

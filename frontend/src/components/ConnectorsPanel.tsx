@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type AgentRuntime, type ConnectorDef, type IngestSource, type IngestToken, type PersonRuntime } from '../lib/api';
+import { api, INGEST_SOURCES, type AgentRuntime, type ConnectorDef, type CustomAgent, type IngestSource, type IngestToken, type PersonRuntime } from '../lib/api';
 import { ingestSnippet, ScopePill } from '../pages/SetUpMyAgent';
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -57,8 +57,19 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   // shared list regardless of which of the three tools was clicked to open it.
   const [tokens, setTokens] = useState<IngestToken[]>([]);
   const [newTokenLabel, setNewTokenLabel] = useState('');
-  const [justCreated, setJustCreated] = useState<{ id: string; token: string; source: IngestSource } | null>(null);
+  // `source` is a plain string, not just IngestSource, so the same generate-token flow
+  // below also covers a custom agent's own generated sourceKey (see CustomAgent below).
+  const [justCreated, setJustCreated] = useState<{ id: string; token: string; source: string } | null>(null);
   const [tokenBusy, setTokenBusy] = useState(false);
+
+  // Custom sub-agents — an account's own freely-named agent (a finance agent, a
+  // marketing agent, ...), generalizing the fixed claude-code/codex/gemini-cli ingest
+  // sources above into an open-ended one. Account-only, same as the token flow it reuses
+  // (see CLAUDE.md on why this never touches SurfaceKey or the org-visible claims path).
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const [newAgentName, setNewAgentName] = useState('');
+  const [newAgentPurpose, setNewAgentPurpose] = useState('');
+  const [agentBusy, setAgentBusy] = useState(false);
 
   // Sub-agent (LLM runtime) registration state — a wholly different backend concept and
   // table from every ConnectorDef above (person_runtimes/account_runtimes, not
@@ -105,9 +116,11 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     owner.kind === 'person' ? api.disconnectRuntime(owner.personId, key) : api.disconnectAccountRuntime(key);
   const gmailReq = () => (owner.kind === 'person' ? api.gmailStatus(owner.personId) : Promise.resolve(null));
 
+  const customAgentsReq = () => (owner.kind === 'account' ? api.customAgents() : Promise.resolve({ agents: [] as CustomAgent[] }));
+
   const load = () =>
-    Promise.all([api.connectorsCatalog(), statusReq(), tokensReq(), runtimesReq(), gmailReq()]).then(
-      ([catRes, statusRes, tokensRes, runtimeRes, gmailRes]) => {
+    Promise.all([api.connectorsCatalog(), statusReq(), tokensReq(), runtimesReq(), gmailReq(), customAgentsReq()]).then(
+      ([catRes, statusRes, tokensRes, runtimeRes, gmailRes, customAgentsRes]) => {
         setGoogleOAuthConfigured(catRes.oauth.google);
         setCatalog(catRes.catalog.filter((c) => !handledElsewhere.has(c.key)));
         setStatuses(statusRes.statuses);
@@ -115,6 +128,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
         setRuntimeCatalog(runtimeRes.catalog);
         setRegisteredRuntimes(runtimeRes.registered);
         setGmail(gmailRes);
+        setCustomAgents(customAgentsRes.agents);
       },
     );
 
@@ -129,6 +143,8 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     setQueryOpen({});
     setLiveQuestion('');
     setLiveResult(null);
+    setNewAgentName('');
+    setNewAgentPurpose('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerKey]);
   // Returning from the Google consent tab refocuses this one — pick up the new Gmail status.
@@ -162,7 +178,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   const availableRuntimes = runtimeCatalog.filter((r) => !registeredRuntimeKeys.has(r.key));
 
   const gmailConnected = gmailAvailable && !!gmail?.connected;
-  const totalConnectedCount = connected.length + registeredRuntimes.length + (gmailConnected ? 1 : 0);
+  const totalConnectedCount = connected.length + registeredRuntimes.length + customAgents.length + (gmailConnected ? 1 : 0);
 
   const openConnect = (key: string) => {
     setOpenKey(key);
@@ -197,7 +213,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     }
   };
 
-  const createToken = async (source: IngestSource) => {
+  const createToken = async (source: string) => {
     if (!newTokenLabel.trim()) return;
     setTokenBusy(true);
     try {
@@ -217,6 +233,34 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
       await load();
     } finally {
       setTokenBusy(false);
+    }
+  };
+
+  const registerCustomAgent = async () => {
+    if (!newAgentName.trim() || !newAgentPurpose.trim()) return;
+    setAgentBusy(true);
+    setError(null);
+    try {
+      const { agent } = await api.createCustomAgent(newAgentName.trim(), newAgentPurpose.trim());
+      setNewAgentName('');
+      setNewAgentPurpose('');
+      await load();
+      setOpenKey(`custom:${agent.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not register this agent');
+    } finally {
+      setAgentBusy(false);
+    }
+  };
+
+  const removeCustomAgent = async (id: string) => {
+    setAgentBusy(true);
+    try {
+      await api.deleteCustomAgent(id);
+      setOpenKey(null);
+      await load();
+    } finally {
+      setAgentBusy(false);
     }
   };
 
@@ -288,6 +332,8 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   const openDef = catalog.find((c) => c.key === openKey);
   const openRuntime = runtimeCatalog.find((r) => r.key === openKey);
   const openIsGmail = openKey === 'gmail';
+  const openIsNewCustomAgent = openKey === 'custom-agent-new';
+  const openCustomAgent = customAgents.find((a) => `custom:${a.id}` === openKey);
 
   return (
     <div className="panel" style={{ marginTop: 18 }}>
@@ -418,6 +464,15 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 </div>
               );
             })}
+
+            {customAgents.map((a) => (
+              <div key={`custom:${a.id}`} className="runtime-card" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{a.purpose}</span>
+                <span className="spacer" />
+                <button className="chip" disabled={busy || agentBusy} onClick={() => openConnect(`custom:${a.id}`)}>Manage</button>
+              </div>
+            ))}
           </div>
         )}
 
@@ -452,6 +507,11 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                       {r.name}{r.blocked ? ' — blocked' : !r.approved ? ' — unapproved' : ''}
                     </option>
                   ))}
+                </optgroup>
+              )}
+              {owner.kind === 'account' && (
+                <optgroup label="Custom agents">
+                  <option value="custom-agent-new">+ Register a new custom agent…</option>
                 </optgroup>
               )}
             </select>
@@ -526,7 +586,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 <button className="chip" disabled={tokenBusy} onClick={() => setOpenKey(null)}>Close</button>
               </div>
 
-              {justCreated && (() => {
+              {justCreated && INGEST_SOURCES.includes(justCreated.source as IngestSource) && (() => {
                 // Local dev runs the API on a separate port (:3001) from Vite's dev
                 // server (:5173) — the hook's curl runs as a real external process, not a
                 // browser request, so it can't ride Vite's /api proxy and needs that port
@@ -536,7 +596,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 // generated snippet into a real hook config outside local dev.
                 const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
                 const url = `${window.location.protocol}//${window.location.hostname}${isLocalDev ? ':3001' : ''}/api/ingest/${justCreated.source}`;
-                const { file, snippet } = ingestSnippet(justCreated.source, url, justCreated.token);
+                const { file, snippet } = ingestSnippet(justCreated.source as IngestSource, url, justCreated.token);
                 return (
                   <div className="coverage-note" style={{ marginTop: 14 }}>
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
@@ -627,6 +687,135 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 A sub-agent never reads your org surfaces and nobody outside you can query it
                 directly{owner.kind === 'person' ? ' — only your organization\'s main agent can ask it what it\'s been up to, and that\'s a personal status check, not an org read.' : '.'}
               </p>
+            </div>
+          )}
+
+          {openIsNewCustomAgent && (
+            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                Register any AI agent of your own — a finance agent, a marketing agent,
+                anything that isn&rsquo;t already in the list above — and it can push its
+                own real activity here the same way Claude Code or Codex CLI do, using a
+                token you generate below. Never visible to anyone but you.
+              </p>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                  Name
+                  <input
+                    autoComplete="off"
+                    placeholder="e.g. Finance Agent"
+                    value={newAgentName}
+                    onChange={(e) => setNewAgentName(e.target.value)}
+                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                  What it does
+                  <input
+                    autoComplete="off"
+                    placeholder="e.g. Tracks AP/AR status and monthly close"
+                    value={newAgentPurpose}
+                    onChange={(e) => setNewAgentPurpose(e.target.value)}
+                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 260 }}
+                  />
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
+                <button
+                  disabled={agentBusy || !newAgentName.trim() || !newAgentPurpose.trim()}
+                  onClick={registerCustomAgent}
+                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                >
+                  {agentBusy ? 'Registering…' : 'Register agent'}
+                </button>
+                <button className="chip" disabled={agentBusy} onClick={() => setOpenKey(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {openCustomAgent && (
+            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                <strong>{openCustomAgent.name}</strong> — {openCustomAgent.purpose}
+              </p>
+
+              {tokens.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  {tokens.map((t) => (
+                    <div key={t.id} className="runtime-card" style={{ marginBottom: 8 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                        {t.revoked ? (
+                          <span className="pill pill-blocked"><i />Revoked</span>
+                        ) : (
+                          <span className="pill pill-full"><i />Active</span>
+                        )}
+                        <span className="spacer" />
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
+                          created {t.createdAt.slice(0, 10)}{t.lastUsedAt ? ` · last used ${t.lastUsedAt.slice(0, 10)}` : ' · never used'}
+                        </span>
+                      </div>
+                      {!t.revoked && (
+                        <div style={{ marginTop: 9 }}>
+                          <button className="chip" disabled={tokenBusy} onClick={() => revokeTok(t.id)}>Revoke</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
+                  Token label
+                  <input
+                    aria-label="Token label"
+                    placeholder="e.g. laptop — finance bot"
+                    value={newTokenLabel}
+                    onChange={(e) => setNewTokenLabel(e.target.value)}
+                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
+                  />
+                </label>
+                <button
+                  disabled={tokenBusy || !newTokenLabel.trim()}
+                  onClick={() => createToken(openCustomAgent.sourceKey)}
+                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
+                >
+                  {tokenBusy ? 'Generating…' : 'Generate token'}
+                </button>
+                <button className="chip" disabled={agentBusy} onClick={() => removeCustomAgent(openCustomAgent.id)}>Remove agent</button>
+                <button className="chip" disabled={tokenBusy} onClick={() => setOpenKey(null)}>Close</button>
+              </div>
+
+              {justCreated && justCreated.source === openCustomAgent.sourceKey && (() => {
+                const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+                const url = `${window.location.protocol}//${window.location.hostname}${isLocalDev ? ':3001' : ''}/api/ingest/${justCreated.source}`;
+                return (
+                  <div className="coverage-note" style={{ marginTop: 14 }}>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
+                      Shown once — copy it now, it isn't stored anywhere you can retrieve again
+                    </span>
+                    <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
+                      {justCreated.token}
+                    </p>
+                    <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '10px 0 4px' }}>
+                      Push activity from wherever this agent runs — any script that can make
+                      an HTTP request works:
+                    </p>
+                    <pre style={{ fontFamily: 'var(--mono)', fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '9px', borderRadius: 2, margin: 0 }}>
+{`curl -X POST ${url} \\
+  -H "Authorization: Bearer ${justCreated.token}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"kind":"action","summary":"Closed the March AP batch"}'`}
+                    </pre>
+                    <p className="glossary" style={{ marginTop: 8 }}>
+                      Each real push becomes one line in this agent&rsquo;s digest. This
+                      token also works for Claude Code/Codex CLI/Gemini CLI if you use
+                      those — every ingest source shares the same token pool.
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

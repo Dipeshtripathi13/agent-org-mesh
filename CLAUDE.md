@@ -239,6 +239,65 @@ honest, specific rejections (`"that relationship doesn't hold in the org chart"`
 `"not found in this org chart"`) rather than being silently dropped or failing the whole
 request; confirmed real audit rows landed under each requester's own id and claimed role.
 
+**Sub-agent registration generalizes beyond coding tools — an account can register its own
+freely-named custom agent (a finance agent, a marketing agent, anything) and have it
+consulted by its personal main agent, the same way Claude Code/Codex CLI/Gemini CLI
+already are.** Requested directly, as the concrete next step of the product's real stated
+purpose (see the top of this file): the fixed three ingest sources were coding-specific
+stand-ins for a much bigger idea — any AI agent, in any domain, that a person's own main
+agent can consult as a tool. Deliberately scoped to the account (personal) side only, not
+org mode: extending this to org-visible claims would mean opening `SurfaceKey` — a closed
+union `surfaces_catalog`, `coverage.ts`, and `policy.ts` all depend on being a known,
+governed set with real `dataClass`/`tier` implications — to arbitrary user-typed names,
+which is a real disclosure-governance question this pass deliberately didn't reopen. The
+personal/account side has no such boundary to cross (a personal ask has no claims table,
+same reasoning `personalConnectors.ts`'s own module comment already gives for GitHub/Jira
+there), so this is where an open-ended "register anything" mechanism can exist safely.
+`account_custom_agents` (schema.sql) is a small new table — `source_key` (generated,
+not secret; the ingest token is still the entire auth boundary), `name`, `purpose` — with
+`POST/GET/DELETE /api/accounts/me/custom-agents`. Registering doesn't mint a new secret:
+it reuses the exact same account-wide ingest tokens `POST /api/accounts/me/ingest-tokens`
+already generates for Claude Code/Codex CLI/Gemini CLI (one token authenticates a push to
+any of a person's sources — this was already true before this change). `POST
+/api/ingest/:source`'s fixed `INGEST_SOURCES` whitelist gained one more valid case: a
+`source` that isn't one of the three fixed names is now also accepted if it resolves to a
+real `account_custom_agents` row owned by *this* resolved token's account — checked by
+identity, not just "does this string look like a real source," so one account can never
+push under another's registered agent name. `eventIngestion.ts` needed zero changes to
+support this — its `normalizeIngestPayload`/`formatIngestedEventsDigest` were already
+fully generic (`{kind, summary, occurredAt}`, a plain bullet-list digest), coding-specific
+only in the fixed three source names layered on top, never in the payload shape itself.
+`personalConnectors.ts`'s new `accountCustomAgentProviders(accountId)` is the dynamic
+counterpart to the module's static `ACCOUNT_DIGEST_PROVIDERS` array — rebuilt fresh from
+`account_custom_agents` on every ask rather than a module-level constant, since the whole
+point is a person adds these without a code change — and "connected" means the same thing
+it does for codex/gemini-cli: at least one real event has actually been pushed, not just
+registered. `POST /api/agent/ask-personal` merges its output into the exact same
+router/gather/fallback pipeline every other connected source already goes through
+(`selectRelevantSurfaces`, per-surface `sinceDays`, the honest-empty and honest-error
+fallback text), not a parallel code path — a custom agent is indistinguishable from any
+other consulted source once it reaches the router. Frontend: `ConnectorsPanel.tsx` (used
+for both a true personal account and an org member's own personal agent — `owner: {kind:
+'account'}` either way) gained a "Custom agents" entry in the existing "Connect a tool"
+dropdown ("+ Register a new custom agent…"), a name/purpose registration form, and a manage
+panel per registered agent reusing the same token list/generate/revoke UI the three fixed
+ingest-token tools already have, with a generic curl-based push example (no tool-specific
+hook format exists for an arbitrary custom agent the way Claude Code's PostToolUse hook or
+Codex's otel config do). Live-verified end-to-end against the running dev API, a real
+Postgres row, and a real local Ollama model answering — not just typechecked: registered a
+"Finance Agent" (purpose: "Tracks AP/AR status and monthly close") on a real account,
+pushed one real event through its generated `source_key`, and a real `ask-personal` call
+("What has my finance agent been doing lately?") had its own router genuinely select
+"Finance Agent" as relevant and answer from the real pushed content — `consultedSources`
+confirmed it, not just the answer text; confirmed a foreign/unregistered source is rejected
+with the same honest error whether it's a typo or someone else's agent name; confirmed
+deleting the agent immediately revokes its `source_key`, and a push against it afterward
+gets the same clean rejection as a name that was never registered. The additive
+`account_custom_agents` table needs the same by-hand production migration every new table
+does against a live database — `backend/scripts/migrate-add-account-custom-agents.ts`,
+same pattern as `migrate-add-must-change-password.ts` — since `schema.sql` itself is a full
+`DROP SCHEMA ... CASCADE` reset, never something to run against real data.
+
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
   now mostly closed, not mostly open — updated after a full security audit fixed the

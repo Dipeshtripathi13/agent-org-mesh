@@ -381,6 +381,25 @@ CREATE TABLE IF NOT EXISTS account_ingested_events (
 );
 CREATE INDEX IF NOT EXISTS account_ingested_events_account_source_idx ON account_ingested_events(account_id, source, occurred_at);
 
+-- An account's own freely-named custom sub-agent — a finance agent, a marketing agent,
+-- anything an account describes for itself — generalizing the fixed
+-- claude-code/codex/gemini-cli ingest sources into an open-ended one. source_key is what
+-- POST /api/ingest/:source matches once it isn't one of those three fixed names; it's
+-- generated, not secret (the bearer token is still the entire auth boundary — this table
+-- only decides which source_key values besides the fixed three are valid to push under,
+-- and for which account). Personal/account-only by design: this never becomes a
+-- SurfaceKey, is never in surfaces_catalog, and never feeds the claims/policy pipeline —
+-- see personalConnectors.ts's accountCustomAgentProviders for why that boundary matters.
+CREATE TABLE IF NOT EXISTS account_custom_agents (
+  id            uuid PRIMARY KEY,
+  account_id    integer NOT NULL REFERENCES accounts(id),
+  source_key    text NOT NULL UNIQUE,
+  name          text NOT NULL,
+  purpose       text NOT NULL,
+  created_at    timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_custom_agents_account_idx ON account_custom_agents(account_id);
+
 -- A personal account's own "Ask yourself" history — the counterpart to audit_log for
 -- someone with no org (audit_log's org_id/target_person_id are NOT NULL, so it structurally
 -- can't hold this). Deliberately not audit_log-shaped: no hash chain, no policy_revision_id,
@@ -536,6 +555,8 @@ GRANT SELECT, INSERT, UPDATE ON ingest_tokens TO mesh_app;
 GRANT SELECT, INSERT ON ingested_events TO mesh_app;
 GRANT SELECT, INSERT, UPDATE ON account_ingest_tokens TO mesh_app;
 GRANT SELECT, INSERT ON account_ingested_events TO mesh_app;
+-- Custom agents: registered and removed by the account itself, never edited in place.
+GRANT SELECT, INSERT, DELETE ON account_custom_agents TO mesh_app;
 
 -- Policy revisions: append a new row, never touch an old one.
 GRANT SELECT, INSERT ON policy_revisions TO mesh_app;

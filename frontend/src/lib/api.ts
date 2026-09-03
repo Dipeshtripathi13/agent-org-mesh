@@ -150,6 +150,13 @@ export interface IngestToken {
 export const INGEST_SOURCES = ['claude-code', 'codex', 'gemini-cli'] as const;
 export type IngestSource = typeof INGEST_SOURCES[number];
 
+/** An account's own freely-named custom sub-agent. `sourceKey` is what
+ *  POST /api/ingest/:source matches once it isn't one of the three fixed INGEST_SOURCES —
+ *  generated server-side, not secret (the ingest token is still the whole auth boundary). */
+export interface CustomAgent {
+  id: string; sourceKey: string; name: string; purpose: string; createdAt: string;
+}
+
 /** Carries the real HTTP status alongside the server's own error message — callers that
  *  need to react differently to specific statuses (429's `errorRaw = ApiError`, most
  *  notably a 428 meaning "this action needs step-up," see StepUpContext.tsx) can check
@@ -461,6 +468,17 @@ export const api = {
     req<{ id: string; token: string }>('/accounts/me/ingest-tokens', { method: 'POST', body: JSON.stringify({ label }) }),
   revokeAccountIngestToken: (tokenId: string) =>
     req<{ tokens: IngestToken[] }>(`/accounts/me/ingest-tokens/${tokenId}`, { method: 'DELETE' }),
+
+  /** Your own freely-named custom sub-agent — a finance agent, a marketing agent,
+   *  anything you describe for yourself — generalizing the fixed claude-code/codex/
+   *  gemini-cli ingest sources into an open-ended one. Pushes events the same way those
+   *  three do, authenticated by the same ingest tokens above, just under its own
+   *  `sourceKey` instead of one of the three fixed names. Account-only. */
+  customAgents: () => req<{ agents: CustomAgent[] }>('/accounts/me/custom-agents'),
+  createCustomAgent: (name: string, purpose: string) =>
+    req<{ agent: CustomAgent }>('/accounts/me/custom-agents', { method: 'POST', body: JSON.stringify({ name, purpose }) }),
+  deleteCustomAgent: (id: string) =>
+    req<{ agents: CustomAgent[] }>(`/accounts/me/custom-agents/${id}`, { method: 'DELETE' }),
 
   /** The generic plug-and-play framework for every connector beyond GitHub/Jira/Gmail —
    *  one catalog, one connect/disconnect/status shape, driving ConnectorsPanel's dropdown
