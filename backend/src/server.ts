@@ -2567,6 +2567,132 @@ app.post('/api/agent/ask', async (req, reply) => {
   return { answer, items: snapshot.items, withheldCount, coverage: snapshot.coverage, conversationId, consultedSources };
 });
 
+/** A manager asking one question and getting one update covering their whole team, in
+ *  one go — the multi-target extension of /api/agent/ask above. Reuses every primitive
+ *  that endpoint already has rather than introducing a new trust path: the report list
+ *  is never client-supplied, it's derived from the org chart itself
+ *  (people.managerId === requesterId — the same structural check deriveAllowedRoles uses
+ *  for 'Direct manager', just run in reverse), so there is no way to ask this "as" a
+ *  manager of people who don't actually report to you. Each report still goes through
+ *  its own real respond() call under role 'Direct manager' and gets its own real audit
+ *  row — a team ask is N real disclosure events, not one, and each employee still sees
+ *  exactly and only what was told about them, never their teammates' data folded in.
+ *  The one combined "team update" text is built a second time, from each report's own
+ *  already-synthesized (never raw) answer — so nothing reaches that final call that
+ *  wasn't already independently authorized and safe to surface once. */
+app.post('/api/agent/ask-team', async (req, reply) => {
+  const body = req.body as { requesterId?: number; question?: string; persist?: boolean };
+  if (!body.question?.trim()) {
+    reply.code(400);
+    return { error: 'question is required' };
+  }
+  if (body.requesterId == null) {
+    reply.code(400);
+    return { error: 'requesterId is required' };
+  }
+  const question = body.question.trim();
+
+  const orgId = await repo.getOrgIdOfPerson(body.requesterId).catch(() => null);
+  if (orgId == null) {
+    reply.code(404);
+    return { error: 'requester not found' };
+  }
+
+  // Session-trust hardening, same pattern as /api/agent/ask: prefer the logged-in
+  // account's own linked identity in this org over a client-asserted requesterId.
+  const requesterId = (await sessionPreferredPersonId(req, orgId, body.requesterId)) ?? body.requesterId;
+
+  const people = await repo.getPeople(orgId);
+  const requester = people.find((p) => p.id === requesterId);
+  const requesterName = requester?.name ?? 'the requesting manager';
+
+  // The manager's real direct reports — never a client-supplied target list.
+  const reports = people.filter((p) => p.managerId === requesterId);
+  if (reports.length === 0) {
+    return { answer: `${requesterName} has no direct reports in this org chart.`, perPerson: [], reportCount: 0 };
+  }
+
+  const [{ provider, runtimeName, configEnvVar }, surfaces, revision] = await Promise.all([
+    getMainProvider(orgId),
+    repo.getSurfaces(),
+    repo.getCurrentRevision(orgId),
+  ]);
+  const now = new Date().toISOString();
+
+  const perPerson = await Promise.all(reports.map(async (target) => {
+    let usedSurfaceKeys: string[] = [];
+    try {
+      usedSurfaceKeys = await gatherAll(orgId, target.id, undefined, question);
+    } catch (err) {
+      app.log.error({ err }, 'real claim ingestion failed for a team-ask report — continuing with existing claims');
+    }
+
+    const claims = await repo.getClaims(orgId, target.id);
+    const snapshot = respond({ target, claims, surfaces, requesterRole: 'Direct manager', revision, now });
+    const { allowed, withheldCount } = allowedTextOnly(snapshot.items);
+    const sections = allowed.length > 0
+      ? [{ source: `Authorized claims about ${target.name}`, digest: allowed.map((i) => `- ${i.text}`).join('\n') }]
+      : [];
+    const consultedSources = surfaces.filter((s) => usedSurfaceKeys.includes(s.key)).map((s) => s.name);
+
+    let answer: string;
+    if (sections.length === 0) {
+      answer = `Nothing about ${target.name} is disclosable to you right now.`;
+    } else if (provider?.configured()) {
+      try {
+        answer = await provider.synthesize(target.name, question, sections);
+      } catch (err) {
+        app.log.error({ err }, 'model provider synthesis failed for a team-ask report — falling back to raw authorized data');
+        answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+      }
+    } else {
+      const whoMissing = runtimeName && configEnvVar
+        ? `No ${configEnvVar} configured for ${target.name}'s main agent (${runtimeName})`
+        : `No main agent is configured for ${target.name}`;
+      answer = `${whoMissing}, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+    }
+
+    if (body.persist) {
+      const fullSnapshot = { ...snapshot, synthesizedAnswer: answer, consultedSources };
+      await repo.appendAuditEntry({
+        orgId,
+        requesterId,
+        requesterRole: 'Direct manager',
+        targetPersonId: target.id,
+        question,
+        snapshot: fullSnapshot,
+        now,
+      });
+      try {
+        await runEscalationChecks({ orgId, requesterId, target, people, surfaces, claims, now: new Date(now) });
+      } catch (err) {
+        app.log.error({ err }, 'escalation checks failed for a team-ask report — continuing');
+      }
+    }
+
+    return { personId: target.id, name: target.name, answer, withheldCount, coverage: snapshot.coverage, consultedSources };
+  }));
+
+  // One rollup call, built only from each report's own already-safe answer text — never
+  // raw claim sentences a second time. Not persisted anywhere of its own: audit rows are
+  // per (requester, target) pair by schema, and each report's own row above already
+  // carries exactly what was told about them, nothing about teammates folded in.
+  const rollupSections = perPerson.map((p) => ({ source: p.name, digest: p.answer }));
+  let teamAnswer: string;
+  if (provider?.configured()) {
+    try {
+      teamAnswer = await provider.synthesize(`${requesterName}'s team`, question, rollupSections);
+    } catch (err) {
+      app.log.error({ err }, 'model provider rollup synthesis failed for a team ask — falling back to a plain list');
+      teamAnswer = rawActivityDigest(rollupSections);
+    }
+  } else {
+    teamAnswer = rawActivityDigest(rollupSections);
+  }
+
+  return { answer: teamAnswer, perPerson, reportCount: reports.length };
+});
+
 /* ---------- audit ---------- */
 
 /** The org-wide feed — every entry across every person, admin-only. `/api/audit/subject/:id`

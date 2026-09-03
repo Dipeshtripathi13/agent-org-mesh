@@ -9,6 +9,8 @@ const ROLES = ['Direct manager', 'Skip-level', 'Peer', 'Executive', 'IT admin'];
 
 let localTurnId = 0;
 
+type TeamAskResult = Awaited<ReturnType<typeof api.askTeam>>;
+
 export function Ask() {
   const { meId, meOrgId } = useMe();
   const [people, setPeople] = useState<Person[]>([]);
@@ -25,6 +27,32 @@ export function Ask() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const busy = pending != null && pending.busy;
+
+  // Ask about my whole team, in one go — a separate capability from the single-target
+  // thread above (there's no per-team chat history endpoint, so this stays its own small,
+  // stateless panel rather than a conversation). Only shown at all when meId genuinely
+  // has direct reports in this org's chart — nothing to ask otherwise.
+  const myReports = people.filter((p) => p.managerId === meId);
+  const [teamQuestion, setTeamQuestion] = useState('');
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [teamResult, setTeamResult] = useState<TeamAskResult | null>(null);
+  const [teamDetailId, setTeamDetailId] = useState<number | null>(null);
+
+  const askTeam = async (q: string) => {
+    if (!q.trim() || teamBusy) return;
+    setTeamBusy(true);
+    setTeamError(null);
+    try {
+      const r = await api.askTeam(q.trim(), meId, true);
+      setTeamResult(r);
+      setTeamQuestion('');
+    } catch (e) {
+      setTeamError(e instanceof Error ? e.message : 'could not get a team update');
+    } finally {
+      setTeamBusy(false);
+    }
+  };
 
   // Ask is for asking about someone *else* — "My agent" → "Ask yourself" already owns
   // asking about yourself, with its own separate chat history. Excluding yourself here
@@ -301,6 +329,83 @@ export function Ask() {
           </p>
         </div>
       </div>
+
+      {myReports.length > 0 && (
+        <div className="panel" style={{ marginTop: 16 }}>
+          <header><span className="label">Ask about your team</span></header>
+          <div className="inner">
+            <p className="glossary" style={{ margin: '0 0 12px' }}>
+              One question, routed to each of your {myReports.length} direct report
+              {myReports.length === 1 ? '' : 's'}&rsquo; own agents in parallel, then
+              rolled up into one update. Each of them still gets their own real, audited
+              disclosure event under &ldquo;Direct manager&rdquo; — this doesn&rsquo;t
+              change what any one person sees about themselves, it just answers about all
+              of them at once instead of one at a time.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                aria-label="Team question"
+                placeholder="What's blocking the team this week?"
+                value={teamQuestion}
+                onChange={(e) => setTeamQuestion(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') askTeam(teamQuestion); }}
+                style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
+              />
+              <button
+                onClick={() => askTeam(teamQuestion)}
+                disabled={teamBusy || !teamQuestion.trim()}
+                style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+              >
+                {teamBusy ? 'Asking…' : 'Ask team'}
+              </button>
+            </div>
+
+            {teamError && (
+              <p style={{ marginTop: 10, fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px' }}>
+                {teamError}
+              </p>
+            )}
+
+            {teamResult && (
+              <div style={{ marginTop: 12 }}>
+                <div className="runtime-card" style={{ background: '#f8f9fa' }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
+                    TEAM UPDATE &middot; {teamResult.reportCount} report{teamResult.reportCount === 1 ? '' : 's'}
+                  </span>
+                  <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{teamResult.answer}</p>
+                </div>
+
+                {teamResult.perPerson.length > 0 && (
+                  <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                    {teamResult.perPerson.map((p) => (
+                      <div key={p.personId} style={{ border: '1px solid var(--rule2)', borderRadius: 2, padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                          <button
+                            onClick={() => setTeamDetailId((cur) => (cur === p.personId ? null : p.personId))}
+                            style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
+                          >
+                            {teamDetailId === p.personId ? 'Hide' : 'Show'} their own answer
+                          </button>
+                        </div>
+                        {teamDetailId === p.personId && (
+                          <>
+                            <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 12 }}>{p.answer}</p>
+                            <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
+                              {p.withheldCount > 0 ? `${p.withheldCount} item(s) withheld` : 'nothing withheld'}
+                              {p.consultedSources.length > 0 && ` · consulted: ${p.consultedSources.join(', ')}`}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }

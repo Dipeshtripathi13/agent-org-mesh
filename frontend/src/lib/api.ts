@@ -276,6 +276,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ targetId, role, question, persist, requesterId, conversationId }),
     }),
+  /** One question, one update covering every direct report in one go — the multi-target
+   *  sibling of agentAsk. No targetId/role: the report list is resolved server-side from
+   *  the org chart itself (never client-supplied), and every report is asked under
+   *  'Direct manager' because that relationship is what put them in the list at all. */
+  askTeam: (question: string, requesterId: number, persist = false) =>
+    req<{
+      answer: string;
+      reportCount: number;
+      perPerson: {
+        personId: number; name: string; answer: string; withheldCount: number;
+        coverage: AgentResponse['coverage']; consultedSources: string[];
+      }[];
+    }>('/agent/ask-team', {
+      method: 'POST',
+      body: JSON.stringify({ question, requesterId, persist }),
+    }),
   /** The personal counterpart to agentAsk, for an account with no organization — no
    *  targetId/role/requesterId, since the requester is always the target. */
   askPersonal: (question: string, conversationId?: string) =>

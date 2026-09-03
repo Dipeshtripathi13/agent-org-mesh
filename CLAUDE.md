@@ -192,6 +192,38 @@ thrown away and reseeded by that exact script. To try self-serve signup instead,
 "New here? Create your account" on the login screen with any new email — you land in your
 own real, one-person org immediately, no separate org-creation step.
 
+**A manager can ask one question about their whole team and get one update, in one go —
+`POST /api/agent/ask-team`, the multi-target sibling of `/api/agent/ask`.** Requested
+directly, as the concrete first instance of the product's real stated purpose (see the
+top of this file): a manager's own main agent routing a question out to each of their
+people's own agents and rolling the results into one answer, rather than asking about
+each report one at a time. Built as a fan-out over primitives that already existed, not a
+new trust path: the report list is never client-supplied — it's `people.filter(p =>
+p.managerId === requesterId)`, the exact same structural check `deriveAllowedRoles` already
+uses for `'Direct manager'` (`policy.ts:219`), just run in reverse — so there is no way to
+ask this "as" a manager of people who don't actually report to you, and `requesterId` itself
+still goes through the same `sessionPreferredPersonId` session-trust check every other
+attribution endpoint does. Each report still gets its own real `gatherAll` → `respond()`
+call under role `'Direct manager'` and its own real audit row — a team ask is N real
+disclosure events, not one, and every employee still sees exactly and only what was told
+about them, never a teammate's data folded in. The combined "team update" text is built a
+second time, from each report's own already-synthesized (or raw-fallback) answer — never
+from raw claim sentences a second time — and isn't persisted anywhere on its own, since
+audit rows are `(requester, target)` pairs by schema and each report's own row above
+already carries the real record. Reuses `ModelProvider.synthesize()` completely unchanged,
+called twice (once per report, once for the rollup over their answers) — no interface
+change needed in `modelProvider.ts`/`anthropic.ts`/`openaiCompatible.ts`. Frontend: a new
+"Ask about your team" panel on `Ask.tsx`, shown only when `meId` genuinely has direct
+reports in the org chart, with its own small per-report expandable breakdown — deliberately
+not folded into the existing single-target chat thread above it, since there's no per-team
+conversation history endpoint (each report's own row is still visible the normal way, via
+their own "Who asked about me" log). Live-verified against the running dev API and the
+real seeded Northbeam org, not just typechecked: asked as a real manager (Hana Oyelaran, 6
+direct reports) and got back a real combined answer plus 6 real per-report entries, each
+with its own real coverage/withheld-count/consulted-sources; confirmed a real audit row was
+written under the manager's own id and role; confirmed an individual contributor with zero
+reports gets an honest "no direct reports" answer rather than an error or an empty list.
+
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
   now mostly closed, not mostly open — updated after a full security audit fixed the
