@@ -192,37 +192,52 @@ thrown away and reseeded by that exact script. To try self-serve signup instead,
 "New here? Create your account" on the login screen with any new email — you land in your
 own real, one-person org immediately, no separate org-creation step.
 
-**A manager can ask one question about their whole team and get one update, in one go —
-`POST /api/agent/ask-team`, the multi-target sibling of `/api/agent/ask`.** Requested
-directly, as the concrete first instance of the product's real stated purpose (see the
-top of this file): a manager's own main agent routing a question out to each of their
-people's own agents and rolling the results into one answer, rather than asking about
-each report one at a time. Built as a fan-out over primitives that already existed, not a
-new trust path: the report list is never client-supplied — it's `people.filter(p =>
-p.managerId === requesterId)`, the exact same structural check `deriveAllowedRoles` already
-uses for `'Direct manager'` (`policy.ts:219`), just run in reverse — so there is no way to
-ask this "as" a manager of people who don't actually report to you, and `requesterId` itself
-still goes through the same `sessionPreferredPersonId` session-trust check every other
-attribution endpoint does. Each report still gets its own real `gatherAll` → `respond()`
-call under role `'Direct manager'` and its own real audit row — a team ask is N real
-disclosure events, not one, and every employee still sees exactly and only what was told
-about them, never a teammate's data folded in. The combined "team update" text is built a
-second time, from each report's own already-synthesized (or raw-fallback) answer — never
-from raw claim sentences a second time — and isn't persisted anywhere on its own, since
-audit rows are `(requester, target)` pairs by schema and each report's own row above
-already carries the real record. Reuses `ModelProvider.synthesize()` completely unchanged,
-called twice (once per report, once for the rollup over their answers) — no interface
-change needed in `modelProvider.ts`/`anthropic.ts`/`openaiCompatible.ts`. Frontend: a new
-"Ask about your team" panel on `Ask.tsx`, shown only when `meId` genuinely has direct
-reports in the org chart, with its own small per-report expandable breakdown — deliberately
-not folded into the existing single-target chat thread above it, since there's no per-team
-conversation history endpoint (each report's own row is still visible the normal way, via
-their own "Who asked about me" log). Live-verified against the running dev API and the
-real seeded Northbeam org, not just typechecked: asked as a real manager (Hana Oyelaran, 6
-direct reports) and got back a real combined answer plus 6 real per-report entries, each
-with its own real coverage/withheld-count/consulted-sources; confirmed a real audit row was
-written under the manager's own id and role; confirmed an individual contributor with zero
-reports gets an honest "no direct reports" answer rather than an error or an empty list.
+**Asking the same question about several freely-chosen people at once, and getting one
+rolled-up update — `POST /api/agent/ask-multi`, the multi-target sibling of
+`/api/agent/ask`.** Requested directly, as the concrete first instance of the product's
+real stated purpose (see the top of this file): one main agent routing a question out to
+several other people's own agents and rolling the results into one answer, rather than
+asking about each of them one at a time. Went through one real design correction before
+landing here: the first version derived the target set structurally from the org chart
+(a manager's own direct reports only, `people.filter(p => p.managerId === requesterId)`,
+mirroring `deriveAllowedRoles`'s `'Direct manager'` check run in reverse) — reworked
+immediately, pushed back on directly, once it was clear the real scenario is broader than
+direct reports: a CEO asking the Eng manager and the Fin manager about the same thing in
+one go, two people who don't report to each other or necessarily to the asker directly.
+`targetIds` is therefore a real, client-supplied, open selection now, same as a single
+`/api/agent/ask`'s one `targetId` always has been — the trust boundary that actually
+matters didn't move for that: one claimed `role` (same six roles the single-target Ask
+page already offers) is checked per target via `deriveAllowedRoles`, independently, and a
+target the role isn't truthful for is never silently dropped — it comes back as its own
+explicit, visible rejection (`{ ok: false, reason }`) in `perPerson`, the same
+"withholding is always visible" rule (rule 5) the rest of this system already follows for
+everything else. Every target that *does* pass still gets its own real `gatherAll` →
+`respond()` call under the claimed role and its own real audit row — asking about several
+people is that many real disclosure events, not one, and each of them still sees exactly
+and only what was told about them, never another selected person's data folded in. The
+one combined answer is built a second time, from each accepted target's own
+already-synthesized (or raw-fallback) answer plus the rejected targets' own honest
+rejection reasons — never from raw claim sentences a second time — and isn't persisted
+anywhere on its own, since audit rows are `(requester, target)` pairs by schema and each
+accepted target's own row above already carries the real record. Reuses
+`ModelProvider.synthesize()` completely unchanged, called once per accepted target plus
+once more for the rollup — no interface change needed in `modelProvider.ts`/`anthropic.ts`/
+`openaiCompatible.ts`. Frontend: an "Ask several people" panel on `Ask.tsx` below the
+existing single-target thread — a role-chip row (unfiltered, since truthfulness is now
+per-target rather than per-one-fixed-target) plus a person-chip multi-select over everyone
+but yourself, with its own small per-person expandable breakdown that distinguishes
+accepted answers from visible rejections. Deliberately not folded into the single-target
+chat thread above it: there's no per-selection conversation-history endpoint, so this
+stays its own small, stateless panel rather than pretending to be a chat. Live-verified
+against the running dev API and the real seeded Northbeam org, not just typechecked: asked
+as a real executive (Marta Vieira, `managerId: null`) about two people from different,
+deep subtrees under role `'Executive'` and got back a real combined answer plus two real
+per-person entries; separately, asked as a real direct manager (Hana Oyelaran) under role
+`'Direct manager'` about one real report, one unrelated person, and one nonexistent id in
+the same call, and confirmed the real report was accepted while the other two came back as
+honest, specific rejections (`"that relationship doesn't hold in the org chart"` /
+`"not found in this org chart"`) rather than being silently dropped or failing the whole
+request; confirmed real audit rows landed under each requester's own id and claimed role.
 
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is

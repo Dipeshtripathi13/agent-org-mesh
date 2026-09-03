@@ -276,21 +276,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ targetId, role, question, persist, requesterId, conversationId }),
     }),
-  /** One question, one update covering every direct report in one go — the multi-target
-   *  sibling of agentAsk. No targetId/role: the report list is resolved server-side from
-   *  the org chart itself (never client-supplied), and every report is asked under
-   *  'Direct manager' because that relationship is what put them in the list at all. */
-  askTeam: (question: string, requesterId: number, persist = false) =>
+  /** One question, one update covering several freely-chosen people at once — the
+   *  multi-target sibling of agentAsk. `targetIds` is a real, open choice (a CEO picking
+   *  the Eng manager and the Fin manager, say), unlike a single agentAsk's one `targetId`.
+   *  One claimed `role` applies to every target, checked independently per target
+   *  server-side — a target it isn't truthful for comes back as its own visible rejection
+   *  in `perPerson` (`ok: false`, with a real `reason`), never silently dropped. */
+  askMulti: (question: string, requesterId: number, role: string, targetIds: number[], persist = false) =>
     req<{
       answer: string;
-      reportCount: number;
-      perPerson: {
-        personId: number; name: string; answer: string; withheldCount: number;
-        coverage: AgentResponse['coverage']; consultedSources: string[];
-      }[];
-    }>('/agent/ask-team', {
+      askedCount: number;
+      rejectedCount: number;
+      perPerson: (
+        | { personId: number; name: string; ok: true; answer: string; withheldCount: number; coverage: AgentResponse['coverage']; consultedSources: string[] }
+        | { personId: number; name: string | null; ok: false; reason: string }
+      )[];
+    }>('/agent/ask-multi', {
       method: 'POST',
-      body: JSON.stringify({ question, requesterId, persist }),
+      body: JSON.stringify({ question, requesterId, role, targetIds, persist }),
     }),
   /** The personal counterpart to agentAsk, for an account with no organization — no
    *  targetId/role/requesterId, since the requester is always the target. */

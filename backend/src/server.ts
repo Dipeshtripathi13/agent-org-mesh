@@ -2567,30 +2567,39 @@ app.post('/api/agent/ask', async (req, reply) => {
   return { answer, items: snapshot.items, withheldCount, coverage: snapshot.coverage, conversationId, consultedSources };
 });
 
-/** A manager asking one question and getting one update covering their whole team, in
- *  one go — the multi-target extension of /api/agent/ask above. Reuses every primitive
- *  that endpoint already has rather than introducing a new trust path: the report list
- *  is never client-supplied, it's derived from the org chart itself
- *  (people.managerId === requesterId — the same structural check deriveAllowedRoles uses
- *  for 'Direct manager', just run in reverse), so there is no way to ask this "as" a
- *  manager of people who don't actually report to you. Each report still goes through
- *  its own real respond() call under role 'Direct manager' and gets its own real audit
- *  row — a team ask is N real disclosure events, not one, and each employee still sees
- *  exactly and only what was told about them, never their teammates' data folded in.
- *  The one combined "team update" text is built a second time, from each report's own
- *  already-synthesized (never raw) answer — so nothing reaches that final call that
- *  wasn't already independently authorized and safe to surface once. */
-app.post('/api/agent/ask-team', async (req, reply) => {
-  const body = req.body as { requesterId?: number; question?: string; persist?: boolean };
+/** Ask the same free-text question about several freely-chosen people at once and get
+ *  one rolled-up update — the multi-target extension of /api/agent/ask above. The set of
+ *  people is a real, open choice (a CEO picking the Eng manager and the Fin manager, say),
+ *  not derived from the org chart the way an earlier version of this endpoint restricted
+ *  it to direct reports only — so, unlike that version, `targetIds` genuinely is
+ *  client-supplied here. The trust boundary that matters doesn't move for that: exactly
+ *  like a single /api/agent/ask, one claimed `role` is checked per target against
+ *  deriveAllowedRoles, and a target the claimed role isn't truthful for is never silently
+ *  dropped — it comes back as its own explicit, visible rejection in `perPerson`, same
+ *  "withholding is always visible" rule the rest of this system follows. Each target that
+ *  *does* pass still goes through its own real gatherAll → respond() call and gets its own
+ *  real audit row — asking about several people is that many real disclosure events, not
+ *  one, and each of them still sees exactly and only what was told about them, never
+ *  another selected person's data folded in. The one combined answer is built a second
+ *  time, from each accepted target's own already-synthesized (never raw) answer, so
+ *  nothing reaches that final call that wasn't already independently authorized. */
+app.post('/api/agent/ask-multi', async (req, reply) => {
+  const body = req.body as { requesterId?: number; role?: RequesterRole; targetIds?: number[]; question?: string; persist?: boolean };
   if (!body.question?.trim()) {
     reply.code(400);
     return { error: 'question is required' };
   }
-  if (body.requesterId == null) {
+  if (body.requesterId == null || !body.role) {
     reply.code(400);
-    return { error: 'requesterId is required' };
+    return { error: 'requesterId and role are required' };
+  }
+  const targetIds = [...new Set((body.targetIds ?? []).filter((id) => Number.isInteger(id)))];
+  if (targetIds.length === 0) {
+    reply.code(400);
+    return { error: 'select at least one person to ask about' };
   }
   const question = body.question.trim();
+  const role = body.role;
 
   const orgId = await repo.getOrgIdOfPerson(body.requesterId).catch(() => null);
   if (orgId == null) {
@@ -2604,13 +2613,7 @@ app.post('/api/agent/ask-team', async (req, reply) => {
 
   const people = await repo.getPeople(orgId);
   const requester = people.find((p) => p.id === requesterId);
-  const requesterName = requester?.name ?? 'the requesting manager';
-
-  // The manager's real direct reports — never a client-supplied target list.
-  const reports = people.filter((p) => p.managerId === requesterId);
-  if (reports.length === 0) {
-    return { answer: `${requesterName} has no direct reports in this org chart.`, perPerson: [], reportCount: 0 };
-  }
+  const requesterName = requester?.name ?? 'the requester';
 
   const [{ provider, runtimeName, configEnvVar }, surfaces, revision] = await Promise.all([
     getMainProvider(orgId),
@@ -2619,16 +2622,24 @@ app.post('/api/agent/ask-team', async (req, reply) => {
   ]);
   const now = new Date().toISOString();
 
-  const perPerson = await Promise.all(reports.map(async (target) => {
+  const perPerson = await Promise.all(targetIds.map(async (targetId) => {
+    const target = people.find((p) => p.id === targetId);
+    if (!target) {
+      return { personId: targetId, name: null, ok: false as const, reason: 'not found in this org chart' };
+    }
+    if (!deriveAllowedRoles(requesterId, targetId, people).includes(role)) {
+      return { personId: targetId, name: target.name, ok: false as const, reason: `you may not ask as "${role}" about ${target.name} — that relationship doesn't hold in the org chart` };
+    }
+
     let usedSurfaceKeys: string[] = [];
     try {
       usedSurfaceKeys = await gatherAll(orgId, target.id, undefined, question);
     } catch (err) {
-      app.log.error({ err }, 'real claim ingestion failed for a team-ask report — continuing with existing claims');
+      app.log.error({ err }, 'real claim ingestion failed for a multi-ask target — continuing with existing claims');
     }
 
     const claims = await repo.getClaims(orgId, target.id);
-    const snapshot = respond({ target, claims, surfaces, requesterRole: 'Direct manager', revision, now });
+    const snapshot = respond({ target, claims, surfaces, requesterRole: role, revision, now });
     const { allowed, withheldCount } = allowedTextOnly(snapshot.items);
     const sections = allowed.length > 0
       ? [{ source: `Authorized claims about ${target.name}`, digest: allowed.map((i) => `- ${i.text}`).join('\n') }]
@@ -2642,7 +2653,7 @@ app.post('/api/agent/ask-team', async (req, reply) => {
       try {
         answer = await provider.synthesize(target.name, question, sections);
       } catch (err) {
-        app.log.error({ err }, 'model provider synthesis failed for a team-ask report — falling back to raw authorized data');
+        app.log.error({ err }, 'model provider synthesis failed for a multi-ask target — falling back to raw authorized data');
         answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
       }
     } else {
@@ -2657,7 +2668,7 @@ app.post('/api/agent/ask-team', async (req, reply) => {
       await repo.appendAuditEntry({
         orgId,
         requesterId,
-        requesterRole: 'Direct manager',
+        requesterRole: role,
         targetPersonId: target.id,
         question,
         snapshot: fullSnapshot,
@@ -2666,31 +2677,41 @@ app.post('/api/agent/ask-team', async (req, reply) => {
       try {
         await runEscalationChecks({ orgId, requesterId, target, people, surfaces, claims, now: new Date(now) });
       } catch (err) {
-        app.log.error({ err }, 'escalation checks failed for a team-ask report — continuing');
+        app.log.error({ err }, 'escalation checks failed for a multi-ask target — continuing');
       }
     }
 
-    return { personId: target.id, name: target.name, answer, withheldCount, coverage: snapshot.coverage, consultedSources };
+    return { personId: target.id, name: target.name, ok: true as const, answer, withheldCount, coverage: snapshot.coverage, consultedSources };
   }));
 
-  // One rollup call, built only from each report's own already-safe answer text — never
-  // raw claim sentences a second time. Not persisted anywhere of its own: audit rows are
-  // per (requester, target) pair by schema, and each report's own row above already
-  // carries exactly what was told about them, nothing about teammates folded in.
-  const rollupSections = perPerson.map((p) => ({ source: p.name, digest: p.answer }));
-  let teamAnswer: string;
-  if (provider?.configured()) {
+  const accepted = perPerson.filter((p): p is Extract<typeof p, { ok: true }> => p.ok);
+  const rejected = perPerson.filter((p) => !p.ok);
+
+  // One rollup call, built only from each accepted target's own already-safe answer text
+  // — never raw claim sentences a second time. Not persisted anywhere of its own: audit
+  // rows are per (requester, target) pair by schema, and each accepted target's own row
+  // above already carries exactly what was told about them, nothing about anyone else
+  // selected folded in. A rejected target contributes only its honest rejection reason,
+  // visibly, same "never silently drop" rule as everywhere else in this system.
+  const rollupSections = [
+    ...accepted.map((p) => ({ source: p.name, digest: p.answer })),
+    ...rejected.map((p) => ({ source: p.name ?? `person #${p.personId}`, digest: `Not asked — ${p.reason}` })),
+  ];
+  let combinedAnswer: string;
+  if (accepted.length === 0) {
+    combinedAnswer = `None of the selected people could be asked as "${role}": ${rejected.map((p) => p.reason).join('; ')}`;
+  } else if (provider?.configured()) {
     try {
-      teamAnswer = await provider.synthesize(`${requesterName}'s team`, question, rollupSections);
+      combinedAnswer = await provider.synthesize(`${requesterName}'s selected people`, question, rollupSections);
     } catch (err) {
-      app.log.error({ err }, 'model provider rollup synthesis failed for a team ask — falling back to a plain list');
-      teamAnswer = rawActivityDigest(rollupSections);
+      app.log.error({ err }, 'model provider rollup synthesis failed for a multi-ask — falling back to a plain list');
+      combinedAnswer = rawActivityDigest(rollupSections);
     }
   } else {
-    teamAnswer = rawActivityDigest(rollupSections);
+    combinedAnswer = rawActivityDigest(rollupSections);
   }
 
-  return { answer: teamAnswer, perPerson, reportCount: reports.length };
+  return { answer: combinedAnswer, perPerson, askedCount: accepted.length, rejectedCount: rejected.length };
 });
 
 /* ---------- audit ---------- */

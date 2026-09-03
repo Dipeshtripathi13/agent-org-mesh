@@ -9,7 +9,7 @@ const ROLES = ['Direct manager', 'Skip-level', 'Peer', 'Executive', 'IT admin'];
 
 let localTurnId = 0;
 
-type TeamAskResult = Awaited<ReturnType<typeof api.askTeam>>;
+type MultiAskResult = Awaited<ReturnType<typeof api.askMulti>>;
 
 export function Ask() {
   const { meId, meOrgId } = useMe();
@@ -28,29 +28,38 @@ export function Ask() {
   const threadEndRef = useRef<HTMLDivElement>(null);
   const busy = pending != null && pending.busy;
 
-  // Ask about my whole team, in one go — a separate capability from the single-target
-  // thread above (there's no per-team chat history endpoint, so this stays its own small,
-  // stateless panel rather than a conversation). Only shown at all when meId genuinely
-  // has direct reports in this org's chart — nothing to ask otherwise.
-  const myReports = people.filter((p) => p.managerId === meId);
-  const [teamQuestion, setTeamQuestion] = useState('');
-  const [teamBusy, setTeamBusy] = useState(false);
-  const [teamError, setTeamError] = useState<string | null>(null);
-  const [teamResult, setTeamResult] = useState<TeamAskResult | null>(null);
-  const [teamDetailId, setTeamDetailId] = useState<number | null>(null);
+  // Ask the same question about several freely-chosen people at once — a real, open
+  // selection (a CEO picking the Eng manager and the Fin manager, say), not derived from
+  // the org chart the way an earlier version of this restricted it to direct reports.
+  // Its own small, stateless panel — there's no per-selection chat history endpoint, so
+  // this doesn't try to be a conversation the way the single-target thread above is.
+  const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
+  const [multiRole, setMultiRole] = useState('Executive');
+  const [multiQuestion, setMultiQuestion] = useState('');
+  const [multiBusy, setMultiBusy] = useState(false);
+  const [multiError, setMultiError] = useState<string | null>(null);
+  const [multiResult, setMultiResult] = useState<MultiAskResult | null>(null);
+  const [multiDetailId, setMultiDetailId] = useState<number | null>(null);
 
-  const askTeam = async (q: string) => {
-    if (!q.trim() || teamBusy) return;
-    setTeamBusy(true);
-    setTeamError(null);
+  const toggleMultiSelected = (id: number) =>
+    setMultiSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const askMulti = async (q: string) => {
+    if (!q.trim() || multiBusy || multiSelected.size === 0) return;
+    setMultiBusy(true);
+    setMultiError(null);
     try {
-      const r = await api.askTeam(q.trim(), meId, true);
-      setTeamResult(r);
-      setTeamQuestion('');
+      const r = await api.askMulti(q.trim(), meId, multiRole, [...multiSelected], true);
+      setMultiResult(r);
+      setMultiQuestion('');
     } catch (e) {
-      setTeamError(e instanceof Error ? e.message : 'could not get a team update');
+      setMultiError(e instanceof Error ? e.message : 'could not get an answer');
     } finally {
-      setTeamBusy(false);
+      setMultiBusy(false);
     }
   };
 
@@ -330,82 +339,128 @@ export function Ask() {
         </div>
       </div>
 
-      {myReports.length > 0 && (
-        <div className="panel" style={{ marginTop: 16 }}>
-          <header><span className="label">Ask about your team</span></header>
-          <div className="inner">
-            <p className="glossary" style={{ margin: '0 0 12px' }}>
-              One question, routed to each of your {myReports.length} direct report
-              {myReports.length === 1 ? '' : 's'}&rsquo; own agents in parallel, then
-              rolled up into one update. Each of them still gets their own real, audited
-              disclosure event under &ldquo;Direct manager&rdquo; — this doesn&rsquo;t
-              change what any one person sees about themselves, it just answers about all
-              of them at once instead of one at a time.
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                aria-label="Team question"
-                placeholder="What's blocking the team this week?"
-                value={teamQuestion}
-                onChange={(e) => setTeamQuestion(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') askTeam(teamQuestion); }}
-                style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
-              />
-              <button
-                onClick={() => askTeam(teamQuestion)}
-                disabled={teamBusy || !teamQuestion.trim()}
-                style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
-              >
-                {teamBusy ? 'Asking…' : 'Ask team'}
-              </button>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <header><span className="label">Ask several people</span></header>
+        <div className="inner">
+          <p className="glossary" style={{ margin: '0 0 12px' }}>
+            Pick anyone in the chart — not just your own reports — and ask them all the
+            same question in one go: a CEO checking the Eng manager and the Fin manager at
+            once, say. One claimed relationship applies to the whole selection; it&rsquo;s
+            still verified against the org chart separately for each person, and anyone
+            it isn&rsquo;t truthful for is shown as a plain, visible rejection rather than
+            silently left out. Everyone it does hold for still gets their own real,
+            audited disclosure event, exactly like asking about them one at a time.
+          </p>
+
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
+              Asking as
             </div>
-
-            {teamError && (
-              <p style={{ marginTop: 10, fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px' }}>
-                {teamError}
-              </p>
-            )}
-
-            {teamResult && (
-              <div style={{ marginTop: 12 }}>
-                <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                    TEAM UPDATE &middot; {teamResult.reportCount} report{teamResult.reportCount === 1 ? '' : 's'}
-                  </span>
-                  <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{teamResult.answer}</p>
-                </div>
-
-                {teamResult.perPerson.length > 0 && (
-                  <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
-                    {teamResult.perPerson.map((p) => (
-                      <div key={p.personId} style={{ border: '1px solid var(--rule2)', borderRadius: 2, padding: '8px 10px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
-                          <button
-                            onClick={() => setTeamDetailId((cur) => (cur === p.personId ? null : p.personId))}
-                            style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
-                          >
-                            {teamDetailId === p.personId ? 'Hide' : 'Show'} their own answer
-                          </button>
-                        </div>
-                        {teamDetailId === p.personId && (
-                          <>
-                            <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 12 }}>{p.answer}</p>
-                            <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                              {p.withheldCount > 0 ? `${p.withheldCount} item(s) withheld` : 'nothing withheld'}
-                              {p.consultedSources.length > 0 && ` · consulted: ${p.consultedSources.join(', ')}`}
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {ROLES.map((r) => (
+                <button
+                  key={r}
+                  className="chip"
+                  aria-pressed={multiRole === r}
+                  onClick={() => setMultiRole(r)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
           </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
+              About ({multiSelected.size} selected)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 140, overflowY: 'auto', border: '1px solid var(--rule2)', borderRadius: 2, padding: 8 }}>
+              {others.map((p) => (
+                <button
+                  key={p.id}
+                  className="chip"
+                  aria-pressed={multiSelected.has(p.id)}
+                  onClick={() => toggleMultiSelected(p.id)}
+                  title={p.title}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              aria-label="Question"
+              placeholder="What's the status of the payments migration?"
+              value={multiQuestion}
+              onChange={(e) => setMultiQuestion(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') askMulti(multiQuestion); }}
+              style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
+            />
+            <button
+              onClick={() => askMulti(multiQuestion)}
+              disabled={multiBusy || !multiQuestion.trim() || multiSelected.size === 0}
+              style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+            >
+              {multiBusy ? 'Asking…' : 'Ask selected'}
+            </button>
+          </div>
+
+          {multiError && (
+            <p style={{ marginTop: 10, fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px' }}>
+              {multiError}
+            </p>
+          )}
+
+          {multiResult && (
+            <div style={{ marginTop: 12 }}>
+              <div className="runtime-card" style={{ background: '#f8f9fa' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
+                  COMBINED ANSWER &middot; {multiResult.askedCount} asked
+                  {multiResult.rejectedCount > 0 ? `, ${multiResult.rejectedCount} rejected` : ''}
+                </span>
+                <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{multiResult.answer}</p>
+              </div>
+
+              {multiResult.perPerson.length > 0 && (
+                <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                  {multiResult.perPerson.map((p) => (
+                    <div key={p.personId} style={{ border: '1px solid var(--rule2)', borderRadius: 2, padding: '8px 10px' }}>
+                      {p.ok ? (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                            <button
+                              onClick={() => setMultiDetailId((cur) => (cur === p.personId ? null : p.personId))}
+                              style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
+                            >
+                              {multiDetailId === p.personId ? 'Hide' : 'Show'} their own answer
+                            </button>
+                          </div>
+                          {multiDetailId === p.personId && (
+                            <>
+                              <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 12 }}>{p.answer}</p>
+                              <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
+                                {p.withheldCount > 0 ? `${p.withheldCount} item(s) withheld` : 'nothing withheld'}
+                                {p.consultedSources.length > 0 && ` · consulted: ${p.consultedSources.join(', ')}`}
+                              </p>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 12, color: 'var(--hold)' }}>
+                          <strong>{p.name ?? `Person #${p.personId}`}</strong> — not asked: {p.reason}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </>
   );
 }
