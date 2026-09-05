@@ -40,7 +40,7 @@ import { normalizeIngestPayload, recordEvent, recordAccountEvent } from './integ
 import { runEscalationChecks } from './integrations/escalationEngine.js';
 import { generateToken, listTokens, resolveToken, revokeToken, generateAccountToken, listAccountTokens, revokeAccountToken, resolveAccountToken } from './integrations/ingestTokens.js';
 import { DEFAULT_SINCE_DAYS, allowedTextOnly } from './integrations/orchestrator.js';
-import { gatherAll } from './integrations/resourceProviders.js';
+import { gatherAll, verifyProvider } from './integrations/resourceProviders.js';
 import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
 import { CONNECTOR_CATALOG } from './integrations/connectorCatalog.js';
 import { getGenericConnectionStatus } from './integrations/genericConnection.js';
@@ -60,7 +60,7 @@ import { saveAirflowConnection, getAirflowStatus, disconnectAirflow } from './in
 import { saveDbtConnection, getDbtStatus, disconnectDbt } from './integrations/dbtCloud.js';
 import { saveSnowflakeConnection, getSnowflakeStatus, disconnectSnowflake } from './integrations/snowflake.js';
 import { saveDatabricksConnection, getDatabricksStatus, disconnectDatabricks } from './integrations/databricks.js';
-import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS, accountCustomAgentProviders } from './integrations/personalConnectors.js';
+import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS, accountCustomAgentProviders, verifyAccountProvider } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -1859,6 +1859,21 @@ app.delete('/api/person/:id/connectors/:key', async (req, reply) => {
   return { ok: true };
 });
 
+/** A real, on-demand "is this still working" check — see verifyProvider's own module
+ *  comment (resourceProviders.ts) for the gap this closes: every status check above is
+ *  DB-existence only, never a live ping. */
+app.post('/api/person/:id/connectors/:key/verify', async (req, reply) => {
+  const id = Number((req.params as { id: string }).id);
+  const key = (req.params as { key: string }).key;
+  const check = await requireSelfIfLoggedIn(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const orgId = await repo.getOrgIdOfPerson(id);
+  return verifyProvider(orgId, id, key);
+});
+
 /* ---------- generic connector catalog: personal (no-org) account variant ----------
    Same catalog, same ConnectorsPanel component, same three-endpoint shape as the
    person-keyed routes just above — but scoped to the logged-in account itself (no :id
@@ -1930,6 +1945,18 @@ app.delete('/api/accounts/me/connectors/:key', async (req, reply) => {
   const handler = ACCOUNT_DISCONNECT_HANDLERS[key];
   if (handler) await handler(accountId);
   return { ok: true };
+});
+
+/** Account-keyed sibling of POST /api/person/:id/connectors/:key/verify above — see
+ *  verifyAccountProvider's own module comment (personalConnectors.ts). */
+app.post('/api/accounts/me/connectors/:key/verify', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const key = (req.params as { key: string }).key;
+  return verifyAccountProvider(accountId, key);
 });
 
 /* ---------- personal account: GitHub, Jira, sub-agents, ingest tokens ----------

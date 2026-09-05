@@ -298,6 +298,41 @@ does against a live database — `backend/scripts/migrate-add-account-custom-age
 same pattern as `migrate-add-must-change-password.ts` — since `schema.sql` itself is a full
 `DROP SCHEMA ... CASCADE` reset, never something to run against real data.
 
+**A real, on-demand "Verify" check closes a gap this project had lived with since the
+Jira 410 incident: every connector's own status check has only ever meant "a credential is
+stored," never "it still works."** Found by re-reading this file's own connector-catalog
+paragraph after a round of market research (`docs/published/` — enterprise buyers now cite
+observability as the #1 reason agent pilots die, 88% never reaching production) landed on
+the same conclusion from the outside: `get<Tool>Status`/`getGenericConnectionStatus`
+everywhere in this codebase is a bare `{ connected: !!row }` DB read, no live call, for
+every one of the ~15 PAT/OAuth-style connectors. That's precisely why Jira's connector
+passed every prior check for months while Atlassian had already removed the endpoint
+underneath it — an invalid credential and a deleted endpoint both fail differently, but a
+DB-existence check can't see either one. `POST /api/person/:id/connectors/:key/verify` and
+`POST /api/accounts/me/connectors/:key/verify` (`verifyProvider` in `resourceProviders.ts`,
+`verifyAccountProvider` in `personalConnectors.ts`) fix this the cheapest way available:
+reuse each connector's own already-built `ingest`/`fetchDigest` function unchanged, called
+with `since = right now` — the exact same real API request that ingestion always makes, just
+against a window narrow enough to almost never match anything new. A working credential
+resolves; a revoked one, a deprecated endpoint, or a real outage throws, and that thrown
+message is the honest signal surfaced back — no new per-connector code needed for any of
+the ~15 tools this covers. Deliberately excludes the three ingest-token tools (Claude
+Code/Codex CLI/Gemini CLI) and custom agents: none of them have a live external credential
+that can go stale the way a PAT/OAuth token can — their own "connected" status (has a real
+event ever landed) already is their honest liveness signal, so a "Verify" button for them
+would just be confusing, not more true. Frontend: a "Verify" button next to "Manage" on
+every eligible connected tool in `ConnectorsPanel.tsx` (gated on `authType !== 'ingest-token'`,
+shared by both person and account owners), showing the real result inline — "✓ Verified
+just now" or the actual failure message — rather than a script someone has to remember to
+run from a deployed container. Live-verified against the running dev API, not just
+typechecked: a genuinely not-connected tool reports "not connected" cleanly; an unsupported
+key reports "no live check available for this tool" cleanly; and — the real proof — a
+person's Linear connection was given a deliberately invalid stored token directly in the
+database (surface manually flipped to `'connected'`, exactly reproducing what a silently
+revoked credential looks like) and the verify call reached Linear's real API and came back
+with a genuine `invalid_token: Invalid access token` rejection, not a generic error — the
+exact class of failure the old status check could never have surfaced.
+
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
   now mostly closed, not mostly open — updated after a full security audit fixed the

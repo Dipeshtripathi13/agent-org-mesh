@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, INGEST_SOURCES, type AgentRuntime, type ConnectorDef, type CustomAgent, type IngestSource, type IngestToken, type PersonRuntime } from '../lib/api';
+import { relativeTime } from '../lib/conversations';
 import { ingestSnippet, ScopePill } from '../pages/SetUpMyAgent';
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -70,6 +71,14 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentPurpose, setNewAgentPurpose] = useState('');
   const [agentBusy, setAgentBusy] = useState(false);
+
+  // Real, on-demand "does this still work" checks — a stored credential can go stale or
+  // be revoked, or the vendor can quietly change the endpoint underneath it (the Jira 410
+  // incident this whole feature exists because of), and nothing about the "Connected"
+  // label above would ever notice. Per-key so checking one tool never disturbs another's
+  // last-known result.
+  const [verifyResults, setVerifyResults] = useState<Record<string, { ok: boolean; checkedAt: string; error?: string }>>({});
+  const [verifyBusyKey, setVerifyBusyKey] = useState<string | null>(null);
 
   // Sub-agent (LLM runtime) registration state — a wholly different backend concept and
   // table from every ConnectorDef above (person_runtimes/account_runtimes, not
@@ -213,6 +222,20 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
     }
   };
 
+  const verifyReq = (key: string) => (owner.kind === 'person' ? api.verifyConnector(owner.personId, key) : api.verifyAccountConnector(key));
+
+  const verify = async (key: string) => {
+    setVerifyBusyKey(key);
+    try {
+      const result = await verifyReq(key);
+      setVerifyResults((v) => ({ ...v, [key]: result }));
+    } catch (e) {
+      setVerifyResults((v) => ({ ...v, [key]: { ok: false, checkedAt: new Date().toISOString(), error: e instanceof Error ? e.message : 'check failed' } }));
+    } finally {
+      setVerifyBusyKey(null);
+    }
+  };
+
   const createToken = async (source: string) => {
     if (!newTokenLabel.trim()) return;
     setTokenBusy(true);
@@ -348,25 +371,43 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
           <p style={{ fontSize: 12, color: 'var(--ink3)', margin: 0 }}>Nothing connected yet.</p>
         ) : (
           <div className="stagger" style={{ display: 'grid', gap: 8 }}>
-            {connected.map((c) => (
-              <div key={c.key} className="runtime-card" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
-                {c.authType === 'ingest-token' ? (
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-                    {tokens.filter((t) => !t.revoked).length} active token(s)
+            {connected.map((c) => {
+              const canVerify = c.authType !== 'ingest-token';
+              const result = verifyResults[c.key];
+              return (
+              <div key={c.key} className="runtime-card" style={{ marginBottom: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</span>
+                  {c.authType === 'ingest-token' ? (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
+                      {tokens.filter((t) => !t.revoked).length} active token(s)
+                    </span>
+                  ) : (
+                    statuses[c.key]?.label && (
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>{statuses[c.key]?.label}</span>
+                    )
+                  )}
+                  <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+                    {c.status === 'live' ? 'reads at ask-time' : 'connected — not yet queried at ask-time'}
                   </span>
-                ) : (
-                  statuses[c.key]?.label && (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>{statuses[c.key]?.label}</span>
-                  )
+                  <span className="spacer" />
+                  {canVerify && (
+                    <button className="chip" disabled={verifyBusyKey === c.key} onClick={() => verify(c.key)}>
+                      {verifyBusyKey === c.key ? 'Checking…' : 'Verify'}
+                    </button>
+                  )}
+                  <button className="chip" disabled={busy} onClick={() => openConnect(c.key)}>Manage</button>
+                </div>
+                {canVerify && result && (
+                  <p style={{ fontSize: 11, margin: '7px 0 0', color: result.ok ? 'var(--ok, #2c6e4f)' : 'var(--hold)' }}>
+                    {result.ok
+                      ? `✓ Verified ${relativeTime(result.checkedAt)} — the real API answered.`
+                      : `✗ Failed ${relativeTime(result.checkedAt)}${result.error ? ` — ${result.error}` : ''}`}
+                  </p>
                 )}
-                <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
-                  {c.status === 'live' ? 'reads at ask-time' : 'connected — not yet queried at ask-time'}
-                </span>
-                <span className="spacer" />
-                <button className="chip" disabled={busy} onClick={() => openConnect(c.key)}>Manage</button>
               </div>
-            ))}
+              );
+            })}
 
             {gmailConnected && owner.kind === 'person' && (
               <div className="runtime-card" style={{ marginBottom: 0 }}>

@@ -332,6 +332,32 @@ export interface CustomAgentDigestProvider {
   fetchDigest(accountId: number, since: Date): Promise<string | null>;
 }
 
+/**
+ * The account-keyed sibling of resourceProviders.ts's verifyProvider — same real-liveness
+ * check (own module comment there explains the actual gap it closes: every status check
+ * in this codebase was DB-existence only, never a live ping, which is exactly how Jira's
+ * connector passed every prior check for months while the endpoint underneath it was
+ * already gone). Reuses each provider's own `fetchDigest` unchanged, called with
+ * `since = right now`; a working credential resolves (with or without a digest — either is
+ * success), a revoked one throws. Custom agents are deliberately excluded here: there's no
+ * live external API behind one to ping — its own "connected" status already is its
+ * liveness signal (has a real event ever landed), not a credential that can go stale.
+ */
+export async function verifyAccountProvider(accountId: number, surfaceKey: string): Promise<{ ok: boolean; checkedAt: string; error?: string }> {
+  const checkedAt = new Date().toISOString();
+  const entry = ACCOUNT_DIGEST_PROVIDERS.find((p) => p.surfaceKey === surfaceKey);
+  if (!entry) return { ok: false, checkedAt, error: 'no live check available for this tool' };
+
+  const status = await ACCOUNT_STATUS_HANDLERS[entry.surfaceKey]?.(accountId);
+  if (!status?.connected) return { ok: false, checkedAt, error: 'not connected' };
+  try {
+    await entry.fetchDigest(accountId, new Date());
+    return { ok: true, checkedAt };
+  } catch (err) {
+    return { ok: false, checkedAt, error: err instanceof Error ? err.message : 'request failed' };
+  }
+}
+
 export async function accountCustomAgentProviders(accountId: number): Promise<CustomAgentDigestProvider[]> {
   const agents = await repo.listAccountCustomAgents(accountId);
   if (agents.length === 0) return [];

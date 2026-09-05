@@ -64,6 +64,40 @@ export const PROVIDERS: ResourceProvider[] = [
   { surfaceKey: 'databricks', ingest: ingestDatabricksClaim },
 ];
 
+/**
+ * A real, on-demand liveness check for one connected surface — the gap behind the Jira
+ * 410 incident (CLAUDE.md's own connector-catalog paragraph): every `get<Tool>Status`
+ * function in this codebase only ever checks "is a credential stored," never "does it
+ * still work against the real API." That's exactly why Jira's connector could pass every
+ * prior check for months while Atlassian had quietly removed the endpoint underneath it —
+ * nothing here ever made a live call until someone actually asked a real question.
+ *
+ * Reuses each provider's own real `ingest` function unchanged — no new per-connector code
+ * — called with `since = right now` so the same real API request that ingestion always
+ * makes happens here too, just against a window narrow enough to almost never match
+ * anything. A working credential resolves (nothing new to report, which is the expected,
+ * successful case); a revoked token, a deprecated endpoint, or a real outage throws, and
+ * that's the actual, honest signal this check exists to surface. Never asserts a claim of
+ * its own beyond whatever `ingest` itself would have upserted for a real ask this instant —
+ * this is not a second disclosure path, it's the same one, run a moment early on purpose.
+ */
+export async function verifyProvider(orgId: number, personId: number, surfaceKey: string): Promise<{ ok: boolean; checkedAt: string; error?: string }> {
+  const checkedAt = new Date().toISOString();
+  const entry = PROVIDERS.find((p) => p.surfaceKey === surfaceKey);
+  if (!entry) return { ok: false, checkedAt, error: 'no live check available for this tool' };
+
+  const person = await repo.getPerson(personId);
+  if (person.surfaces[entry.surfaceKey] !== 'connected') {
+    return { ok: false, checkedAt, error: 'not connected' };
+  }
+  try {
+    await entry.ingest(orgId, personId, new Date());
+    return { ok: true, checkedAt };
+  } catch (err) {
+    return { ok: false, checkedAt, error: err instanceof Error ? err.message : 'request failed' };
+  }
+}
+
 const startOfToday = () => {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);

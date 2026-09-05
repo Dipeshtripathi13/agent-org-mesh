@@ -497,6 +497,12 @@ export const api = {
     }),
   disconnectConnector: (personId: number, key: string) =>
     req<{ ok: true }>(`/person/${personId}/connectors/${key}`, { method: 'DELETE' }),
+  /** A real, on-demand "does this credential still work" check — not just "is one stored."
+   *  Makes the same real API call the org's own main agent would make on the next real ask,
+   *  right now, against a window narrow enough to almost never return anything new — a
+   *  working credential resolves, a revoked one or a vendor-side breaking change throws. */
+  verifyConnector: (personId: number, key: string) =>
+    req<{ ok: boolean; checkedAt: string; error?: string }>(`/person/${personId}/connectors/${key}/verify`, { method: 'POST' }),
   /** Same three, account-keyed instead of person-keyed — for a personal (no-org) account's
    *  own "Set up my agent." Same catalog (connectorsCatalog above is shared by both). */
   accountConnectors: () =>
@@ -507,6 +513,8 @@ export const api = {
     }),
   disconnectAccountConnector: (key: string) =>
     req<{ ok: true }>(`/accounts/me/connectors/${key}`, { method: 'DELETE' }),
+  verifyAccountConnector: (key: string) =>
+    req<{ ok: boolean; checkedAt: string; error?: string }>(`/accounts/me/connectors/${key}/verify`, { method: 'POST' }),
 
   ingestTokens: (personId: number) => req<{ tokens: IngestToken[] }>(`/person/${personId}/ingest-tokens`),
   createIngestToken: (personId: number, label: string) =>
