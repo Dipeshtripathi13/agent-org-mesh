@@ -333,6 +333,39 @@ revoked credential looks like) and the verify call reached Linear's real API and
 with a genuine `invalid_token: Invalid access token` rejection, not a generic error — the
 exact class of failure the old status check could never have surfaced.
 
+**Trello moves from 'connectable' to genuinely 'live' — the first of the five tools
+(Trello/Airtable/Monday/Figma/Discord) whose connect flow worked but never actually read
+anything.** Picked deliberately as one tool done thoroughly rather than five done
+shallowly, following this project's own established convention (the MCP rollout's own
+CLAUDE.md paragraph makes the same call explicitly) — Airtable/Monday/Figma/Discord stay
+exactly where they were, still real, still deferred. `getRecentTrelloActivity` reads
+`GET /1/members/me/actions` — Trello's own real per-member activity feed, one of the few
+connectors in this codebase confirmed against a fully-documented official response shape
+rather than a best guess (`{ type, date, data: { card: { name }, board: { name } } }`),
+filtered to five narrative action types (card created/updated/commented/moved/assigned)
+the same way `eventIngestion.ts`'s `NARRATIVE_TOOLS` narrows Claude Code's own hook
+events — a raw actions feed is mostly board-administration noise nobody asks about.
+Trello's own stored credential is a `apiKey:token` pair, not a single bearer token (its
+real auth model), so it reuses the generic connection's one `access_token` column by
+concatenating the two at save time (`trello.ts`, already true before this pass) and
+splitting them back apart on read (`getTrelloConnection`/`getTrelloAccountConnection`, new
+this pass) — neither value can contain a colon, so a plain split is safe. Wired into both
+`resourceProviders.ts`'s `PROVIDERS` (org-mode claims) and `personalConnectors.ts`'s
+`ACCOUNT_DIGEST_PROVIDERS` (personal ask-personal bridge) — the same two registries every
+other connector here already goes through, so Trello needed zero new plumbing in either
+`server.ts` or the frontend: `ConnectorsPanel.tsx`'s "reads at ask-time" label is already
+driven by `connectorCatalog.ts`'s own `status` field, so flipping one entry from
+`'connectable'` to `'live'` was the only catalog change needed. Live-verified two ways, the
+same bar every UNVERIFIED-with-a-real-account connector here uses: a deliberately invalid
+key/token pair reaches Trello's real API directly and gets a genuine `401 invalid key`,
+not a malformed-request error; and the exact same rejection was reproduced end-to-end
+through this app's own new "Verify" check (both the person- and account-keyed paths),
+confirming the whole pipeline — connection storage, credential-splitting, the real fetch,
+and the error surfaced back to the caller — works together, not just each piece in
+isolation. A real successful connect-then-ask round trip remains unverified for the same
+honest reason every other new connector in this project does; update this note once a real
+Trello account is available.
+
 ## Where to go next
 - **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
   now mostly closed, not mostly open — updated after a full security audit fixed the

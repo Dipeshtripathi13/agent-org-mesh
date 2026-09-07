@@ -183,16 +183,16 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     ],
     helpText: 'Create a service principal (Workspace admin settings → Identity and access → Service principals), generate an OAuth secret for it, and grant it CAN VIEW on the jobs you want read — Databricks\' own recommended auth for automated access, never a personal access token tied to a human account.',
   },
-
-  // ---- connectable: real connect+validate, ingestion not yet wired ----
   {
-    key: 'trello', name: 'Trello', category: 'project-mgmt', authType: 'pat', status: 'connectable',
+    key: 'trello', name: 'Trello', category: 'project-mgmt', authType: 'pat', status: 'live',
     fields: [
       { key: 'apiKey', label: 'API key' },
       { key: 'token', label: 'Token', secret: true },
     ],
     helpText: 'trello.com/power-ups/admin → generate an API key, then authorize a token from that same page.',
   },
+
+  // ---- connectable: real connect+validate, ingestion not yet wired ----
   {
     key: 'airtable', name: 'Airtable', category: 'project-mgmt', authType: 'pat', status: 'connectable',
     fields: [{ key: 'token', label: 'Personal access token', placeholder: 'pat...', secret: true }],

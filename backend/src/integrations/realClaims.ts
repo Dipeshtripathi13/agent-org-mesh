@@ -19,6 +19,7 @@ import { getAirflowConnection, formatAirflowDigest, getRecentAirflowActivity } f
 import { getDbtConnection, formatDbtDigest, getRecentDbtActivity } from './dbtCloud.js';
 import { getSnowflakeConnection, formatSnowflakeDigest, getRecentSnowflakeActivity } from './snowflake.js';
 import { getDatabricksConnection, formatDatabricksDigest, getRecentDatabricksActivity } from './databricks.js';
+import { getTrelloConnection, formatTrelloDigest, getRecentTrelloActivity } from './trello.js';
 
 /**
  * This is the piece that makes the org mesh's manager-facing "Ask" actually real for one
@@ -543,5 +544,23 @@ export async function ingestDatabricksClaim(orgId: number, personId: number, sin
     orgId, personId, personName: person.name, surfaceKey: 'databricks', label: 'Databricks', kind: 'job run activity',
     tier: 'T1', externalRef: 'databricks-jobs-api', digest,
     deterministicText: pipelineDeterministicText('Databricks', activity),
+  });
+}
+
+/** Trello's first real claim — moves it from the 'connectable' tier (connect-and-validate
+ *  only) to genuinely 'live' (connectorCatalog.ts). Same shape as every sibling ingest
+ *  function above. */
+export async function ingestTrelloClaim(orgId: number, personId: number, since: Date = startOfToday()): Promise<void> {
+  const person = await repo.getPerson(personId);
+  if (person.surfaces.trello !== 'connected') return;
+  const conn = await getTrelloConnection(personId);
+  if (!conn) return;
+  const activity = await getRecentTrelloActivity(conn.apiKey, conn.token, since);
+  const digest = formatTrelloDigest(activity);
+  if (!digest) return;
+  await finishIngestion({
+    orgId, personId, personName: person.name, surfaceKey: 'trello', label: 'Trello', kind: 'board activity',
+    tier: 'T1', externalRef: 'trello-rest-api', digest,
+    deterministicText: `Trello activity: ${activity.length} action${activity.length === 1 ? '' : 's'} recorded${activity[0] ? ` — most recently: ${activity[0].cardName ? `updated "${activity[0].cardName}"` : 'a board action'}.` : '.'}`,
   });
 }

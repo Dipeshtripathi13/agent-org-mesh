@@ -35,7 +35,10 @@ import {
   saveZendeskAccountConnection, getZendeskAccountStatus, getZendeskAccountConnection, disconnectZendeskAccount,
   getRecentZendeskActivity, formatZendeskDigest,
 } from './zendesk.js';
-import { saveTrelloAccountConnection, getTrelloAccountStatus, disconnectTrelloAccount } from './trello.js';
+import {
+  saveTrelloAccountConnection, getTrelloAccountStatus, disconnectTrelloAccount, getTrelloAccountConnection,
+  getRecentTrelloActivity, formatTrelloDigest,
+} from './trello.js';
 import { saveAirtableAccountConnection, getAirtableAccountStatus, disconnectAirtableAccount } from './airtable.js';
 import { saveMondayAccountConnection, getMondayAccountStatus, disconnectMondayAccount } from './monday.js';
 import { saveFigmaAccountConnection, getFigmaAccountStatus, disconnectFigmaAccount } from './figma.js';
@@ -173,7 +176,7 @@ export const ACCOUNT_STATUS_HANDLERS: Partial<Record<SurfaceKey, AccountStatusHa
 // check, never a filesystem scan), so reusing them for the panel's display is exactly the
 // same signal, not a step back toward the old bug.
 
-/** The 10 "live"-tier tools that can actually produce a digest — the personal-ask bridge's
+/** The "live"-tier tools that can actually produce a digest — the personal-ask bridge's
  *  version of resourceProviders.ts's PROVIDERS array. `ask-personal` in server.ts narrows
  *  this to connected tools, runs it through the same `selectRelevantSurfaces` router the
  *  org path uses, then feeds whichever come back relevant into `converse`'s `sections` —
@@ -272,6 +275,14 @@ export const ACCOUNT_DIGEST_PROVIDERS: AccountDigestProvider[] = [
       const conn = await getDatabricksAccountConnection(id);
       if (!conn) return null;
       return formatDatabricksDigest(await getRecentDatabricksActivity(conn.workspaceUrl, conn.clientId, conn.clientSecret, since));
+    },
+  },
+  {
+    surfaceKey: 'trello', label: 'Trello',
+    fetchDigest: async (id, since) => {
+      const conn = await getTrelloAccountConnection(id);
+      if (!conn) return null;
+      return formatTrelloDigest(await getRecentTrelloActivity(conn.apiKey, conn.token, since));
     },
   },
   // GitHub/Jira have their own dedicated connect panel (not the generic catalog), same as

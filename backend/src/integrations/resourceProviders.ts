@@ -4,7 +4,7 @@ import {
   ingestClaudeCodeClaim, ingestCodexClaim, ingestGeminiClaim, ingestGithubClaim, ingestJiraClaim,
   ingestLinearClaim, ingestNotionClaim, ingestConfluenceClaim, ingestAsanaClaim, ingestGitlabClaim,
   ingestHubspotClaim, ingestZendeskClaim, ingestCalendarClaim,
-  ingestAirflowClaim, ingestDbtClaim, ingestSnowflakeClaim, ingestDatabricksClaim,
+  ingestAirflowClaim, ingestDbtClaim, ingestSnowflakeClaim, ingestDatabricksClaim, ingestTrelloClaim,
 } from './realClaims.js';
 import { getMainProvider } from './runtimeProvider.js';
 
@@ -27,12 +27,15 @@ import { getMainProvider } from './runtimeProvider.js';
  * a fixture: jira only after that live attempt surfaced a real breaking change (Atlassian
  * had removed POST /rest/api/3/search outright — see jira.ts), notion on plain REST after
  * its MCP path was tried and genuinely failed (notion.ts). linear, confluence, asana,
- * gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, and databricks are real but
- * UNVERIFIED — built the same way, no real account/instance to test against yet (see
- * CLAUDE.md's connector catalog paragraph). Gmail is deliberately NOT
+ * gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks, and trello are
+ * real but UNVERIFIED — built the same way, no real account/instance to test against yet
+ * (see CLAUDE.md's connector catalog paragraph). Trello moved here from the 'connectable'
+ * tier (trello.ts's own module comment) — its real activity read (`GET
+ * /1/members/me/actions`) is one of the few in this array confirmed against Trello's own
+ * fully-documented REST API rather than a best guess. Gmail is deliberately NOT
  * a provider here — it stays personal-only (the "Ask yourself" box), never a manager-
- * visible org claim. See the design doc §8 for why. Trello/Airtable/Monday/Figma/Discord
- * are connectable (connectorCatalog.ts) but have no ResourceProvider yet — ingestion
+ * visible org claim. See the design doc §8 for why. Airtable/Monday/Figma/Discord are still
+ * connectable (connectorCatalog.ts) but have no ResourceProvider yet — ingestion
  * deliberately deferred, see connectorCatalog.ts's own module comment. airflow/dbt/
  * snowflake/databricks are the data-engineering-connectors research memo's Tier A: bounded
  * status/metadata reads only, never a connector-composed query against real warehouse data
@@ -62,6 +65,7 @@ export const PROVIDERS: ResourceProvider[] = [
   { surfaceKey: 'dbt', ingest: ingestDbtClaim },
   { surfaceKey: 'snowflake', ingest: ingestSnowflakeClaim },
   { surfaceKey: 'databricks', ingest: ingestDatabricksClaim },
+  { surfaceKey: 'trello', ingest: ingestTrelloClaim },
 ];
 
 /**
