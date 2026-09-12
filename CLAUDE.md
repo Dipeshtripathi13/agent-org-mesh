@@ -168,6 +168,12 @@ cd backend  && npm run dev           # API on :3001, reads DATABASE_URL (default
                                       #   the mesh_app role against the compose db)
 cd frontend && npm run dev           # UI on :5173, proxies /api
 cd backend  && npm test              # 215 golden tests — pure in-memory, no DB required
+cd backend  && npm run test:api      # route × caller authorization table (src/authz.api.test.ts)
+                                      #   via app.inject() against agent_org_mesh_test, which it
+                                      #   creates, resets and seeds each run (refuses any DB name
+                                      #   not ending in _test). Needs the compose Postgres up. Run
+                                      #   it after touching any route's auth — it is the regression
+                                      #   guard for release-audit SEC-01..07/09/13.
 cd frontend && npm test              # 32 tests for pure lib/ logic — deriveAllowedRoles'
                                       #   client-side mirror, escalation status text,
                                       #   Ask-yourself chat-history reconstruction

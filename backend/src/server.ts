@@ -3256,6 +3256,12 @@ if (isProduction) {
 
 /* ---------- go ---------- */
 
-const port = Number(process.env.PORT ?? 3001);
-await app.listen({ port, host: '0.0.0.0' });
-console.log(`agent-org-mesh api → http://localhost:${port}`);
+// Exported for the route-level authorization suite (src/authz.api.test.ts), which drives
+// the real app through app.inject() — Vitest sets VITEST, so no port is bound there.
+export { app };
+
+if (!process.env.VITEST) {
+  const port = Number(process.env.PORT ?? 3001);
+  await app.listen({ port, host: '0.0.0.0' });
+  console.log(`agent-org-mesh api → http://localhost:${port}`);
+}
