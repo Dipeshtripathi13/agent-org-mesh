@@ -380,7 +380,10 @@ Trello account is available.
   was caught by re-probing production after the variable change and restored with
   `railway up` from `main`. After *any* Railway variable change, restart or redeploy, re-run
   the anonymous probes (an unknown `/api/invitations/aoi_…` token must return "this invitation
-  link is not valid"; `/api/org?orgId=…` must return 401) and confirm the deployed commit.
+  link is not valid"; `/api/org?orgId=…` must return 401) and confirm the deployed commit. Same day, `prod`, `qa` and `dev` were fast-forwarded to
+  `main` — pushing `prod` immediately triggered a Railway build, confirming the service
+  deploys from the `prod` branch. Keep those branches moving with `main` (or repoint the
+  Railway service at `main`) so they never drift behind the security fixes again.
 - **Email is configured on production** (Resend, sender `noreply@contact.eternitynest.com`,
   verified domain) — see `integrations/resendEmail.ts`'s module comment for exactly what was
   verified. Unblocked by it: mandatory email verification at signup, and the emailed
