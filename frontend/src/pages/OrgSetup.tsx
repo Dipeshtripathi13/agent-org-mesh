@@ -113,15 +113,9 @@ function ChartBuilder() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Two genuinely different outcomes, both worth confirming: a brand-new account (there's
-  // a one-time temp password to hand over) and an email that already had one (nothing to
-  // hand over — they keep their own password). Before this, only the first case showed
-  // anything at all, so linking an existing account looked identical to nothing happening.
-  const [justAdded, setJustAdded] = useState<
-    | { kind: 'new'; name: string; email: string; tempPassword: string; emailSent: boolean }
-    | { kind: 'linked'; name: string; email: string; emailSent: boolean }
-    | null
-  >(null);
+  // Adding someone with an email issues a one-time invitation link (release audit SEC-08):
+  // shown once here, and emailed too when email is configured.
+  const [justAdded, setJustAdded] = useState<{ name: string; invite: InviteLinkT } | null>(null);
   const [resetFor, setResetFor] = useState<{ name: string; email: string | null; tempPassword: string } | null>(null);
 
   const load = () => api.org(orgId).then((d) => setPeople(d.people));
@@ -158,7 +152,7 @@ function ChartBuilder() {
     setError(null);
     setJustAdded(null);
     try {
-      const { tempPassword, emailSent, linkedExistingAccount } = await api.addPerson(orgId, {
+      const { invite } = await api.addPerson(orgId, {
         name: form.name.trim(),
         title: form.title.trim(),
         team: form.team.trim(),
@@ -166,10 +160,7 @@ function ChartBuilder() {
         agentDeployed: form.agentDeployed,
         email: form.email.trim() || undefined,
       });
-      const addedName = form.name.trim();
-      const addedEmail = form.email.trim();
-      if (tempPassword) setJustAdded({ kind: 'new', name: addedName, email: addedEmail, tempPassword, emailSent });
-      else if (linkedExistingAccount) setJustAdded({ kind: 'linked', name: addedName, email: addedEmail, emailSent });
+      if (invite) setJustAdded({ name: form.name.trim(), invite });
       setForm(EMPTY_FORM);
       await load();
       await refresh();
@@ -256,8 +247,8 @@ function ChartBuilder() {
             {people.map((p) => <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>)}
           </select>
           <input
-            aria-label="Email (optional — gives them a real login)"
-            placeholder="Email (optional login)"
+            aria-label="Email (optional — sends an invitation link)"
+            placeholder="Email (optional invite)"
             value={form.email}
             onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
             style={{ flex: '1 1 160px', minWidth: 0, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
@@ -280,24 +271,7 @@ function ChartBuilder() {
           </button>
         </div>
         {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
-        {justAdded?.kind === 'new' && (
-          <div className="coverage-note" style={{ marginTop: 10 }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: justAdded.emailSent ? 'var(--good, #2c6e4f)' : 'var(--hold)' }}>
-              {justAdded.emailSent
-                ? `Emailed to ${justAdded.name} — also shown once below in case it doesn't land`
-                : `Shown once — no email was sent, so copy this now and share it with ${justAdded.name} yourself`}
-            </span>
-            <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
-              {justAdded.email} &middot; {justAdded.tempPassword}
-            </p>
-            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: 0 }}>
-              They&rsquo;ll be asked to choose their own password the first time they sign in
-              with this, then land in &ldquo;My agent&rdquo; as their real identity here.
-              Leaving the email field blank next time keeps a new person as a structural
-              chart entry with no login, same as before this existed.
-            </p>
-          </div>
-        )}
+        {justAdded && <InviteLinkNote who={justAdded.name} invite={justAdded.invite} />}
         {resetFor && (
           <div className="coverage-note" style={{ marginTop: 10 }}>
             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
@@ -313,28 +287,12 @@ function ChartBuilder() {
             </p>
           </div>
         )}
-        {justAdded?.kind === 'linked' && (
-          <div className="coverage-note" style={{ marginTop: 10 }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--good, #2c6e4f)' }}>
-              {justAdded.email} already had an account &mdash; linked, not re-created
-            </span>
-            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
-              {justAdded.name} keeps the password they already use. There&rsquo;s no
-              temporary password to pass along, and nothing for them to set up: this
-              organization simply shows up alongside their existing one(s) next time they
-              sign in.{' '}
-              {justAdded.emailSent
-                ? 'They were emailed a note that they were added here.'
-                : 'No email went out (none is configured), so tell them yourself if they should know.'}
-            </p>
-          </div>
-        )}
         <p className="glossary" style={{ marginTop: 8 }}>
           New people start with every surface disconnected — nothing is asserted about them
-          until an admin or the employee connects one, from Connections or Controls. Give
-          them an email above and they get a real login instead of only being reachable
-          through the free identity switcher — if that email already has an account (say,
-          they're already a person in another org), this links it rather than duplicating it.
+          until an admin or the employee connects one, from Connections or Controls. Add
+          an email and they get a one-time invitation link to claim this place in the chart
+          with their own login; nothing is linked until someone signed in with that exact
+          email accepts it.
         </p>
       </div>
 
@@ -400,15 +358,14 @@ function OrgAdmins() {
   const [invite, setInvite] = useState(EMPTY_INVITE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Same two outcomes as adding a person (see OrgChart's own `justAdded`): a new account
-  // with a one-time temp password, or an existing account simply granted a role here.
-  const [justInvited, setJustInvited] = useState<
-    | { kind: 'new'; email: string; tempPassword: string; emailSent: boolean }
-    | { kind: 'linked'; email: string; emailSent: boolean }
-    | null
-  >(null);
+  const [justInvited, setJustInvited] = useState<InviteLinkT | null>(null);
+  const [pending, setPending] = useState<PendingT[]>([]);
 
-  const load = () => api.orgAdmins(orgId).then((d) => setAdmins(d.admins)).catch(() => setAdmins([]));
+  const load = () => {
+    void api.orgAdmins(orgId).then((d) => setAdmins(d.admins)).catch(() => setAdmins([]));
+    // Admins and owners only; a viewer gets a 403 and simply sees no pending list.
+    void api.orgInvitations(orgId).then((d) => setPending(d.invitations)).catch(() => setPending([]));
+  };
   // Only fetch once `orgId` is confirmed to be one of this account's real orgs (`org`
   // resolved from the list `useOrg` already loaded) — orgId starts at a hardcoded
   // default before that list arrives, and firing this admin-scoped request against a
@@ -426,11 +383,10 @@ function OrgAdmins() {
     setBusy(true);
     setError(null);
     try {
-      const { admin, tempPassword, emailSent, linkedExistingAccount } = await runWithStepUp(() => api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role));
+      const { invite: link } = await runWithStepUp(() => api.inviteOrgAdmin(orgId, invite.email.trim(), invite.name.trim(), invite.role));
       setInvite(EMPTY_INVITE);
-      await load();
-      if (tempPassword) setJustInvited({ kind: 'new', email: admin.email, tempPassword, emailSent });
-      else if (linkedExistingAccount) setJustInvited({ kind: 'linked', email: admin.email, emailSent });
+      load();
+      setJustInvited(link);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not invite admin');
     } finally {
@@ -445,6 +401,16 @@ function OrgAdmins() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not change role');
+    }
+  };
+
+  const revoke = async (invitationId: string) => {
+    setError(null);
+    try {
+      await runWithStepUp(() => api.revokeInvitation(orgId, invitationId));
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not withdraw that invitation');
     }
   };
 
@@ -548,34 +514,35 @@ function OrgAdmins() {
 
         {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
 
-        {justInvited?.kind === 'new' && (
-          <div className="coverage-note" style={{ marginTop: 14 }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: justInvited.emailSent ? 'var(--good, #2c6e4f)' : 'var(--hold)' }}>
-              {justInvited.emailSent
-                ? `Emailed to ${justInvited.email} — also shown once below in case it doesn't land`
-                : `Shown once — no email was sent, so copy this now and share it with ${justInvited.email} yourself`}
+        {justInvited && <InviteLinkNote who={justInvited.email} invite={justInvited} />}
+
+        {pending.length > 0 && (
+          <div style={{ marginTop: 14, borderTop: '1px solid var(--rule)', paddingTop: 12 }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              Pending invitations
             </span>
-            <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
-              {justInvited.tempPassword}
-            </p>
-            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: 0 }}>
-              They&rsquo;ll be asked to choose their own password the first time they sign in
-              with this.
-            </p>
-          </div>
-        )}
-        {justInvited?.kind === 'linked' && (
-          <div className="coverage-note" style={{ marginTop: 14 }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--good, #2c6e4f)' }}>
-              {justInvited.email} already had an account &mdash; given the role, not re-created
-            </span>
-            <p style={{ fontSize: 11, color: 'var(--ink3)', margin: '8px 0 0' }}>
-              They keep the password they already use, so there&rsquo;s nothing to pass
-              along.{' '}
-              {justInvited.emailSent
-                ? 'They were emailed a note that they now administer this organization.'
-                : 'No email went out (none is configured), so tell them yourself if they should know.'}
-            </p>
+            <div className="scroll" style={{ marginTop: 6 }}>
+              <table>
+                <tbody>
+                  {pending.map((p) => (
+                    <tr key={p.id}>
+                      <td style={{ fontSize: 12 }}>
+                        {p.email}
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>
+                          {p.kind === 'admin' ? `admin · ${p.adminRole}` : `chart · ${p.personName}`} &middot; expires {new Date(p.expiresAt).toLocaleDateString()}
+                          {p.emailSent ? ' · emailed' : ' · link shared manually'}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {(isOwner || (myRole === 'admin' && p.kind === 'person')) && (
+                          <button className="chip" onClick={() => revoke(p.id)}>Withdraw</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -584,6 +551,40 @@ function OrgAdmins() {
             ? 'Owners can invite, promote/demote, and remove other admins for this org. Admins can do everything else that changes org state; viewers can see admin screens but not change anything — the server enforces this on every request, not just this page.'
             : 'Only an owner can manage who has access to this organization.'}
         </p>
+      </div>
+    </div>
+  );
+}
+
+type InviteLinkT = NonNullable<Awaited<ReturnType<typeof api.addPerson>>['invite']>;
+type PendingT = Awaited<ReturnType<typeof api.orgInvitations>>['invitations'][number];
+
+/** The one-time invitation link, shown once to the admin who created it. */
+function InviteLinkNote({ who, invite }: { who: string; invite: InviteLinkT }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(invite.url);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="coverage-note" style={{ marginTop: 10 }}>
+      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: invite.emailSent ? 'var(--good, #2c6e4f)' : 'var(--hold)' }}>
+        {invite.emailSent
+          ? `Invitation emailed to ${invite.email} — the link is also shown once below`
+          : `Shown once — no email was sent, so copy this link and send it to ${who} yourself`}
+      </span>
+      <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
+        {invite.url}
+      </p>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="chip" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy link'}</button>
+        <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+          Works once, only for someone signed in as {invite.email}, until {new Date(invite.expiresAt).toLocaleDateString()}.
+        </span>
       </div>
     </div>
   );

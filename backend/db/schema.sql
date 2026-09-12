@@ -77,7 +77,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- become someone's permanent one, which is exactly what happened before this existed
   -- (change-password had no UI at all, so an invited person literally could not change
   -- it). Never set for a self-serve signup: that password was chosen by its owner.
-  must_change_password boolean NOT NULL DEFAULT false
+  must_change_password boolean NOT NULL DEFAULT false,
+  -- Set only when ownership of this address has actually been proven — today, by accepting
+  -- an invitation that was really delivered to it by email. Recorded, not yet required at
+  -- signup: production can't send email until Resend is configured (release audit SEC-08).
+  email_verified_at    timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS organizations (
@@ -494,6 +498,31 @@ CREATE TABLE IF NOT EXISTS ingested_events (
 );
 CREATE INDEX IF NOT EXISTS ingested_events_person_source_idx ON ingested_events(person_id, source, occurred_at);
 
+/* ---------- invitations ----------
+   Release audit SEC-08: adding someone by email used to link the chart entry (or grant the
+   admin role) to whichever account already held that email — so anyone who signed up early
+   with a future employee's address became that employee. Now an email only ever creates an
+   invitation; the chart entry or role is bound when a logged-in account whose email matches
+   presents the one-time token. Only its SHA-256 hash is stored, same as ingest tokens. */
+CREATE TABLE IF NOT EXISTS invitations (
+  id           uuid PRIMARY KEY,
+  org_id       integer NOT NULL REFERENCES organizations(id),
+  email        text NOT NULL,
+  kind         text NOT NULL CHECK (kind IN ('person', 'admin')),
+  person_id    integer REFERENCES people(id) ON DELETE CASCADE,
+  admin_role   text CHECK (admin_role IN ('owner', 'admin', 'viewer')),
+  token_hash   text NOT NULL UNIQUE,
+  invited_by   integer NOT NULL REFERENCES accounts(id),
+  created_at   timestamptz NOT NULL,
+  expires_at   timestamptz NOT NULL,
+  emailed_at   timestamptz,
+  accepted_at  timestamptz,
+  accepted_by  integer REFERENCES accounts(id),
+  revoked_at   timestamptz,
+  CHECK ((kind = 'person' AND person_id IS NOT NULL) OR (kind = 'admin' AND admin_role IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS invitations_org_idx ON invitations(org_id);
+
 /* ---------- grants ---------- */
 
 -- Platform tables: the app reads accounts/organizations and can create orgs, but
@@ -557,6 +586,10 @@ GRANT SELECT, INSERT, UPDATE ON account_ingest_tokens TO mesh_app;
 GRANT SELECT, INSERT ON account_ingested_events TO mesh_app;
 -- Custom agents: registered and removed by the account itself, never edited in place.
 GRANT SELECT, INSERT, DELETE ON account_custom_agents TO mesh_app;
+
+-- Invitations: created, accepted and revoked by stamping columns — never deleted by the app
+-- (a person's removal cascades their pending invitation away at the schema level).
+GRANT SELECT, INSERT, UPDATE ON invitations TO mesh_app;
 
 -- Policy revisions: append a new row, never touch an old one.
 GRANT SELECT, INSERT ON policy_revisions TO mesh_app;

@@ -10,10 +10,10 @@ import { useAuth } from '../lib/AuthContext';
  *  produces both, since most people trying this out are one person, not a company
  *  standing up a multi-person chart. See MeContext's "zero orgs" empty state on "My agent"
  *  for the now-rare case a real account ends up with none. */
-export function SignUp({ onBack }: { onBack: () => void }) {
+export function SignUp({ onBack, initialEmail = '' }: { onBack: () => void; initialEmail?: string }) {
   const { signUp } = useAuth();
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

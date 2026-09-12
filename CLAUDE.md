@@ -1397,6 +1397,33 @@ to get the meaningful 401 instead of a shape complaint.)
 genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,
 asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks.
 
+**Adding someone by email issues a one-time invitation link; it never links or creates an
+account (release audit SEC-08, 2026-09-12).** Before this, `POST /organizations/:orgId/people`
+linked the new chart entry to whichever account already held the typed email, and
+`POST /organizations/:orgId/admins` granted the role to it — so anyone who signed up early
+with a future employee's address *became* that employee (or admin) the moment an admin
+added them. Now both create an `invitations` row (random `aoi_` token, only its SHA-256 hash
+stored, 7-day expiry) and return the link once to the admin (`OrgSetup.tsx`'s
+`InviteLinkNote`), also emailing it when Resend is configured — production has no
+`RESEND_API_KEY` yet, so today it's copied and shared by hand. `/invite/:token`
+(`pages/AcceptInvite.tsx`, public but inside the auth providers) shows the invitation, lets the
+person sign in or sign up with the email prefilled, then `POST /api/invitations/:token/accept`
+binds it in one locked transaction (`repo.acceptInvitation`): the session's email must match
+the invitation, the token is single-use, unexpired and unrevoked, a chart entry must still be
+unclaimed, and an existing admin role is never downgraded. Admins list and withdraw pending
+invitations (withdrawing an admin-role invite is owner-only, like issuing one). No temporary
+password is issued on invite anymore; the admin-initiated password *reset* below still uses
+one. `accounts.email_verified_at` is set only when an invitation that was actually emailed is
+accepted — recorded, not required, until email works. Known trade-off, stated plainly: a
+squatter who registers an email first can now *block* that invitation (the real person can't
+sign in as an account they don't control) but can no longer *capture* it; the real fix is an
+emailed password reset once Resend is live. Guarded by `src/invitations.api.test.ts` (11
+tests), mutation-tested: restoring email-match linking fails 2, dropping the accept-time email
+check fails 2, allowing reuse fails 1. Production needed `scripts/migrate-add-invitations.ts`
+run *before* the deploy (the code selects `email_verified_at`). The "Adding someone with an
+email ... also emails them their one-time temp password" sentence further down is superseded
+by this paragraph.
+
 **A temp password can no longer become someone's permanent one, and an admin can reset a
 member's password without any email involved.** Researched before building (OWASP's Forgot
 Password cheat sheet, NIST 800-63B, how Clerk/WorkOS model org invites); the email

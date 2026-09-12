@@ -35,6 +35,9 @@ export interface Account {
    *  see the column's own comment in schema.sql. The app forces a change before anything
    *  else is usable and clears it on success. */
   mustChangePassword: boolean;
+  /** Ownership of `email` has been proven — today only by accepting an invitation that was
+   *  actually delivered there. Recorded, not yet required (schema.sql). */
+  emailVerified: boolean;
 }
 
 export type OrgRole = 'owner' | 'admin' | 'viewer';
@@ -224,17 +227,20 @@ function toOrgAdmin(row: any): OrgAdmin {
    types. */
 
 function toAccount(row: any): Account {
-  return { id: row.id, name: row.name, email: row.email, mustChangePassword: row.must_change_password };
+  return {
+    id: row.id, name: row.name, email: row.email,
+    mustChangePassword: row.must_change_password, emailVerified: row.email_verified_at != null,
+  };
 }
 
 export async function getAccount(id: number): Promise<Account | null> {
-  const { rows } = await pool.query('SELECT id, name, email, must_change_password FROM accounts WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT id, name, email, must_change_password, email_verified_at FROM accounts WHERE id = $1', [id]);
   return rows.length ? toAccount(rows[0]) : null;
 }
 
 export async function getAccountByEmail(email: string): Promise<(Account & { passwordHash: string | null }) | null> {
   const { rows } = await pool.query(
-    'SELECT id, name, email, password_hash, must_change_password FROM accounts WHERE email = $1',
+    'SELECT id, name, email, password_hash, must_change_password, email_verified_at FROM accounts WHERE email = $1',
     [email],
   );
   if (rows.length === 0) return null;
@@ -254,7 +260,7 @@ export async function insertAccount(
 ): Promise<Account> {
   const { rows } = await pool.query(
     `INSERT INTO accounts (name, email, password_hash, must_change_password) VALUES ($1,$2,$3,$4)
-     RETURNING id, name, email, must_change_password`,
+     RETURNING id, name, email, must_change_password, email_verified_at`,
     [name, email, passwordHash, mustChangePassword],
   );
   return toAccount(rows[0]);
@@ -431,6 +437,174 @@ export async function countOrgOwners(orgId: number): Promise<number> {
 
 export async function removeOrgAdmin(orgId: number, accountId: number): Promise<void> {
   await pool.query('DELETE FROM org_admins WHERE org_id = $1 AND account_id = $2', [orgId, accountId]);
+}
+
+/* ---------- invitations (release audit SEC-08) ----------
+   An email typed by an admin never binds an existing account anymore. It creates an
+   invitation; the chart entry or admin role is bound only when a logged-in account whose
+   email matches presents the one-time token (acceptInvitation). */
+
+export interface Invitation {
+  id: string;
+  orgId: number;
+  orgName: string;
+  email: string;
+  kind: 'person' | 'admin';
+  personId: number | null;
+  personName: string | null;
+  personTitle: string | null;
+  adminRole: OrgRole | null;
+  invitedByName: string | null;
+  createdAt: string;
+  expiresAt: string;
+  emailedAt: string | null;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+}
+
+const INVITATION_SELECT = `
+  SELECT i.*, o.name AS org_name, p.name AS person_name, p.title AS person_title, ac.name AS invited_by_name
+  FROM invitations i
+  JOIN organizations o ON o.id = i.org_id
+  LEFT JOIN people p ON p.id = i.person_id
+  LEFT JOIN accounts ac ON ac.id = i.invited_by`;
+
+function toInvitation(row: any): Invitation {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    orgName: row.org_name,
+    email: row.email,
+    kind: row.kind,
+    personId: row.person_id,
+    personName: row.person_name ?? null,
+    personTitle: row.person_title ?? null,
+    adminRole: row.admin_role,
+    invitedByName: row.invited_by_name ?? null,
+    createdAt: iso(row.created_at),
+    expiresAt: iso(row.expires_at),
+    emailedAt: row.emailed_at ? iso(row.emailed_at) : null,
+    acceptedAt: row.accepted_at ? iso(row.accepted_at) : null,
+    revokedAt: row.revoked_at ? iso(row.revoked_at) : null,
+  };
+}
+
+export async function createInvitation(input: {
+  orgId: number;
+  email: string;
+  kind: 'person' | 'admin';
+  personId: number | null;
+  adminRole: OrgRole | null;
+  tokenHash: string;
+  invitedBy: number;
+  now: string;
+  expiresAt: string;
+}): Promise<Invitation> {
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO invitations (id, org_id, email, kind, person_id, admin_role, token_hash, invited_by, created_at, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [id, input.orgId, input.email, input.kind, input.personId, input.adminRole, input.tokenHash, input.invitedBy, input.now, input.expiresAt],
+  );
+  return (await getInvitationById(input.orgId, id))!;
+}
+
+export async function markInvitationEmailed(id: string, now: string): Promise<void> {
+  await pool.query('UPDATE invitations SET emailed_at = $2 WHERE id = $1', [id, now]);
+}
+
+export async function getInvitationById(orgId: number, id: string): Promise<Invitation | null> {
+  const { rows } = await pool.query(`${INVITATION_SELECT} WHERE i.org_id = $1 AND i.id = $2`, [orgId, id]);
+  return rows.length ? toInvitation(rows[0]) : null;
+}
+
+export async function getInvitationByTokenHash(tokenHash: string): Promise<Invitation | null> {
+  const { rows } = await pool.query(`${INVITATION_SELECT} WHERE i.token_hash = $1`, [tokenHash]);
+  return rows.length ? toInvitation(rows[0]) : null;
+}
+
+export async function listPendingInvitations(orgId: number, now: string): Promise<Invitation[]> {
+  const { rows } = await pool.query(
+    `${INVITATION_SELECT}
+     WHERE i.org_id = $1 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > $2
+     ORDER BY i.created_at DESC`,
+    [orgId, now],
+  );
+  return rows.map(toInvitation);
+}
+
+/** Only a still-pending invitation can be revoked; returns whether one was. */
+export async function revokeInvitation(orgId: number, id: string, now: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE invitations SET revoked_at = $3
+     WHERE org_id = $1 AND id = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+    [orgId, id, now],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+export type AcceptInvitationResult =
+  | { ok: true; orgId: number; kind: 'person' | 'admin' }
+  | { ok: false; code: 403 | 404 | 409 | 410; error: string };
+
+/** Binds an invitation to the logged-in account, in one transaction with the rows locked, so
+ *  a token can't be used twice concurrently. The account's email must match the invitation:
+ *  holding the link alone isn't enough, and neither is merely owning an account with that
+ *  address. An admin role is never downgraded by accepting a lesser invitation. */
+export async function acceptInvitation(tokenHash: string, accountId: number, now: string): Promise<AcceptInvitationResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM invitations WHERE token_hash = $1 FOR UPDATE', [tokenHash]);
+    const inv = rows[0];
+    const fail = async (code: 403 | 404 | 409 | 410, error: string): Promise<AcceptInvitationResult> => {
+      await client.query('ROLLBACK');
+      return { ok: false, code, error };
+    };
+    if (!inv) return fail(404, 'this invitation link is not valid');
+    if (inv.revoked_at) return fail(410, 'this invitation was revoked — ask for a new one');
+    if (inv.accepted_at) return fail(410, 'this invitation has already been used');
+    if (new Date(inv.expires_at).getTime() <= new Date(now).getTime()) return fail(410, 'this invitation has expired — ask for a new one');
+
+    const { rows: accountRows } = await client.query('SELECT email FROM accounts WHERE id = $1', [accountId]);
+    if (!accountRows[0] || accountRows[0].email.toLowerCase() !== inv.email.toLowerCase()) {
+      return fail(403, `this invitation is for ${inv.email} — sign in with that account to accept it`);
+    }
+
+    if (inv.kind === 'person') {
+      const { rows: personRows } = await client.query(
+        'SELECT account_id FROM people WHERE id = $1 AND org_id = $2 FOR UPDATE',
+        [inv.person_id, inv.org_id],
+      );
+      if (!personRows[0]) return fail(404, 'that person is no longer in this organization');
+      if (personRows[0].account_id != null) return fail(409, 'that place in the chart is already linked to a login');
+      const { rowCount } = await client.query('SELECT 1 FROM people WHERE org_id = $1 AND account_id = $2', [inv.org_id, accountId]);
+      if (rowCount) return fail(409, 'you already have a place in this organization’s chart');
+      await client.query('UPDATE people SET account_id = $1 WHERE id = $2', [accountId, inv.person_id]);
+    } else {
+      await client.query(
+        `INSERT INTO org_admins (org_id, account_id, role, added_at) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (org_id, account_id) DO UPDATE SET role = CASE
+           WHEN (CASE EXCLUDED.role WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 ELSE 1 END)
+              > (CASE org_admins.role WHEN 'owner' THEN 3 WHEN 'admin' THEN 2 ELSE 1 END)
+           THEN EXCLUDED.role ELSE org_admins.role END`,
+        [inv.org_id, accountId, inv.admin_role, now],
+      );
+    }
+
+    await client.query('UPDATE invitations SET accepted_at = $2, accepted_by = $3 WHERE id = $1', [inv.id, now, accountId]);
+    // Only an invitation that really reached this inbox proves the address belongs to them.
+    if (inv.emailed_at) {
+      await client.query('UPDATE accounts SET email_verified_at = COALESCE(email_verified_at, $2) WHERE id = $1', [accountId, now]);
+    }
+    await client.query('COMMIT');
+    return { ok: true, orgId: inv.org_id, kind: inv.kind };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* ---------- platform: sessions ----------

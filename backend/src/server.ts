@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -43,7 +43,7 @@ import { runEscalationChecks } from './integrations/escalationEngine.js';
 import { generateToken, listTokens, resolveToken, revokeToken, generateAccountToken, listAccountTokens, revokeAccountToken, resolveAccountToken } from './integrations/ingestTokens.js';
 import { DEFAULT_SINCE_DAYS, allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll, verifyProvider } from './integrations/resourceProviders.js';
-import { sendAddedToOrgEmail, sendInviteEmail } from './integrations/resendEmail.js';
+import { sendInvitationEmail } from './integrations/resendEmail.js';
 import { CONNECTOR_CATALOG } from './integrations/connectorCatalog.js';
 import { getGenericConnectionStatus } from './integrations/genericConnection.js';
 import { saveLinearConnection, getLinearStatus, disconnectLinear } from './integrations/linear.js';
@@ -436,6 +436,7 @@ app.post('/api/auth/login', {
     name: account.name,
     email: account.email,
     mustChangePassword: account.mustChangePassword,
+    emailVerified: account.emailVerified,
   };
   return { account: safeAccount };
 });
@@ -627,59 +628,19 @@ app.post('/api/organizations/:orgId/admins', {
     return { error: check.error };
   }
 
-  const { email, name, role } = req.body as { email?: string; name?: string; role?: OrgRole };
+  const { email, role } = req.body as { email?: string; role?: OrgRole };
   if (!email?.trim() || !role || !['owner', 'admin', 'viewer'].includes(role)) {
     reply.code(400);
     return { error: 'email and a valid role (owner/admin/viewer) are required' };
   }
-  const normalizedEmail = email.trim().toLowerCase();
-  let target = await repo.getAccountByEmail(normalizedEmail);
-  let tempPassword: string | null = null;
-  let emailSent = false;
-  const linkedExistingAccount = target != null;
-  if (!target) {
-    tempPassword = generateTempPassword();
-    // mustChangePassword: this password was generated for them, not chosen by them.
-    const created = await repo.insertAccount(
-      name?.trim() || normalizedEmail,
-      normalizedEmail,
-      hashPassword(tempPassword),
-      true,
-    );
-    target = { ...created, passwordHash: null };
-  }
-  await repo.addOrgAdmin(orgId, target.id, role, new Date().toISOString());
-  const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
-  if (tempPassword) {
-    emailSent = await sendInviteEmail({
-      to: target.email,
-      recipientName: target.name,
-      invitedByName: inviter?.name ?? 'A teammate',
-      orgName: org.name,
-      roleDescription: `an admin (${role}) for ${org.name}`,
-      tempPassword,
-      loginUrl: FRONTEND_URL,
-    });
-  } else {
-    // Granting an existing account an admin role used to happen in total silence — no
-    // temp password to show (correctly: they already have their own login), but also no
-    // notice to them at all, unlike the add-a-person path right below which has sent one
-    // since a security audit added it. Same gap, same fix, on both paths now.
-    emailSent = await sendAddedToOrgEmail({
-      to: target.email,
-      recipientName: target.name,
-      addedByName: inviter?.name ?? 'A teammate',
-      orgName: org.name,
-      roleDescription: `an admin (${role}) for ${org.name}`,
-      loginUrl: FRONTEND_URL,
-    });
-  }
-  return {
-    admin: { accountId: target.id, name: target.name, email: target.email, role },
-    tempPassword,
-    emailSent,
-    linkedExistingAccount,
-  };
+  // The role takes effect only when an account with this email accepts the one-time link
+  // (release audit SEC-08) — never by matching an account that happens to exist.
+  const org = await repo.getOrganization(orgId);
+  const invite = await issueInvitation({
+    orgId, email: email.trim().toLowerCase(), kind: 'admin', personId: null, adminRole: role,
+    invitedBy: check.accountId, roleDescription: `an admin (${role}) for ${org.name}`,
+  });
+  return { invite };
 });
 
 app.patch('/api/organizations/:orgId/admins/:adminId', { schema: bodySchema({ role: ORG_ROLE }, ['role']) }, async (req, reply) => {
@@ -720,6 +681,124 @@ app.delete('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
     return { error: 'cannot remove the last owner' };
   }
   await repo.removeOrgAdmin(orgId, targetAdminId);
+  return { ok: true };
+});
+
+/* ---------- invitations (release audit SEC-08) ----------
+   The only way an email turns into a chart identity or an admin role. The raw token appears
+   once: in the returned link (shown to the inviting admin) and in the email when one can be
+   sent. Only its SHA-256 hash is stored. */
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const INVITE_TOKEN_PARAMS = {
+  params: { type: 'object', properties: { token: { type: 'string', pattern: '^aoi_[A-Za-z0-9_-]{43}$' } } },
+} as const;
+
+async function issueInvitation(input: {
+  orgId: number;
+  email: string;
+  kind: 'person' | 'admin';
+  personId: number | null;
+  adminRole: OrgRole | null;
+  invitedBy: number;
+  roleDescription: string;
+}): Promise<{ id: string; email: string; url: string; expiresAt: string; emailSent: boolean }> {
+  const token = `aoi_${randomBytes(32).toString('base64url')}`;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + INVITE_TTL_MS).toISOString();
+  const invitation = await repo.createInvitation({
+    orgId: input.orgId, email: input.email, kind: input.kind, personId: input.personId, adminRole: input.adminRole,
+    tokenHash: hashSessionToken(token), invitedBy: input.invitedBy, now: now.toISOString(), expiresAt,
+  });
+  const url = `${FRONTEND_URL.replace(/\/+$/, '')}/invite/${token}`;
+  const inviter = await repo.getAccount(input.invitedBy);
+  const emailSent = await sendInvitationEmail({
+    to: input.email, invitedByName: inviter?.name ?? 'A teammate', orgName: invitation.orgName,
+    roleDescription: input.roleDescription, acceptUrl: url, expiresAt,
+  });
+  if (emailSent) await repo.markInvitationEmailed(invitation.id, new Date().toISOString());
+  return { id: invitation.id, email: input.email, url, expiresAt, emailSent };
+}
+
+function invitationStatus(inv: repo.Invitation): 'pending' | 'accepted' | 'revoked' | 'expired' {
+  if (inv.revokedAt) return 'revoked';
+  if (inv.acceptedAt) return 'accepted';
+  return new Date(inv.expiresAt).getTime() <= Date.now() ? 'expired' : 'pending';
+}
+
+/** What the invite page shows its holder before they accept. Holding the link is what makes
+ *  the invitee's own email and org name fair to show; nothing else about the org is exposed. */
+app.get('/api/invitations/:token', {
+  config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
+  schema: INVITE_TOKEN_PARAMS,
+}, async (req, reply) => {
+  const { token } = req.params as { token: string };
+  const inv = await repo.getInvitationByTokenHash(hashSessionToken(token));
+  if (!inv) {
+    reply.code(404);
+    return { error: 'this invitation link is not valid' };
+  }
+  return {
+    invitation: {
+      orgName: inv.orgName, kind: inv.kind, personName: inv.personName, personTitle: inv.personTitle,
+      adminRole: inv.adminRole, email: inv.email, invitedByName: inv.invitedByName, expiresAt: inv.expiresAt,
+      status: invitationStatus(inv),
+    },
+  };
+});
+
+app.post('/api/invitations/:token/accept', {
+  config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
+  schema: INVITE_TOKEN_PARAMS,
+}, async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const { token } = req.params as { token: string };
+  const result = await repo.acceptInvitation(hashSessionToken(token), accountId, new Date().toISOString());
+  if (!result.ok) {
+    reply.code(result.code);
+    return { error: result.error };
+  }
+  return { accepted: true, orgId: result.orgId, kind: result.kind };
+});
+
+app.get('/api/organizations/:orgId/invitations', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to see this organization’s invitations');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const invitations = await repo.listPendingInvitations(orgId, new Date().toISOString());
+  return {
+    invitations: invitations.map((i) => ({
+      id: i.id, email: i.email, kind: i.kind, personName: i.personName, adminRole: i.adminRole,
+      createdAt: i.createdAt, expiresAt: i.expiresAt, emailSent: i.emailedAt != null,
+    })),
+  };
+});
+
+/** Revoking matches who may create: any admin for a chart invitation, only an owner for an
+ *  admin-role invitation. */
+app.delete('/api/organizations/:orgId/invitations/:invitationId', {
+  schema: { params: { type: 'object', properties: { orgId: ID, invitationId: UUID } } },
+}, async (req, reply) => {
+  const { orgId, invitationId } = req.params as { orgId: number; invitationId: string };
+  const inv = await repo.getInvitationById(orgId, invitationId);
+  const check = await requireOrgRole(
+    req, orgId, inv?.kind === 'admin' ? 'owner' : 'admin', 'not authorized to revoke this invitation', { elevated: true },
+  );
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  if (!inv || !(await repo.revokeInvitation(orgId, invitationId, new Date().toISOString()))) {
+    reply.code(404);
+    return { error: 'no pending invitation with that id' };
+  }
   return { ok: true };
 });
 
@@ -771,59 +850,25 @@ app.post('/api/organizations/:orgId/people', {
     return { error: `This organization is on the ${org.plan} plan (${limit} people max) and is already at that limit. Upgrade to add more.` };
   }
 
-  let accountId: number | null = null;
-  let tempPassword: string | null = null;
-  let linkedExistingAccount = false;
-  const email = body.email?.trim().toLowerCase();
-  if (email) {
-    const existing = await repo.getAccountByEmail(email);
-    if (existing) {
-      accountId = existing.id;
-      linkedExistingAccount = true;
-    } else {
-      tempPassword = generateTempPassword();
-      // mustChangePassword: generated for them, not chosen by them — see schema.sql.
-      const created = await repo.insertAccount(body.name.trim(), email, hashPassword(tempPassword), true);
-      accountId = created.id;
-    }
-  }
-
+  // An email never links or creates an account here (release audit SEC-08): anyone could have
+  // signed up early with a future employee's address. It issues a one-time invitation that
+  // only a logged-in account with that exact email, holding the link, can accept.
+  const email = body.email?.trim().toLowerCase() || null;
   const person = await repo.createPerson(orgId, {
     name: body.name.trim(),
     title: body.title.trim(),
     team: body.team.trim(),
     managerId: body.managerId ?? null,
     agentDeployed: body.agentDeployed,
-    accountId,
+    accountId: null,
   });
-
-  let emailSent = false;
-  if (tempPassword && email) {
-    const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
-    emailSent = await sendInviteEmail({
-      to: email,
-      recipientName: body.name.trim(),
-      invitedByName: inviter?.name ?? 'A teammate',
-      orgName: org.name,
-      roleDescription: `${body.title.trim()} in ${org.name}'s org chart`,
-      tempPassword,
-      loginUrl: FRONTEND_URL,
-    });
-  } else if (linkedExistingAccount && email) {
-    // No temp password involved — this real account already had its own login. Found and
-    // closed during a security audit: linking an existing account into a new org's chart
-    // by email previously happened with no signal to the account owner at all.
-    const [inviter, org] = await Promise.all([repo.getAccount(check.accountId), repo.getOrganization(orgId)]);
-    emailSent = await sendAddedToOrgEmail({
-      to: email,
-      recipientName: body.name.trim(),
-      addedByName: inviter?.name ?? 'A teammate',
-      orgName: org.name,
-      roleDescription: `${body.title.trim()} in ${org.name}'s org chart`,
-      loginUrl: FRONTEND_URL,
-    });
-  }
-  return { person, tempPassword, emailSent, linkedExistingAccount };
+  const invite = email
+    ? await issueInvitation({
+      orgId, email, kind: 'person', personId: person.id, adminRole: null, invitedBy: check.accountId,
+      roleDescription: `${person.title} in ${org.name}'s org chart`,
+    })
+    : null;
+  return { person, invite };
 });
 
 /** Admin-initiated password reset for a person in this org's chart — the no-email half of

@@ -8,12 +8,12 @@ import { SignUp } from './SignUp';
 // initializer inside the component would run too late and always see it already gone.
 const wantsSignupOnLoad = new URLSearchParams(window.location.search).get('signup') === '1';
 
-export function Login() {
+export function Login({ initialEmail = '' }: { initialEmail?: string } = {}) {
   const { login } = useAuth();
   // A marketing-site "Try it for free" link can land straight on org creation via
   // ?signup=1, instead of forcing an extra manual click past the login form first.
   const [mode, setMode] = useState<'login' | 'signup'>(wantsSignupOnLoad ? 'signup' : 'login');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export function Login() {
     }
   };
 
-  if (mode === 'signup') return <SignUp onBack={() => setMode('login')} />;
+  if (mode === 'signup') return <SignUp onBack={() => setMode('login')} initialEmail={initialEmail} />;
 
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>

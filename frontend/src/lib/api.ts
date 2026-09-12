@@ -126,7 +126,18 @@ export interface ConnectorDef {
 /** `mustChangePassword` is true while this account is still on a temp password someone
  *  else generated for it (an invite, or an admin-initiated reset) — App.tsx's Shell forces
  *  the change before anything else renders. */
-export interface Account { id: number; name: string; email: string; mustChangePassword: boolean; }
+export interface Account { id: number; name: string; email: string; mustChangePassword: boolean; emailVerified: boolean; }
+/** A one-time invitation link, shown once to the admin who created it. */
+export interface InviteLink { id: string; email: string; url: string; expiresAt: string; emailSent: boolean; }
+export interface PendingInvitation {
+  id: string; email: string; kind: 'person' | 'admin'; personName: string | null; adminRole: OrgRole | null;
+  createdAt: string; expiresAt: string; emailSent: boolean;
+}
+export interface InvitationInfo {
+  orgName: string; kind: 'person' | 'admin'; personName: string | null; personTitle: string | null;
+  adminRole: OrgRole | null; email: string; invitedByName: string | null; expiresAt: string;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+}
 /** 'owner' can invite/remove/promote other admins for an org (and can't be removed as
  *  the last one); 'admin' can do everything else that mutates org state; 'viewer' can
  *  see admin screens but not change anything. */
@@ -141,7 +152,7 @@ export interface Organization {
 }
 export interface NewPerson {
   name: string; title: string; team: string; managerId: number | null; agentDeployed: boolean;
-  /** Optional real login for this org-chart entry — resolve-or-create server-side. */
+  /** Optional — sends this person a one-time invitation link to claim this chart entry. */
   email?: string;
 }
 export interface IngestToken {
@@ -215,10 +226,16 @@ export const api = {
    *  to hand over. The two cases read very differently to whoever invited them, so the UI
    *  has to tell them apart rather than just showing nothing. */
   inviteOrgAdmin: (orgId: number, email: string, name: string, role: OrgRole) =>
-    req<{ admin: OrgAdmin; tempPassword: string | null; emailSent: boolean; linkedExistingAccount: boolean }>(
+    req<{ invite: InviteLink }>(
       `/organizations/${orgId}/admins`,
       { method: 'POST', body: JSON.stringify({ email, name, role }) },
     ),
+  orgInvitations: (orgId: number) => req<{ invitations: PendingInvitation[] }>(`/organizations/${orgId}/invitations`),
+  revokeInvitation: (orgId: number, invitationId: string) =>
+    req<{ ok: true }>(`/organizations/${orgId}/invitations/${invitationId}`, { method: 'DELETE' }),
+  invitation: (token: string) => req<{ invitation: InvitationInfo }>(`/invitations/${token}`),
+  acceptInvitation: (token: string) =>
+    req<{ accepted: true; orgId: number; kind: 'person' | 'admin' }>(`/invitations/${token}/accept`, { method: 'POST' }),
   setOrgAdminRole: (orgId: number, accountId: number, role: OrgRole) =>
     req<{ ok: true }>(`/organizations/${orgId}/admins/${accountId}`, {
       method: 'PATCH', body: JSON.stringify({ role }),
@@ -237,7 +254,7 @@ export const api = {
    *  `tempPassword`, an email that already has an account gets linked instead
    *  (`linkedExistingAccount`) and keeps its own password. */
   addPerson: (orgId: number, person: NewPerson) =>
-    req<{ person: Person; tempPassword: string | null; emailSent: boolean; linkedExistingAccount: boolean }>(
+    req<{ person: Person; invite: InviteLink | null }>(
       `/organizations/${orgId}/people`,
       { method: 'POST', body: JSON.stringify(person) },
     ),
