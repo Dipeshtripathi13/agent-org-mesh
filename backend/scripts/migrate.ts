@@ -1,27 +1,24 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { sslForConnectionString } from '../src/db/sslConfig.js';
+import { runMigrations } from '../src/db/migrations.js';
+
+/**
+ * Destructive reset for dev and test databases: drop the whole schema, then rebuild it by
+ * applying every migration in backend/db/migrations. Deployments never use this — they run
+ * src/migrate-up.ts, which only applies what's pending.
+ */
 
 const { Client } = pg;
 
 const adminUrl =
   process.env.DATABASE_ADMIN_URL ?? 'postgres://mesh_admin:mesh_admin_dev_only@localhost:5433/agent_org_mesh';
 
-const schemaPath = fileURLToPath(new URL('../db/schema.sql', import.meta.url));
-const sql = readFileSync(schemaPath, 'utf8');
-
 const client = new Client({ connectionString: adminUrl, ssl: sslForConnectionString(adminUrl) });
 await client.connect();
 try {
-  // schema.sql opens with DROP SCHEMA public CASCADE — a full reset, not an incremental
-  // migration. That was safe by default while nothing pointed at by DATABASE_ADMIN_URL
-  // held real data. It stopped being safe the moment this app had a real prod deployment
-  // with real signups behind it: this exact script, pointed at the wrong URL, would
-  // silently delete every real organization. Refuse to run against anything that
-  // already has data unless that's explicitly confirmed — a fresh/empty database (a new
-  // dev/qa environment, or a genuinely intentional reset after CONFIRM_RESET) still
-  // proceeds with zero extra friction.
+  // Pointed at the wrong URL, this would delete every real organization. Refuse to run
+  // against anything that already has data unless that's explicitly confirmed — a fresh or
+  // empty database (a new dev/qa environment, or a deliberate reset) still proceeds.
   const { rows } = await client.query(
     `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'organizations') AS exists`,
   );
@@ -37,8 +34,10 @@ try {
       throw new Error('aborted: destructive reset not confirmed');
     }
   }
-  await client.query(sql);
-  console.log('migrated: schema applied');
+  await client.query('DROP SCHEMA public CASCADE');
+  await client.query('CREATE SCHEMA public');
+  const report = await runMigrations(client);
+  console.log(`migrated: schema reset, then ${JSON.stringify(report)}`);
 } finally {
   await client.end();
 }

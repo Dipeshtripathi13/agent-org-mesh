@@ -8,7 +8,7 @@ const FAR_FUTURE = '2099-01-01T00:00:00.000Z';
 
 /** The shared low-level storage every new (non-GitHub/Jira/Gmail) connector's own
  *  `save<Tool>Connection` wraps — same `person_oauth_tokens` row every connector already
- *  uses (schema.sql), just no longer duplicated per tool. `accessToken` is whichever
+ *  uses (0001_baseline.sql), just no longer duplicated per tool. `accessToken` is whichever
  *  field the caller has already validated live against the real provider; `siteUrl` is
  *  the one optional extra column (a subdomain, an instance URL) tools like Zendesk/GitLab/
  *  Confluence need and PAT-only tools like Linear/Notion/Asana simply omit. */

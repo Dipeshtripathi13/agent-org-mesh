@@ -224,7 +224,7 @@ function orgIdFromQuery(req: { query: unknown }): number {
    token in an httpOnly/sameSite cookie, looked up by its SHA-256 hash, exactly the
    pattern ingest_tokens already established. `secure` follows `isProduction`: off for
    local dev (plain http, matching person_oauth_tokens' plaintext-token comment in
-   schema.sql — honest about the dev-only posture, not pretending otherwise), on for a
+   0001_baseline.sql — honest about the dev-only posture, not pretending otherwise), on for a
    real deployment (always served over HTTPS there — a `secure` cookie over plain http
    is simply never sent, so this must flip the moment it's actually running anywhere
    real).
@@ -2462,7 +2462,7 @@ app.delete('/api/accounts/me/ingest-tokens/:tokenId', async (req, reply) => {
  *  claude-code/codex/gemini-cli ingest sources into an open-ended one. Registering just
  *  reserves a source_key to push under; it authenticates with the SAME ingest tokens
  *  generated above, not a new secret of its own. Account-only, same as every other
- *  personal-agent piece — see account_custom_agents' own schema.sql comment for why this
+ *  personal-agent piece — see account_custom_agents' own 0001_baseline.sql comment for why this
  *  never touches SurfaceKey or the claims/policy pipeline. */
 app.post('/api/accounts/me/custom-agents', {
   schema: bodySchema({ name: str(80), purpose: str(500) }, ['name', 'purpose']),

@@ -92,8 +92,9 @@ backend/src/db/       pool.ts (pg.Pool), repo.ts (Postgres-backed reads/writes t
                        — atomically makes the caller both its owner-admin and its first
                        person (Owner, top of the chart), whether that's a brand-new
                        individual's very first org or an existing admin adding another.
-backend/db/schema.sql tables + the mesh_app role + its grants (a full reset every run —
-                       see the note at the top of the file; there's no prod data behind it)
+backend/db/migrations/ numbered SQL migrations — 0001_baseline.sql is the full schema, the mesh_app
+                       role and its grants. Applied in order by src/db/migrations.ts (recorded in
+                       schema_migrations); never edit one once applied — add the next number.
 backend/scripts/       migrate.ts, seed-db.ts — run against DATABASE_ADMIN_URL
 backend/src/server.ts Fastify API — composes domain/ functions over repo.ts data
 backend/src/integrations/modelProvider.ts, runtimeProvider.ts  the model-agnostic dispatch
@@ -162,7 +163,8 @@ docker-compose.yml    Postgres 16, host port 5433 (5432 was already taken locall
 ## Commands
 ```
 docker compose up -d --wait          # or: cd backend && npm run db:up
-cd backend  && npm run db:migrate    # apply backend/db/schema.sql
+cd backend  && npm run db:migrate    # DEV/TEST RESET: drop the schema, then apply every migration
+cd backend  && npm run db:migrate:up # apply only pending migrations (what every deploy runs first)
 cd backend  && npm run db:seed       # load the seed.ts dataset into Postgres
 cd backend  && npm run dev           # API on :3001, reads DATABASE_URL (defaults to
                                       #   the mesh_app role against the compose db)
@@ -182,7 +184,7 @@ cd backend  && npm run check:connectors  # are every connector's real read endpo
                                       #   here — see the Jira/Notion verification note
 ```
 Both `mesh_admin` (schema owner, used only by migrate/seed) and `mesh_app` (least-privilege
-runtime role) credentials default to the values in `backend/db/schema.sql` /
+runtime role) credentials default to the values in `backend/db/migrations/0001_baseline.sql` /
 `docker-compose.yml`; override via `backend/.env` (see `.env.example`) for anything else.
 
 `npm run db:seed` creates dev logins, all with password `admin-dev-only`:
@@ -1414,6 +1416,28 @@ to get the meaningful 401 instead of a shape complaint.)
 `resourceProviders.ts`, `jira.ts`, and `notion.ts` all carry their real status now. Still
 genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,
 asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks.
+
+**Schema changes are numbered migrations, applied automatically before every start
+(release audit OPS-01, 2026-09-12).** The old `backend/db/schema.sql` could only `DROP SCHEMA`
+and rebuild, so each production change was a one-off script run by hand over `railway ssh` —
+and one of them was simply never run: production turned out to be missing
+`account_custom_agents` (custom sub-agents shipped with no table behind them in production),
+found only because the new runner's pre-deploy check refused to adopt a partial schema. It was
+created with the original idempotent script before the runner shipped. Now:
+`backend/db/migrations/NNNN_name.sql`, applied in order by `src/db/migrations.ts`, each in its
+own transaction, recorded with a SHA-256 checksum in `schema_migrations`. A Postgres advisory
+lock serialises concurrent starts; an applied file that has since changed, or a recorded version
+with no file, stops the run. `npm start` is `node dist/migrate-up.js && node dist/server.js`,
+using `DATABASE_ADMIN_URL`, so a deploy can't serve code ahead of its schema — and a failed
+migration keeps the new server from starting, so **dry-run anything risky against a copy
+first**. A database that had the full schema before the runner existed (production, long-lived
+dev databases) is *adopted*: every baseline table and key column is checked, then `0001_baseline`
+is recorded as applied without re-running; a partial schema is refused. `scripts/migrate.ts` is
+now the dev/test reset only (same real-data guard, then drop and apply every migration). The
+hand-run `migrate-add-*.ts` scripts were deleted; `migrate-encrypt-credentials.ts` stays (it
+migrates data, not schema). Guarded by `src/db/migrations.api.test.ts` (9 tests on a disposable
+database), mutation-tested: accepting an edited migration, adopting a partial schema, and not
+rolling back a failed migration each fail the suite.
 
 **New signups must verify their email, and anyone can reset a forgotten password by email
 (2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash

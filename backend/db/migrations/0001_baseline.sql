@@ -1,3 +1,15 @@
+-- 0001 — baseline: the complete schema as of 2026-09-12 (release audit OPS-01).
+--
+-- Every later schema change is a new numbered file in this directory, applied in order by
+-- src/db/migrations.ts and recorded in schema_migrations. Never edit a migration after it has
+-- been applied anywhere: the runner stores each file's checksum and refuses to continue if an
+-- applied file changes. A database that already had this schema before the runner existed
+-- (production) is adopted — its objects are checked, then this file is recorded as applied
+-- without being run again.
+--
+-- Unlike the old backend/db/schema.sql this file does not drop anything; resetting a dev or test
+-- database is scripts/migrate.ts's job (DROP SCHEMA, then run every migration).
+
 -- Agent Org Mesh — schema.
 --
 -- Run as the admin role (mesh_admin / POSTGRES_USER from docker-compose).
@@ -27,8 +39,6 @@
 -- live database (like the one that added the `plan` column below) should be applied by
 -- hand as its own ALTER, not by loosening that guard. Re-seed afterward with
 -- `npm run db:seed`.
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
 
 /* ---------- app role ---------- */
 

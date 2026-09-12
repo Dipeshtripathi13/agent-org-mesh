@@ -32,11 +32,11 @@ export interface Account {
   name: string;
   email: string;
   /** True while this account's password is a system-generated temp one it never chose —
-   *  see the column's own comment in schema.sql. The app forces a change before anything
+   *  see the column's own comment in 0001_baseline.sql. The app forces a change before anything
    *  else is usable and clears it on success. */
   mustChangePassword: boolean;
   /** Ownership of `email` has been proven — today only by accepting an invitation that was
-   *  actually delivered there. Recorded, not yet required (schema.sql). */
+   *  actually delivered there. Recorded, not yet required (0001_baseline.sql). */
   emailVerified: boolean;
   /** A self-serve signup that hasn't verified yet — the API refuses everything but the
    *  verification and account routes until it does (server.ts's verification gate). */
@@ -1044,7 +1044,7 @@ export async function appendAuditEntry(input: {
   question: string;
   snapshot: AuditEntry['snapshot'];
   now: string;
-  /** UI grouping only — never part of hashEntry()'s input, see schema.sql's comment on
+  /** UI grouping only — never part of hashEntry()'s input, see 0001_baseline.sql's comment on
    *  this column. */
   conversationId?: string | null;
 }): Promise<AuditEntry> {
@@ -1483,7 +1483,7 @@ export async function deleteAccountOAuthConnection(accountId: number, provider: 
 }
 
 /* ---------- self-service tool connections ----------
-   Real, general, user-driven activity ingestion — see schema.sql's comment on these two
+   Real, general, user-driven activity ingestion — see 0001_baseline.sql's comment on these two
    tables and docs/agent-to-agent-communication.md §13. */
 
 export interface IngestToken {
@@ -1634,7 +1634,7 @@ export async function getAccountIngestedEventsSince(accountId: number, source: s
 }
 
 /** An account's own freely-named custom sub-agent — see account_custom_agents' own
- *  schema.sql comment for why this is deliberately account-only and never a SurfaceKey. */
+ *  0001_baseline.sql comment for why this is deliberately account-only and never a SurfaceKey. */
 export interface AccountCustomAgent {
   id: string;
   accountId: number;
