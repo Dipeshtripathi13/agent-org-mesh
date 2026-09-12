@@ -179,9 +179,15 @@ Both `mesh_admin` (schema owner, used only by migrate/seed) and `mesh_app` (leas
 runtime role) credentials default to the values in `backend/db/schema.sql` /
 `docker-compose.yml`; override via `backend/.env` (see `.env.example`) for anything else.
 
-`npm run db:seed` prints a real dev login: `jordan@agentorgmesh.local` / `admin-dev-only`
-(owner of the seeded Northbeam org). Not a secret worth protecting — this database is
-thrown away and reseeded by that exact script. To try self-serve signup instead, use
+`npm run db:seed` creates dev logins, all with password `admin-dev-only`:
+`jordan@agentorgmesh.local` (owner-admin of the seeded Northbeam org, not in its chart) and
+`marta@` (CEO), `hana@` (manager), `diego@` (engineer) — linked to seeded people, since every
+request now acts as the session's own identity (rule 7). The script refuses to run with
+`NODE_ENV=production`, and refuses any database holding an org other than Northbeam unless
+`CONFIRM_RESET=yes`: it TRUNCATEs every account and org. The login page shows these
+credentials only in a Vite dev build. (Release audit SEC-06, 2026-09-12: production had been
+seeded, with the published Jordan password working live — the demo org and account were
+deleted from production that day.) To try self-serve signup instead, use
 "New here? Create your account" on the login screen with any new email — you land in your
 own real, one-person org immediately, no separate org-creation step.
 

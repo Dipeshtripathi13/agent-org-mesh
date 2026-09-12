@@ -39,9 +39,8 @@ export function Login() {
         <header><span className="label">Sign in</span></header>
         <div className="inner">
           <p className="sub" style={{ marginTop: 0, marginBottom: 16 }}>
-            One login for everyone — real, session-based, whether you're here as an org
-            admin, a person someone added to a chart, or both. What you can see and do is
-            governed by your actual role, not just whoever loaded the page.
+            Ask your team&rsquo;s agents for an update. Every answer follows your
+            organization&rsquo;s disclosure policy, and anything withheld is shown, not hidden.
           </p>
           <div style={{ display: 'grid', gap: 10 }}>
             <label style={{ display: 'grid', gap: 4 }}>
@@ -96,10 +95,13 @@ export function Login() {
             </button>{' '}
             — you'll land in your own workspace immediately, no company name needed.
           </p>
-          <p className="glossary" style={{ marginTop: 8 }}>
-            Dev seed: <code>jordan@agentorgmesh.local</code> / <code>admin-dev-only</code> — see
-            the console output of <code>npm run db:seed</code>.
-          </p>
+          {import.meta.env.DEV && (
+            <p className="glossary" style={{ marginTop: 8 }}>
+              Local dev only: <code>jordan@</code>, <code>marta@</code>, <code>hana@</code> or{' '}
+              <code>diego@agentorgmesh.local</code> / <code>admin-dev-only</code> after{' '}
+              <code>npm run db:seed</code>. Never shown in a production build.
+            </p>
+          )}
         </div>
       </div>
     </div>

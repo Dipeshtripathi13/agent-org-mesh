@@ -19,8 +19,34 @@ const { Client } = pg;
 const adminUrl =
   process.env.DATABASE_ADMIN_URL ?? 'postgres://mesh_admin:mesh_admin_dev_only@localhost:5433/agent_org_mesh';
 
+// This script TRUNCATEs accounts, organizations and everything under them, then loads a
+// demo org with a published dev password. Run against a real deployment it would wipe every
+// signup and plant a known login (release audit SEC-06), so it refuses in production and
+// refuses any database that holds an org other than the demo one unless explicitly confirmed.
+if (process.env.NODE_ENV === 'production') {
+  console.error('Refusing to seed: NODE_ENV=production. Demo data and dev logins never belong in a real deployment.');
+  process.exit(1);
+}
+
 const client = new Client({ connectionString: adminUrl, ssl: sslForConnectionString(adminUrl) });
 await client.connect();
+
+{
+  const { rows } = await client.query(
+    `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'organizations') AS exists`,
+  );
+  if (rows[0].exists) {
+    const { rows: real } = await client.query(`SELECT count(*)::int AS n FROM organizations WHERE slug <> 'northbeam'`);
+    if (real[0].n > 0 && process.env.CONFIRM_RESET !== 'yes') {
+      console.error(
+        `Refusing to seed: ${adminUrl.replace(/:[^:@]*@/, ':***@')} has ${real[0].n} organization(s) besides the demo one.\n` +
+          'Seeding truncates every account and organization. Re-run with CONFIRM_RESET=yes only for a disposable dev/qa database.',
+      );
+      await client.end();
+      process.exit(1);
+    }
+  }
+}
 
 try {
   await client.query('BEGIN');
