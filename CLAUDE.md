@@ -360,7 +360,11 @@ honest reason every other new connector in this project does; update this note o
 Trello account is available.
 
 ## Where to go next
-- **Extend session-trust to the remaining self-service connection endpoints.** Rule 7 is
+- **Extend session-trust to the remaining self-service connection endpoints.** **Done
+  2026-09-12 (release audit SEC-01–05) — superseded, kept for history:** every endpoint now
+  resolves identity from the session only (rule 7), and `/api/org`, `/api/policy`,
+  `/api/audit/subject/:id`, `/api/person/:id/runtimes`, and `/api/organizations/:id/main-agent`
+  are session-gated to org members/admins. Do not act on the reasoning below. Rule 7 is
   now mostly closed, not mostly open — updated after a full security audit fixed the
   worst of it. `POST /api/agent/ask` and `POST /api/query`'s `requesterId`, escalation
   acknowledge/resolve's `actorPersonId`, and `/api/agent/conversations`'s `requesterId`
@@ -1281,8 +1285,9 @@ bypassing role-*truthfulness* on purpose, just not on being a real caller. Three
 endpoints (`/api/overview`, `/api/escalations` GET, `/api/connections`) were completely
 unauthenticated, gated only by a guessable `orgId` query param — now `requireOrgRole`
 'viewer'-gated like `/api/audit` always was. Three siblings that look identical at a
-glance (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) are **deliberately left
-open server-side** — at the time of this audit, real self-service endpoints (`WhoAsked.tsx`,
+glance (`/api/org`, `/api/policy` GET, `/api/audit/subject/:id`) are **deliberately left open server-side** (superseded 2026-09-12: all three are now
+session-gated — the release audit confirmed live they leaked rosters and full disclosure
+history to anonymous callers) — at the time of this audit, real self-service endpoints (`WhoAsked.tsx`,
 `Ask.tsx`, `MyAgent.tsx`, `OrgStructure.tsx`, and `MeContext.tsx`'s then-free switcher)
 depended on reaching them without a session, so gating them would have broken real
 functionality, not closed a gap. That's narrower now than when this was written — "My

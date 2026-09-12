@@ -123,10 +123,12 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
 // existed) and now for the login link in invite emails.
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
+/** 0 (never a real org) when missing or malformed, so every gate below fails closed —
+ *  this used to default to org 1, quietly pointing an id-less request at the first org. */
 function orgIdFromQuery(req: { query: unknown }): number {
   const q = req.query as { orgId?: string };
   const parsed = Number(q.orgId);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 /* ---------- platform: real account authentication + RBAC ----------
@@ -265,6 +267,24 @@ async function requireElevatedSession(
   if (session == null) return { ok: false, code: 401, error: 'log in first' };
   if (!isElevated(session.elevatedUntil)) return { ok: false, code: 428, error: 'admin re-authentication required' };
   return { ok: true, accountId: session.accountId };
+}
+
+type OrgAccessCheck =
+  | { ok: true; accountId: number; personId: number | null; orgRole: OrgRole | null }
+  | { ok: false; code: 401 | 403; error: string };
+
+/** Org-scoped reads that both members ("My agent") and admins (Admin panel) legitimately
+ *  make — the roster, the policy grid, the main-agent choice. Requires a session that is
+ *  a person in this org or holds any admin role for it. Closes release-audit SEC-04: these
+ *  were fully public, and org ids are sequential. */
+async function requireOrgAccess(req: { cookies: Record<string, string | undefined> }, orgId: number): Promise<OrgAccessCheck> {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) return { ok: false, code: 401, error: 'log in first' };
+  if (!orgId) return { ok: false, code: 403, error: 'not authorized for this organization' };
+  const [people, orgRole] = await Promise.all([repo.getPeopleForAccount(accountId), repo.getOrgRole(orgId, accountId)]);
+  const personId = people.find((p) => p.orgId === orgId)?.id ?? null;
+  if (personId == null && orgRole == null) return { ok: false, code: 403, error: 'not authorized for this organization' };
+  return { ok: true, accountId, personId, orgRole };
 }
 
 type SessionPersonCheck =
@@ -758,14 +778,13 @@ app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
 
 /* ---------- org ---------- */
 
-// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
-// MeContext.tsx's free identity switcher, Ask.tsx, MyAgent.tsx, and OrgStructure.tsx all
-// call this without a session — CLAUDE.md rule 7's "still open by design" self-service
-// affordance depends on the org's people list being loadable before anyone picks who they
-// are. Gating this the way /api/overview etc. now are would break that real, documented
-// flow. If rule 7 is ever fully closed, revisit this alongside it, not in isolation.
-app.get('/api/org', async (req) => {
+app.get('/api/org', async (req, reply) => {
   const orgId = orgIdFromQuery(req);
+  const access = await requireOrgAccess(req, orgId);
+  if (!access.ok) {
+    reply.code(access.code);
+    return { error: access.error };
+  }
   const [people, surfaces, neverIngested] = await Promise.all([
     repo.getPeople(orgId),
     repo.getSurfaces(),
@@ -1073,8 +1092,13 @@ const TASK_SAMPLES: Record<string, string[]> = {
 
 app.get('/api/runtimes', async () => ({ catalog: await repo.getRuntimeCatalog() }));
 
-app.get('/api/person/:id/runtimes', async (req) => {
+app.get('/api/person/:id/runtimes', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  const check = await requireSelf(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
   const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getPersonRuntimes(id)]);
   return { catalog, registered };
 });
@@ -1108,12 +1132,15 @@ function sanitizeOrgMainAgent(registered: OrgMainAgent | null) {
   };
 }
 
-/** Read the org's one main/aggregator agent — no auth gate, same as the sub-agent GET
- *  above. Org name/slug/main-agent choice was never treated as sensitive on its own (an
- *  orgId is not guessable-to-useful without already being a member); setting it is the
- *  real boundary, a separate, admin-gated endpoint just below. */
-app.get('/api/organizations/:orgId/main-agent', async (req) => {
+/** Read the org's one main/aggregator agent — members see it read-only in "Set up my
+ *  agent", admins edit it; either needs a real place in this org. */
+app.get('/api/organizations/:orgId/main-agent', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
+  const access = await requireOrgAccess(req, orgId);
+  if (!access.ok) {
+    reply.code(access.code);
+    return { error: access.error };
+  }
   const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getOrgMainAgent(orgId)]);
   return { catalog, registered: sanitizeOrgMainAgent(registered) };
 });
@@ -2222,12 +2249,14 @@ app.post('/api/ingest/:source', async (req, reply) => {
 
 /* ---------- policy ---------- */
 
-// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
-// OrgStructure.tsx shows an employee the disclosure grid governing them as a self-service
-// transparency feature, same "still open by design" rule-7 posture as /api/org above —
-// gating this would break that real flow, not just the Admin panel's PolicyMatrix.tsx.
-app.get('/api/policy', async (req) => {
+// Members see the grid governing them (OrgStructure.tsx); admins edit it (PolicyMatrix.tsx).
+app.get('/api/policy', async (req, reply) => {
   const orgId = orgIdFromQuery(req);
+  const access = await requireOrgAccess(req, orgId);
+  if (!access.ok) {
+    reply.code(access.code);
+    return { error: access.error };
+  }
   const [revision, history] = await Promise.all([repo.getCurrentRevision(orgId), repo.listRevisions(orgId)]);
   return { revision, history: history.map((r) => ({ id: r.id, createdAt: r.createdAt, note: r.note })) };
 });
@@ -2762,13 +2791,25 @@ app.get('/api/audit', async (req, reply) => {
   };
 });
 
-// Deliberately unauthenticated (re-confirmed during a security audit, not an oversight):
-// this is the "who asked about me" self-service transparency feature (WhoAsked.tsx),
-// also used by MyAgent.tsx and Ask.tsx for chat-history context — same rule-7 posture as
-// /api/org and /api/policy above.
-app.get('/api/audit/subject/:id', async (req) => {
+/** Disclosures about one person. The subject ("Who asked about me") and the org's admins
+ *  see every row; any other member sees only the rows they asked themselves (Ask.tsx's
+ *  chat history about someone else). Closes release-audit SEC-03: this was public, and
+ *  person ids are sequential. */
+app.get('/api/audit/subject/:id', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  return { entries: await repo.auditForSubject(id) };
+  const orgId = await orgIdOfPersonOrNull(id);
+  if (orgId == null) {
+    reply.code(404);
+    return { error: 'no such person' };
+  }
+  const access = await requireOrgAccess(req, orgId);
+  if (!access.ok) {
+    reply.code(access.code);
+    return { error: access.error };
+  }
+  const entries = await repo.auditForSubject(id);
+  if (access.personId === id || access.orgRole != null) return { entries };
+  return { entries: entries.filter((e) => e.requesterId === access.personId) };
 });
 
 /** Chats for one (requester, target) pair — My agent → Ask yourself (requesterId ===
