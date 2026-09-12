@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
@@ -129,6 +129,10 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
 // existed) and now for the login link in invite emails.
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /** 0 (never a real org) when missing or malformed, so every gate below fails closed —
  *  this used to default to org 1, quietly pointing an id-less request at the first org. */
 function orgIdFromQuery(req: { query: unknown }): number {
@@ -153,6 +157,7 @@ function orgIdFromQuery(req: { query: unknown }): number {
    different *views*, not different accounts. */
 
 const SESSION_COOKIE = 'aom_session';
+const OAUTH_STATE_COOKIE = 'aom_oauth_state';
 // 7 days, down from 30 — found during a security audit: a 30-day fixed TTL with no idle
 // timeout meant a leaked/stolen session cookie stayed valid for up to a month regardless
 // of activity. True idle-timeout (sliding renewal) would need `reply` threaded through
@@ -885,6 +890,9 @@ type SelfCheck = { ok: true; orgId: number } | { ok: false; code: 401 | 403 | 40
  *  exactly that person. There is no anonymous or "accountless demo person" branch anymore:
  *  a person without a linked login has no self-service until an admin adds their email. */
 async function requireSelf(req: { cookies: Record<string, string | undefined> }, id: number): Promise<SelfCheck> {
+  // Authenticate before looking the person up, so an anonymous caller can't use 404 vs 401
+  // to enumerate which person ids exist.
+  if ((await currentAccountId(req)) == null) return { ok: false, code: 401, error: 'log in first' };
   const orgId = await orgIdOfPersonOrNull(id);
   if (orgId == null) return { ok: false, code: 404, error: 'no such person' };
   const check = await requireSessionPerson(req, orgId, 'you may only manage your own record');
@@ -1503,20 +1511,44 @@ app.get('/api/oauth/gmail/start', async (req, reply) => {
     reply.code(503);
     return { error: 'Google OAuth is not configured on the backend — see backend/.env.example' };
   }
-  return reply.redirect(buildAuthUrl(String(personId)));
+  // CSRF state (release audit SEC-09): Google only ever sees a random nonce. The person id it
+  // belongs to stays server-side in a short-lived httpOnly cookie, so the callback can't be
+  // pointed at someone else's person id, or completed by anyone who didn't start it.
+  const nonce = generateSessionToken();
+  reply.setCookie(OAUTH_STATE_COOKIE, `${personId}.${nonce}`, {
+    path: '/api/oauth/gmail', httpOnly: true, sameSite: 'lax', secure: isProduction, maxAge: 10 * 60,
+  });
+  return reply.redirect(buildAuthUrl(nonce));
 });
 
 app.get('/api/oauth/gmail/callback', async (req, reply) => {
   const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
-  const frontendUrl = FRONTEND_URL;
   reply.type('text/html');
+  const page = (message: string) =>
+    `<!doctype html><meta charset="utf-8"><title>Gmail</title><p>${escapeHtml(message)} <a href="${escapeHtml(FRONTEND_URL)}">Return to the app</a>.</p>`;
+
+  const stored = req.cookies[OAUTH_STATE_COOKIE];
+  reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/api/oauth/gmail' });
 
   if (error || !code || !state) {
-    return `<p>Gmail connection failed: ${error ?? 'missing code'}. <a href="${frontendUrl}">Return to the app</a>.</p>`;
+    reply.code(400);
+    return page(`Gmail connection failed: ${error ?? 'missing code'}.`);
+  }
+  const [storedPersonId, storedNonce] = (stored ?? '').split('.');
+  const nonceMatches = !!storedNonce && storedNonce.length === state.length
+    && timingSafeEqual(Buffer.from(storedNonce), Buffer.from(state));
+  if (!nonceMatches) {
+    reply.code(400);
+    return page('Gmail connection failed: this sign-in link expired or was not started from this browser. Start again from "Set up my agent".');
+  }
+  const personId = Number(storedPersonId);
+  const self = await requireSelf(req, personId);
+  if (!self.ok) {
+    reply.code(self.code);
+    return page('Gmail connection failed: log in as the person connecting Gmail, then start again.');
   }
   try {
     const tokens = await exchangeCode(code);
-    const personId = Number(state);
     await saveGmailConnection(personId, {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? null,
@@ -1532,10 +1564,12 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
       await repo.updatePersonSurface(personId, 'calendar', 'connected');
     }
   } catch (err) {
-    return `<p>Gmail connection failed: ${err instanceof Error ? err.message : String(err)}. <a href="${frontendUrl}">Return to the app</a>.</p>`;
+    console.error({ err }, 'gmail oauth callback failed');
+    reply.code(502);
+    return page('Gmail connection failed: Google did not accept the sign-in. Start again from "Set up my agent".');
   }
-  return `<p>Gmail connected. You can close this tab and return to the app.</p>
-    <script>setTimeout(() => { location.href = ${JSON.stringify(frontendUrl)}; }, 1200);</script>`;
+  // A meta refresh, not an inline script — helmet's CSP blocks inline scripts in production.
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=${escapeHtml(FRONTEND_URL)}"><title>Gmail connected</title><p>Gmail connected. Returning to the app&hellip; <a href="${escapeHtml(FRONTEND_URL)}">Continue</a>.</p>`;
 });
 
 app.get('/api/person/:id/gmail/status', async (req, reply) => {
@@ -2349,18 +2383,18 @@ app.post('/api/query', async (req, reply) => {
     requesterId?: number;
     persist?: boolean;
   };
-  const orgId = await orgIdOfPersonOrNull(body.targetId);
-  if (orgId == null) {
-    reply.code(404);
-    return { error: 'no such person' };
-  }
-
   // Identity comes only from the session. Anonymous callers get nothing — not even a
-  // preview (SEC-02: a "self-preview" used to be satisfied by typing the same id twice).
+  // preview (SEC-02: a "self-preview" used to be satisfied by typing the same id twice) —
+  // and are refused before any lookup, so they can't enumerate person ids either.
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
     return { error: 'log in first' };
+  }
+  const orgId = await orgIdOfPersonOrNull(body.targetId);
+  if (orgId == null) {
+    reply.code(404);
+    return { error: 'no such person' };
   }
   const requesterId = (await repo.getPeopleForAccount(accountId)).find((p) => p.orgId === orgId)?.id;
 
@@ -2479,6 +2513,10 @@ app.post('/api/agent/ask', async (req, reply) => {
   }
   const question = body.question.trim();
 
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
   const orgId = await orgIdOfPersonOrNull(body.targetId);
   if (orgId == null) {
     reply.code(404);
@@ -2687,6 +2725,10 @@ app.post('/api/agent/ask-multi', async (req, reply) => {
   const question = body.question.trim();
   const role = body.role;
 
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
   // The org is the first selected person's; every other target is checked against that
   // same org's chart below (someone from another org comes back as "not found").
   const orgId = await orgIdOfPersonOrNull(targetIds[0]);
@@ -2835,6 +2877,10 @@ app.get('/api/audit', async (req, reply) => {
  *  person ids are sequential. */
 app.get('/api/audit/subject/:id', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
   const orgId = await orgIdOfPersonOrNull(id);
   if (orgId == null) {
     reply.code(404);
@@ -2855,6 +2901,10 @@ app.get('/api/audit/subject/:id', async (req, reply) => {
  *  rows (listConversationsForPair groups them; nothing new is stored). */
 app.get('/api/agent/conversations', async (req, reply) => {
   const { targetId } = req.query as { targetId?: string };
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
   const targetIdNum = Number(targetId);
   // The frontend fires this with targetId=0 whenever nothing's selected yet (a brand-new
   // org with nobody else in the chart to ask about, or the picker just hasn't loaded) —
