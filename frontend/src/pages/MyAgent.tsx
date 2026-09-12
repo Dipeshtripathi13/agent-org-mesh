@@ -66,7 +66,7 @@ export function MyAgent() {
       setConversations(convRes.conversations);
       return convRes.conversations;
     }
-    const [auditRes, convRes] = await Promise.all([api.auditForSubject(meId), api.listConversations(meId, meId)]);
+    const [auditRes, convRes] = await Promise.all([api.auditForSubject(meId), api.listConversations(meId)]);
     const mine = auditRes.entries.filter((e) => e.requesterId === meId && e.requesterRole === 'Self');
     setEntries(mine);
     setConversations(convRes.conversations);
@@ -155,7 +155,7 @@ export function MyAgent() {
         // persisted ask (its own "Self asked: ..." line in your audit log). Passing the
         // active conversationId is what gives the model this chat's own prior turns as
         // real context; omitting it (a brand-new chat) mints a fresh one server-side.
-        const r = await api.agentAsk(meId, 'Self', q.trim(), meId, true, activeConversationId ?? undefined);
+        const r = await api.agentAsk(meId, 'Self', q.trim(), true, activeConversationId ?? undefined);
         await loadHistory();
         if (r.conversationId) setActiveConversationId(r.conversationId);
       }

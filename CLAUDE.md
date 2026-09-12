@@ -62,27 +62,20 @@ product surface, shared by every org.
 6. **No number on the Overview screen is a literal.** If it can't be derived from state,
    it doesn't belong there.
 
-7. **Login is real; per-request `personId`/`requesterId` still isn't — don't conflate
-   them.** One identity table, `accounts` (`backend/src/domain/auth.ts` for password/
-   session-token hashing, `db/repo.ts`, `server.ts`'s `requireOrgRole`) — a session
-   cookie, not a client-asserted id, decides which account is logged in. The same account
-   can hold an `org_admins` row (platform governance for an org) and/or be linked from one
-   or more `people` rows via `people.account_id` (an org-chart identity, one per org,
-   not unique — that's how one human ends up in more than one organization for real).
-   **What logging in does *not* yet do**: change what any request is trusted to say about
-   itself. `POST /api/agent/ask`'s `requesterId`, every self-service endpoint's `personId`
-   (GitHub/Jira/Gmail connections, ingest tokens, sub-agent registration, claim correction —
-   the org's one main-agent registration is the one exception, genuinely session-gated via
-   `requireOrgRole` since it moved to an admin-only, org-level setting) all still take the
-   id a request/the browser hands them at face value, even for a person now linked to a
-   real, logged-in account. "My agent" itself is no longer one of these — its identity
-   switcher (`frontend/src/lib/MeContext.tsx`) used to let any logged-in account freely
-   switch to *any* person's view in *any* organization, not just its own; that's closed
-   now, see the MeContext.tsx layout entry below. Closing the rest — making those
-   endpoints prefer the session's own identity over a client-asserted one — is real,
-   separate work (see "Where to go next"), not something signup/login accomplished by
-   existing. Don't write code that treats a client-asserted `personId` as verified just
-   because real accounts now exist.
+7. **Who is acting comes only from the session cookie — never from the request.** One
+   identity table, `accounts` (`backend/src/domain/auth.ts`, `db/repo.ts`). The same
+   account can hold `org_admins` rows and/or be linked from `people` rows via
+   `people.account_id` (one org-chart identity per org). Every request that acts as an
+   org-chart person resolves that person with `server.ts`'s `requireSessionPerson(req,
+   orgId)` (the session's own identity in that org) or `requireSelf(req, id)` (that
+   identity must be exactly `:id`). There is no `requesterId`/`actorPersonId` in any
+   request body, no anonymous fallback, and no "accountless demo person" branch — a person
+   with no linked login has no self-service at all until an admin adds their email. The
+   release audit (2026-09-12, SEC-01/02/05) confirmed live that the old fallback let an
+   anonymous caller ask as the CEO about anyone, preview anyone at Executive tier by typing
+   the same id twice, and push fabricated activity into anyone's claims. Do not
+   reintroduce a client-asserted identity for convenience, testing, or a demo — local dev
+   uses the seeded logins (`marta@`/`hana@`/`diego@agentorgmesh.local`).
 
 ## Layout
 ```

@@ -267,24 +267,29 @@ async function requireElevatedSession(
   return { ok: true, accountId: session.accountId };
 }
 
-/** Resolves which personId a request should be trusted to act as, in `orgId`: the
- *  logged-in session's own linked identity there if one exists, else the client-asserted
- *  `claimedId` unchanged. The same session-preferring pattern /api/agent/ask and
- *  /api/query use inline, factored out for the escalation-action and conversation-read
- *  endpoints so all four stay identical rather than drifting. Found and closed during a
- *  security audit: these two didn't have this check at all, taking actorPersonId/
- *  requesterId purely at face value. */
-async function sessionPreferredPersonId(
+type SessionPersonCheck =
+  | { ok: true; accountId: number; personId: number }
+  | { ok: false; code: 401 | 403 | 404; error: string };
+
+/** The only way a request acts as an org-chart person: the logged-in session's own linked
+ *  identity in `orgId`. Never a requesterId/actorPersonId/personId from the request — the
+ *  release audit (SEC-01/02/05) confirmed live that falling back to a client-asserted id
+ *  whenever there was no session let an anonymous caller ask as the CEO, preview anyone at
+ *  Executive tier, and push fabricated activity into anyone's claims. */
+async function requireSessionPerson(
   req: { cookies: Record<string, string | undefined> },
   orgId: number,
-  claimedId: number | undefined,
-): Promise<number | undefined> {
-  const sessionAccountId = await currentAccountId(req);
-  if (sessionAccountId == null) return claimedId;
-  const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
-  const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
-  return sessionPerson ? sessionPerson.id : claimedId;
+  notMemberError = 'you are not a member of this organization',
+): Promise<SessionPersonCheck> {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) return { ok: false, code: 401, error: 'log in first' };
+  const person = (await repo.getPeopleForAccount(accountId)).find((p) => p.orgId === orgId);
+  if (!person) return { ok: false, code: 403, error: notMemberError };
+  return { ok: true, accountId, personId: person.id };
 }
+
+const orgIdOfPersonOrNull = (id: number) =>
+  Number.isInteger(id) && id > 0 ? repo.getOrgIdOfPerson(id).catch(() => null) : Promise.resolve(null);
 
 // Fixed, never-logged-into hash — burned in a scrypt comparison below whenever an email
 // doesn't resolve to a real account, so a nonexistent email takes the same real scrypt
@@ -816,70 +821,19 @@ app.get('/api/overview', async (req, reply) => {
   };
 });
 
-/** Resolves who's *really* asking for a self-view endpoint like this one: prefers the
- *  logged-in session's own linked identity in `id`'s org over whatever `requesterId` the
- *  query string claims (exact same pattern /api/agent/ask uses), then requires the result
- *  to actually equal `id` — this is a self-view, never a way to read anyone else's raw
- *  claims. Returns false (never throws) so callers can turn that into a clean 403; no
- *  session and no matching requesterId both fail closed, not open. */
-async function verifySelfAccess(req: { query: unknown; cookies: Record<string, string | undefined> }, id: number): Promise<boolean> {
-  const { requesterId } = req.query as { requesterId?: string };
-  let effectiveRequesterId = requesterId != null ? Number(requesterId) : undefined;
-  const sessionAccountId = await currentAccountId(req);
-  if (sessionAccountId != null) {
-    const orgId = await repo.getOrgIdOfPerson(id);
-    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
-    const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
-    if (sessionPerson) effectiveRequesterId = sessionPerson.id;
-  }
-  return effectiveRequesterId === id;
-}
+type SelfCheck = { ok: true; orgId: number } | { ok: false; code: 401 | 403 | 404; error: string };
 
-type SelfCheck = { ok: true } | { ok: false; code: 403; error: string };
-
-/** The other half of the same gap `verifySelfAccess` closes above, for the rest of the
- *  self-service surface CLAUDE.md's rule 7 names directly: GitHub/Jira/Gmail connections,
- *  ingest tokens, sub-agent (runtime) registration, claim correction, the generic
- *  connector endpoints. All of these already took a client-asserted `personId` from the
- *  URL path with no verification at all — that path id *is* the self-assertion, there was
- *  just nothing checking it against who's actually logged in.
- *
- *  Two cases stay open on purpose, and they're really the *same* case: the caller isn't
- *  verifiably `id` (no session at all, or a session whose account has no linked identity
- *  in `id`'s org — an admin-only account, or one linked elsewhere, browsing this org
- *  purely through "My agent"'s org switcher) — this is the documented demo affordance for
- *  the seeded roster with no login of their own to require. It stays open only for its
- *  actual intended target, though: a target who *does* have a real, linked account
- *  (`people.account_id`) must not have their own connections touched by someone who never
- *  proved they're that person, regardless of whether that someone is a total stranger
- *  with no session or a real, logged-in account that's simply someone else. Originally
- *  this only checked the no-session case (found reviewing CLAUDE.md's own "Where to go
- *  next" note on this function); found live, testing this exact function right after,
- *  that a second, real account with an unrelated identity elsewhere sailed through the
- *  same gap the first fix didn't touch — both branches needed the identical target-has-an-
- *  account check, so they're unified into one below rather than patched twice.
- *
- *  The one case that fails closed regardless is the one that was always the actual
- *  regression risk: the session *does* have a real, linked identity in this org, and it
- *  doesn't match `id` — a genuinely logged-in person trying to touch a *different* real
- *  person's connections, which is exactly what this function exists to stop. */
-async function requireSelfIfLoggedIn(req: { cookies: Record<string, string | undefined> }, id: number): Promise<SelfCheck> {
-  const sessionAccountId = await currentAccountId(req);
-  let sessionPerson: { id: number } | undefined;
-  if (sessionAccountId != null) {
-    const orgId = await repo.getOrgIdOfPerson(id);
-    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
-    sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
-  }
-  if (sessionPerson?.id === id) return { ok: true };
-  if (sessionPerson) {
-    return { ok: false, code: 403, error: 'you may only manage your own connections' };
-  }
-  const target = await repo.getPerson(id);
-  if (target.accountId != null) {
-    return { ok: false, code: 403, error: 'log in to manage this person’s connections' };
-  }
-  return { ok: true };
+/** Every self-service endpoint keyed by a person id in the path (their own connections,
+ *  ingest tokens, sub-agents, claims, export) — the session's own linked identity must be
+ *  exactly that person. There is no anonymous or "accountless demo person" branch anymore:
+ *  a person without a linked login has no self-service until an admin adds their email. */
+async function requireSelf(req: { cookies: Record<string, string | undefined> }, id: number): Promise<SelfCheck> {
+  const orgId = await orgIdOfPersonOrNull(id);
+  if (orgId == null) return { ok: false, code: 404, error: 'no such person' };
+  const check = await requireSessionPerson(req, orgId, 'you may only manage your own record');
+  if (!check.ok) return check.code === 401 ? check : { ok: false, code: 403, error: check.error };
+  if (check.personId !== id) return { ok: false, code: 403, error: 'you may only manage your own record' };
+  return { ok: true, orgId };
 }
 
 /** Raw claims, not a policy-filtered synthesis — this is "what it knows", a self-view
@@ -890,14 +844,15 @@ async function requireSelfIfLoggedIn(req: { cookies: Record<string, string | und
  *  claims is exactly what the deterministic policy engine exists to prevent. */
 app.get('/api/person/:id', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  if (!(await verifySelfAccess(req, id))) {
-    reply.code(403);
-    return { error: 'you may only view your own record here' };
+  const check = await requireSelf(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
   }
   const person = await repo.getPerson(id);
   const [surfaces, claims] = await Promise.all([
     repo.getSurfaces(),
-    repo.getClaims(await repo.getOrgIdOfPerson(id), id),
+    repo.getClaims(check.orgId, id),
   ]);
   return {
     person,
@@ -922,11 +877,12 @@ app.get('/api/person/:id', async (req, reply) => {
  *  audit history), not less. */
 app.get('/api/person/:id/export', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  if (!(await verifySelfAccess(req, id))) {
-    reply.code(403);
-    return { error: 'you may only export your own record here' };
+  const check = await requireSelf(req, id);
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
   }
-  const orgId = await repo.getOrgIdOfPerson(id);
+  const orgId = check.orgId;
   const [person, claims, allEvidence, auditEntriesAsSubject] = await Promise.all([
     repo.getPerson(id),
     repo.getClaims(orgId, id),
@@ -963,7 +919,7 @@ app.post('/api/claim/:id/correct', async (req, reply) => {
     reply.code(404);
     return { error: 'not found' };
   }
-  const check = await requireSelfIfLoggedIn(req, existing.personId);
+  const check = await requireSelf(req, existing.personId);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1002,19 +958,19 @@ async function canActOnEscalation(escalation: { personId: number; path: { person
 
 app.post('/api/escalations/:id/acknowledge', async (req, reply) => {
   const id = (req.params as { id: string }).id;
-  const { actorPersonId: claimedActorId } = req.body as { actorPersonId?: number };
-  if (!claimedActorId) {
-    reply.code(400);
-    return { error: 'actorPersonId is required' };
-  }
   const escalation = await repo.getEscalationById(id);
   if (!escalation) {
     reply.code(404);
     return { error: 'not found' };
   }
   const orgId = await repo.getOrgIdOfPerson(escalation.personId);
-  const actorPersonId = await sessionPreferredPersonId(req, orgId, claimedActorId);
-  if (!actorPersonId || !(await canActOnEscalation(escalation, actorPersonId, orgId))) {
+  const actor = await requireSessionPerson(req, orgId, 'you need a place in this organization’s chart to act on escalations');
+  if (!actor.ok) {
+    reply.code(actor.code);
+    return { error: actor.error };
+  }
+  const actorPersonId = actor.personId;
+  if (!(await canActOnEscalation(escalation, actorPersonId, orgId))) {
     reply.code(403);
     return { error: 'you are not on this escalation\'s path and are not IT admin or Executive for this person' };
   }
@@ -1028,19 +984,19 @@ app.post('/api/escalations/:id/acknowledge', async (req, reply) => {
 
 app.post('/api/escalations/:id/resolve', async (req, reply) => {
   const id = (req.params as { id: string }).id;
-  const { actorPersonId: claimedActorId } = req.body as { actorPersonId?: number };
-  if (!claimedActorId) {
-    reply.code(400);
-    return { error: 'actorPersonId is required' };
-  }
   const escalation = await repo.getEscalationById(id);
   if (!escalation) {
     reply.code(404);
     return { error: 'not found' };
   }
   const orgId = await repo.getOrgIdOfPerson(escalation.personId);
-  const actorPersonId = await sessionPreferredPersonId(req, orgId, claimedActorId);
-  if (!actorPersonId || !(await canActOnEscalation(escalation, actorPersonId, orgId))) {
+  const actor = await requireSessionPerson(req, orgId, 'you need a place in this organization’s chart to act on escalations');
+  if (!actor.ok) {
+    reply.code(actor.code);
+    return { error: actor.error };
+  }
+  const actorPersonId = actor.personId;
+  if (!(await canActOnEscalation(escalation, actorPersonId, orgId))) {
     reply.code(403);
     return { error: 'you are not on this escalation\'s path and are not IT admin or Executive for this person' };
   }
@@ -1077,7 +1033,7 @@ app.get('/api/connections', async (req, reply) => {
 
 app.post('/api/person/:id/surface/cycle', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1333,7 +1289,7 @@ app.post('/api/accounts/me/main-agent', async (req, reply) => {
  *  found live testing a fresh self-serve org. */
 app.post('/api/person/:id/runtimes', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const selfCheck = await requireSelfIfLoggedIn(req, id);
+  const selfCheck = await requireSelf(req, id);
   if (!selfCheck.ok) {
     reply.code(selfCheck.code);
     return { error: selfCheck.error };
@@ -1360,7 +1316,7 @@ app.post('/api/person/:id/runtimes', async (req, reply) => {
 
 app.delete('/api/person/:id/runtimes/:key', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1382,7 +1338,7 @@ app.delete('/api/person/:id/runtimes/:key', async (req, reply) => {
  *  yet. Nothing here is persisted or treated as a claim. */
 app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1432,7 +1388,7 @@ app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
  *  out to for the other catalog runtimes. */
 app.post('/api/person/:id/runtimes/claude-code/ask-live', { config: { rateLimit: { max: 20, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1473,7 +1429,7 @@ app.get('/api/oauth/gmail/start', async (req, reply) => {
     reply.code(400);
     return { error: 'personId is required' };
   }
-  const check = await requireSelfIfLoggedIn(req, personId);
+  const check = await requireSelf(req, personId);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1519,7 +1475,7 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
 
 app.get('/api/person/:id/gmail/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1529,7 +1485,7 @@ app.get('/api/person/:id/gmail/status', async (req, reply) => {
 
 app.delete('/api/person/:id/gmail', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1550,7 +1506,7 @@ app.delete('/api/person/:id/gmail', async (req, reply) => {
 
 app.post('/api/person/:id/github', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1574,7 +1530,7 @@ app.post('/api/person/:id/github', async (req, reply) => {
 
 app.get('/api/person/:id/github/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1584,7 +1540,7 @@ app.get('/api/person/:id/github/status', async (req, reply) => {
 
 app.delete('/api/person/:id/github', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1605,7 +1561,7 @@ app.delete('/api/person/:id/github', async (req, reply) => {
 
 app.post('/api/person/:id/jira', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1626,7 +1582,7 @@ app.post('/api/person/:id/jira', async (req, reply) => {
 
 app.get('/api/person/:id/jira/status', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1636,7 +1592,7 @@ app.get('/api/person/:id/jira/status', async (req, reply) => {
 
 app.delete('/api/person/:id/jira', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1782,7 +1738,7 @@ app.get('/api/connectors/catalog', async () => {
  *  they can never disagree. Calendar has no connection of its own and mirrors Gmail's. */
 app.get('/api/person/:id/connectors', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1807,7 +1763,7 @@ app.get('/api/person/:id/connectors', async (req, reply) => {
 app.post('/api/person/:id/connectors/:key', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const key = (req.params as { key: string }).key as SurfaceKey;
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1845,7 +1801,7 @@ app.post('/api/person/:id/connectors/:key', async (req, reply) => {
 app.delete('/api/person/:id/connectors/:key', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const key = (req.params as { key: string }).key as SurfaceKey;
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -1865,7 +1821,7 @@ app.delete('/api/person/:id/connectors/:key', async (req, reply) => {
 app.post('/api/person/:id/connectors/:key/verify', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const key = (req.params as { key: string }).key;
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -2165,7 +2121,7 @@ const INGEST_SOURCES = ['claude-code', 'codex', 'gemini-cli'];
 
 app.post('/api/person/:id/ingest-tokens', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -2182,7 +2138,7 @@ app.post('/api/person/:id/ingest-tokens', async (req, reply) => {
 
 app.get('/api/person/:id/ingest-tokens', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -2192,7 +2148,7 @@ app.get('/api/person/:id/ingest-tokens', async (req, reply) => {
 
 app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
-  const check = await requireSelfIfLoggedIn(req, id);
+  const check = await requireSelf(req, id);
   if (!check.ok) {
     reply.code(check.code);
     return { error: check.error };
@@ -2326,34 +2282,30 @@ app.post('/api/query', async (req, reply) => {
     requesterId?: number;
     persist?: boolean;
   };
-  const orgId = await repo.getOrgIdOfPerson(body.targetId);
-
-  // Session-trust hardening, same pattern /api/agent/ask already uses: prefer the
-  // logged-in account's own linked identity in this org over a client-asserted
-  // requesterId, whenever a session exists and is actually linked here.
-  const sessionAccountId = await currentAccountId(req);
-  let requesterId = body.requesterId;
-  if (sessionAccountId != null) {
-    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
-    const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
-    if (sessionPerson) requesterId = sessionPerson.id;
+  const orgId = await orgIdOfPersonOrNull(body.targetId);
+  if (orgId == null) {
+    reply.code(404);
+    return { error: 'no such person' };
   }
 
+  // Identity comes only from the session. Anonymous callers get nothing — not even a
+  // preview (SEC-02: a "self-preview" used to be satisfied by typing the same id twice).
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const requesterId = (await repo.getPeopleForAccount(accountId)).find((p) => p.orgId === orgId)?.id;
+
   if (body.persist) {
-    const ok = await verifyRequesterRole(orgId, requesterId ?? 0, body.targetId, body.role);
-    if (!ok) {
+    if (requesterId == null || !(await verifyRequesterRole(orgId, requesterId, body.targetId, body.role))) {
       reply.code(403);
       return { error: `you may not ask as "${body.role}" about this person — that relationship doesn't hold in the org chart` };
     }
   } else {
     // Preview/simulation mode deliberately bypasses org-graph role-truthfulness — that's
-    // the whole point of "what would an Executive see", regardless of whether the caller
-    // genuinely has that relationship (My agent → Preview, Admin → Policy Matrix). But it
-    // still needs a real caller behind it: either previewing your own data (self, the
-    // same free-identity-switcher leniency as everywhere else — CLAUDE.md rule 7) or a
-    // real org admin/viewer testing the policy grid. Found and closed during a security
-    // audit: this endpoint previously had no gate at all, so a fully anonymous caller
-    // could preview any role's view of any person in any organization.
+    // the whole point of "what would an Executive see" (My agent → Preview, Admin → Policy
+    // Matrix). It is allowed for your own record, or for a real org viewer+ testing the grid.
     const isSelfPreview = requesterId != null && requesterId === body.targetId;
     if (!isSelfPreview) {
       const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to preview this organization\'s policy');
@@ -2460,34 +2412,25 @@ app.post('/api/agent/ask', async (req, reply) => {
   }
   const question = body.question.trim();
 
-  const orgId = await repo.getOrgIdOfPerson(body.targetId);
-
-  // Session-trust hardening (CLAUDE.md rule 7): prefer the logged-in account's own
-  // person-identity in this org over whatever requesterId the request body claims,
-  // whenever a session exists and is actually linked to a person here. This is the piece
-  // real login didn't close by existing — verifyRequesterRole below has always checked
-  // whether a claimed role is *truthful for the org chart*, but nothing previously checked
-  // whether the browser making the request is really logged in as that requester. Falls
-  // back to the client-asserted id when there's no session, or the account has no linked
-  // identity in this org — most of the seeded roster has no linked account and never will
-  // in a demo context, so their behavior is unchanged.
-  const sessionAccountId = await currentAccountId(req);
-  let requesterId = body.requesterId;
-  if (sessionAccountId != null) {
-    const sessionPeople = await repo.getPeopleForAccount(sessionAccountId);
-    const sessionPerson = sessionPeople.find((p) => p.orgId === orgId);
-    if (sessionPerson) requesterId = sessionPerson.id;
+  const orgId = await orgIdOfPersonOrNull(body.targetId);
+  if (orgId == null) {
+    reply.code(404);
+    return { error: 'no such person' };
   }
 
-  // Verified unconditionally, not just when persist is true: no real caller in this
-  // codebase ever sends persist:false here (Preview/policy-testing UIs go through
-  // /api/query instead), and the response body — items already filtered per the claimed
-  // role — is exactly as disclosive un-persisted as persisted. Found and closed during a
-  // security audit: an unauthenticated, non-persisted call could previously claim any
-  // role about any person and receive that role's real, policy-computed view, simply
-  // never logged for it.
+  // The requester is the session's own identity in this org — never body.requesterId
+  // (SEC-01: an anonymous caller could previously ask as the CEO about anyone).
+  const session = await requireSessionPerson(req, orgId);
+  if (!session.ok) {
+    reply.code(session.code);
+    return { error: session.error };
+  }
+  const requesterId = session.personId;
+
+  // Role truthfulness is verified unconditionally, persisted or not — the response body is
+  // exactly as disclosive either way.
   {
-    const ok = await verifyRequesterRole(orgId, requesterId ?? 0, body.targetId, body.role);
+    const ok = await verifyRequesterRole(orgId, requesterId, body.targetId, body.role);
     if (!ok) {
       reply.code(403);
       return { error: `you may not ask as "${body.role}" about this person — that relationship doesn't hold in the org chart` };
@@ -2665,9 +2608,9 @@ app.post('/api/agent/ask-multi', async (req, reply) => {
     reply.code(400);
     return { error: 'question is required' };
   }
-  if (body.requesterId == null || !body.role) {
+  if (!body.role) {
     reply.code(400);
-    return { error: 'requesterId and role are required' };
+    return { error: 'role is required' };
   }
   const targetIds = [...new Set((body.targetIds ?? []).filter((id) => Number.isInteger(id)))];
   if (targetIds.length === 0) {
@@ -2677,15 +2620,19 @@ app.post('/api/agent/ask-multi', async (req, reply) => {
   const question = body.question.trim();
   const role = body.role;
 
-  const orgId = await repo.getOrgIdOfPerson(body.requesterId).catch(() => null);
+  // The org is the first selected person's; every other target is checked against that
+  // same org's chart below (someone from another org comes back as "not found").
+  const orgId = await orgIdOfPersonOrNull(targetIds[0]);
   if (orgId == null) {
     reply.code(404);
-    return { error: 'requester not found' };
+    return { error: 'no such person' };
   }
-
-  // Session-trust hardening, same pattern as /api/agent/ask: prefer the logged-in
-  // account's own linked identity in this org over a client-asserted requesterId.
-  const requesterId = (await sessionPreferredPersonId(req, orgId, body.requesterId)) ?? body.requesterId;
+  const session = await requireSessionPerson(req, orgId);
+  if (!session.ok) {
+    reply.code(session.code);
+    return { error: session.error };
+  }
+  const requesterId = session.personId;
 
   const people = await repo.getPeople(orgId);
   const requester = people.find((p) => p.id === requesterId);
@@ -2827,8 +2774,8 @@ app.get('/api/audit/subject/:id', async (req) => {
 /** Chats for one (requester, target) pair — My agent → Ask yourself (requesterId ===
  *  targetId) or a real cross-person Ask thread — derived from that pair's own real audit
  *  rows (listConversationsForPair groups them; nothing new is stored). */
-app.get('/api/agent/conversations', async (req) => {
-  const { requesterId: claimedRequesterId, targetId } = req.query as { requesterId?: string; targetId?: string };
+app.get('/api/agent/conversations', async (req, reply) => {
+  const { targetId } = req.query as { targetId?: string };
   const targetIdNum = Number(targetId);
   // The frontend fires this with targetId=0 whenever nothing's selected yet (a brand-new
   // org with nobody else in the chart to ask about, or the picker just hasn't loaded) —
@@ -2838,12 +2785,12 @@ app.get('/api/agent/conversations', async (req) => {
   if (!Number.isInteger(targetIdNum) || targetIdNum <= 0) return { conversations: [] };
   const orgId = await repo.getOrgIdOfPerson(targetIdNum).catch(() => null);
   if (orgId == null) return { conversations: [] };
-  // Session-trust hardening, same pattern as /api/agent/ask: prefer the logged-in
-  // account's own linked identity here over a client-asserted requesterId. Found and
-  // closed during a security audit: this previously trusted requesterId completely,
-  // letting anyone read any two people's chat history by guessing both ids.
-  const requesterId = await sessionPreferredPersonId(req, orgId, claimedRequesterId != null ? Number(claimedRequesterId) : undefined);
-  return { conversations: await repo.listConversationsForPair(requesterId ?? 0, targetIdNum) };
+  const session = await requireSessionPerson(req, orgId);
+  if (!session.ok) {
+    reply.code(session.code);
+    return { error: session.error };
+  }
+  return { conversations: await repo.listConversationsForPair(session.personId, targetIdNum) };
 });
 
 /** Turns a router-inferred `sinceDays` back into words for the honest "connected, nothing

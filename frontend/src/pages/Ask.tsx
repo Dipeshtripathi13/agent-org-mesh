@@ -53,7 +53,7 @@ export function Ask() {
     setMultiBusy(true);
     setMultiError(null);
     try {
-      const r = await api.askMulti(q.trim(), meId, multiRole, [...multiSelected], true);
+      const r = await api.askMulti(q.trim(), multiRole, [...multiSelected], true);
       setMultiResult(r);
       setMultiQuestion('');
     } catch (e) {
@@ -94,7 +94,7 @@ export function Ask() {
   const loadHistory = async (requesterId: number, targetId: number) => {
     const [auditRes, convRes] = await Promise.all([
       api.auditForSubject(targetId),
-      api.listConversations(requesterId, targetId),
+      api.listConversations(targetId),
     ]);
     const mine = auditRes.entries.filter((e) => e.requesterId === requesterId);
     setEntries(mine);
@@ -146,7 +146,7 @@ export function Ask() {
       // into the target's own audit log. Passing the active conversationId is what gives
       // the model this chat's own prior turns as real context; omitting it (a brand-new
       // chat) mints a fresh one server-side.
-      const r = await api.agentAsk(target, role, q.trim(), meId, true, activeConversationId ?? undefined);
+      const r = await api.agentAsk(target, role, q.trim(), true, activeConversationId ?? undefined);
       await loadHistory(meId, target);
       if (r.conversationId) setActiveConversationId(r.conversationId);
       setPending(null);

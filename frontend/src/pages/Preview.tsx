@@ -10,10 +10,9 @@ export function Preview() {
   const [role, setRole] = useState('Direct manager');
   const [answer, setAnswer] = useState<AgentResponse | null>(null);
 
-  // requesterId explicitly set to meId — this is a self-preview ("what would X role see
-  // about me"), and the backend's preview gate (server.ts's POST /api/query) requires
-  // requesterId === targetId to recognize it as one, rather than an api.query() default.
-  useEffect(() => { api.query(meId, role, false, '', meId).then((r) => setAnswer(r.response)); }, [meId, role]);
+  // A self-preview ("what would X role see about me") — the server recognizes it because
+  // your session's own identity is the target.
+  useEffect(() => { api.query(meId, role).then((r) => setAnswer(r.response)).catch(() => setAnswer(null)); }, [meId, role]);
 
   return (
     <>

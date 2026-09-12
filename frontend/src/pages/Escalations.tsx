@@ -1,33 +1,37 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, type Escalation, type Person } from '../lib/api';
+import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
 import { describeEscalationStatus } from '../lib/escalationStatus';
 import { TierBadge } from '../components/primitives';
 
 export function Escalations() {
   const { orgId } = useOrg();
+  const { people: myIdentities } = useAuth();
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
-  const [actorId, setActorId] = useState<number | ''>('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // You act on an escalation as yourself — your own place in this org's chart — never as
+  // someone picked from a list. The server derives the same identity from your session.
+  const me = myIdentities.find((p) => p.orgId === orgId) ?? null;
+
   const load = () => {
-    api.escalations(orgId).then((d) => setEscalations(d.escalations));
-    api.org(orgId).then((d) => setPeople(d.people));
+    api.escalations(orgId).then((d) => setEscalations(d.escalations)).catch((e) => setError(e.message));
+    api.org(orgId).then((d) => setPeople(d.people)).catch(() => setPeople([]));
   };
-  useEffect(() => { load(); setActorId(''); setError(null); }, [orgId]);
+  useEffect(() => { load(); setError(null); }, [orgId]);
 
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
   const act = async (id: string, action: 'acknowledge' | 'resolve') => {
-    if (!actorId) return;
     setBusyId(id);
     setError(null);
     try {
       const { escalation } = action === 'acknowledge'
-        ? await api.acknowledgeEscalation(id, actorId)
-        : await api.resolveEscalation(id, actorId);
+        ? await api.acknowledgeEscalation(id)
+        : await api.resolveEscalation(id);
       setEscalations((list) => list.map((e) => (e.id === id ? escalation : e)));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not update this escalation');
@@ -35,6 +39,8 @@ export function Escalations() {
       setBusyId(null);
     }
   };
+
+  const disabledReason = me ? undefined : 'You need a place in this organization’s chart to act on escalations';
 
   return (
     <>
@@ -46,18 +52,11 @@ export function Escalations() {
         in docs/escalation-triage.md.
       </p>
 
-      <label style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)', marginTop: 16 }}>
-        Acting as &mdash; required to acknowledge or resolve
-        <select
-          aria-label="Acting as"
-          value={actorId}
-          onChange={(e) => setActorId(e.target.value ? Number(e.target.value) : '')}
-          style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 240 }}
-        >
-          <option value="">Choose a person&hellip;</option>
-          {people.map((p) => <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>)}
-        </select>
-      </label>
+      <p className="sub" style={{ fontSize: 12, marginTop: 12 }}>
+        {me
+          ? <>Acting as <strong>{me.name}</strong> &middot; {me.title}. You can act on escalations on your path, or where you are IT admin or Executive for the person.</>
+          : <>You administer this organization but aren&rsquo;t in its chart, so you can view escalations but not acknowledge or resolve them.</>}
+      </p>
 
       {error && (
         <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px', marginTop: 12 }}>
@@ -91,8 +90,8 @@ export function Escalations() {
                 {e.status === 'open' && (
                   <button
                     className="chip"
-                    disabled={!actorId || busyId === e.id}
-                    title={actorId ? undefined : 'Choose who you are acting as first'}
+                    disabled={!me || busyId === e.id}
+                    title={disabledReason}
                     onClick={() => act(e.id, 'acknowledge')}
                   >
                     {busyId === e.id ? 'Working…' : 'Acknowledge'}
@@ -100,8 +99,8 @@ export function Escalations() {
                 )}
                 <button
                   className="chip"
-                  disabled={!actorId || busyId === e.id}
-                  title={actorId ? undefined : 'Choose who you are acting as first'}
+                  disabled={!me || busyId === e.id}
+                  title={disabledReason}
                   onClick={() => act(e.id, 'resolve')}
                 >
                   {busyId === e.id ? 'Working…' : 'Resolve'}

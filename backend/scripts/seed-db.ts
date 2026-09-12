@@ -84,6 +84,21 @@ try {
   // admin adds — in this org or a new one — doesn't collide with them.
   await client.query(`SELECT setval('people_id_seq', (SELECT max(id) FROM people))`);
 
+  // Every request now acts as the logged-in session's own identity (no client-asserted
+  // requesterId), so a demo roster nobody can log in as can't be exercised at all. Three
+  // dev logins cover the three shapes worth testing: executive, manager, individual.
+  for (const [personId, name, email] of [
+    [1, 'Marta Vieira', 'marta@agentorgmesh.local'],
+    [10, 'Hana Oyelaran', 'hana@agentorgmesh.local'],
+    [11, 'Diego Okonjo', 'diego@agentorgmesh.local'],
+  ] as const) {
+    const { rows } = await client.query(
+      `INSERT INTO accounts (name, email, password_hash) VALUES ($1,$2,$3) RETURNING id`,
+      [name, email, hashPassword(DEV_PASSWORD)],
+    );
+    await client.query('UPDATE people SET account_id = $1 WHERE id = $2', [rows[0].id, personId]);
+  }
+
   for (const e of Object.values(EVIDENCE)) {
     await client.query(
       `INSERT INTO evidence (id, org_id, kind, title, connector, recorded_at, excerpt, note, external_ref)

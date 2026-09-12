@@ -264,15 +264,16 @@ export const api = {
   }>(`/policy?orgId=${orgId}`),
   cyclePolicy: (orgId: number, role: string, dataClass: string) =>
     req<unknown>(`/policy/cycle?orgId=${orgId}`, { method: 'POST', body: JSON.stringify({ role, dataClass }) }),
-  query: (targetId: number, role: string, persist = false, question = '', requesterId = 10) =>
+  /** Who's asking is always the logged-in session's own identity — never sent from here. */
+  query: (targetId: number, role: string, persist = false, question = '') =>
     req<{ response: AgentResponse }>('/query', {
       method: 'POST',
-      body: JSON.stringify({ targetId, role, persist, question, requesterId }),
+      body: JSON.stringify({ targetId, role, persist, question }),
     }),
   /** No `window`/time-range param — the router (server.ts's gatherAll) now infers how far
    *  back to look per connected surface from the question's own wording, replacing a fixed
    *  "Today / This week" toggle found live not to scale to hundreds of connected tools. */
-  agentAsk: (targetId: number, role: string, question: string, requesterId: number, persist = false, conversationId?: string) =>
+  agentAsk: (targetId: number, role: string, question: string, persist = false, conversationId?: string) =>
     req<{
       answer: string; items: ResponseItem[]; withheldCount: number; coverage: AgentResponse['coverage'];
       conversationId?: string;
@@ -281,7 +282,7 @@ export const api = {
       consultedSources: string[];
     }>('/agent/ask', {
       method: 'POST',
-      body: JSON.stringify({ targetId, role, question, persist, requesterId, conversationId }),
+      body: JSON.stringify({ targetId, role, question, persist, conversationId }),
     }),
   /** One question, one update covering several freely-chosen people at once — the
    *  multi-target sibling of agentAsk. `targetIds` is a real, open choice (a CEO picking
@@ -289,7 +290,7 @@ export const api = {
    *  One claimed `role` applies to every target, checked independently per target
    *  server-side — a target it isn't truthful for comes back as its own visible rejection
    *  in `perPerson` (`ok: false`, with a real `reason`), never silently dropped. */
-  askMulti: (question: string, requesterId: number, role: string, targetIds: number[], persist = false) =>
+  askMulti: (question: string, role: string, targetIds: number[], persist = false) =>
     req<{
       answer: string;
       askedCount: number;
@@ -300,7 +301,7 @@ export const api = {
       )[];
     }>('/agent/ask-multi', {
       method: 'POST',
-      body: JSON.stringify({ question, requesterId, role, targetIds, persist }),
+      body: JSON.stringify({ question, role, targetIds, persist }),
     }),
   /** The personal counterpart to agentAsk, for an account with no organization — no
    *  targetId/role/requesterId, since the requester is always the target. */
@@ -325,9 +326,9 @@ export const api = {
       snapshot: AgentResponse; conversationId: string | null;
     }[];
   }>(`/audit/subject/${id}`),
-  listConversations: (requesterId: number, targetId: number) => req<{
+  listConversations: (targetId: number) => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
-  }>(`/agent/conversations?requesterId=${requesterId}&targetId=${targetId}`),
+  }>(`/agent/conversations?targetId=${targetId}`),
   /** The personal counterparts to auditForSubject/listConversations, scoped to the
    *  logged-in account's own personal asks rather than an org-chart person id. */
   personalAsks: () => req<{
@@ -342,32 +343,26 @@ export const api = {
   deletePersonalConversation: (conversationId: string) =>
     req<{ deleted: true }>(`/accounts/me/conversations/${conversationId}`, { method: 'DELETE' }),
   escalations: (orgId: number) => req<{ escalations: Escalation[] }>(`/escalations?orgId=${orgId}`),
-  acknowledgeEscalation: (id: string, actorPersonId: number) =>
-    req<{ escalation: Escalation }>(`/escalations/${id}/acknowledge`, {
-      method: 'POST', body: JSON.stringify({ actorPersonId }),
-    }),
-  resolveEscalation: (id: string, actorPersonId: number) =>
-    req<{ escalation: Escalation }>(`/escalations/${id}/resolve`, {
-      method: 'POST', body: JSON.stringify({ actorPersonId }),
-    }),
+  acknowledgeEscalation: (id: string) =>
+    req<{ escalation: Escalation }>(`/escalations/${id}/acknowledge`, { method: 'POST' }),
+  resolveEscalation: (id: string) =>
+    req<{ escalation: Escalation }>(`/escalations/${id}/resolve`, { method: 'POST' }),
   connections: (orgId: number) => req<{ connectors: ConnectorStats[]; neverIngested: string[] }>(`/connections?orgId=${orgId}`),
   cycleSurface: (personId: number, surfaceKey: string) =>
     req<{ person: Person; coverage: Coverage }>(`/person/${personId}/surface/cycle`, {
       method: 'POST',
       body: JSON.stringify({ surfaceKey }),
     }),
-  // A self-view (raw claims, ids and all) — the backend requires the caller to actually
-  // be this person (session identity, falling back to requesterId===id when logged out,
-  // same free-switcher trust level as the rest of "My agent"), so it's always called with
-  // your own id as both the path param and requesterId.
+  // A self-view (raw claims, ids and all) — the backend requires the logged-in session's
+  // own identity to be exactly this person.
   person: (id: number) => req<{
     person: Person; coverage: Coverage;
     surfaces: (Surface & { state: SurfaceState; label: string })[];
     claims: Claim[];
-  }>(`/person/${id}?requesterId=${id}`),
+  }>(`/person/${id}`),
   correctClaim: (id: string, note: string) =>
     req<{ claim: Claim }>(`/claim/${id}/correct`, { method: 'POST', body: JSON.stringify({ note }) }),
-  exportPerson: (id: number) => req<Record<string, unknown>>(`/person/${id}/export?requesterId=${id}`),
+  exportPerson: (id: number) => req<Record<string, unknown>>(`/person/${id}/export`),
   runtimeCatalog: () => req<{ catalog: AgentRuntime[] }>('/runtimes'),
   personRuntimes: (id: number) =>
     req<{ catalog: AgentRuntime[]; registered: PersonRuntime[] }>(`/person/${id}/runtimes`),
