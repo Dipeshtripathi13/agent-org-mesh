@@ -70,6 +70,11 @@ export function SignUp({ onBack }: { onBack: () => void }) {
               {busy ? 'Creating…' : 'Create account'}
             </button>
           </div>
+          <p className="glossary" style={{ marginTop: 12 }}>
+            By creating an account you agree to the{' '}
+            <a href="/legal/terms" target="_blank" rel="noopener noreferrer">Terms of service</a> and acknowledge the{' '}
+            <a href="/legal/privacy" target="_blank" rel="noopener noreferrer">Privacy policy</a>.
+          </p>
           {error && (
             <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px', marginTop: 12 }}>
               {error}

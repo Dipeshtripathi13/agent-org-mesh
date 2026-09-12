@@ -372,6 +372,17 @@ honest reason every other new connector in this project does; update this note o
 Trello account is available.
 
 ## Where to go next
+- **Complete the legal pages, then deploy them.** `frontend/src/pages/Legal.tsx` (public
+  `/legal/privacy`, `/legal/terms`, `/legal/subprocessors`, linked from sign-in and the
+  signup consent line) was drafted 2026-09-12 from what the code actually does. Every fact
+  only the operator can supply — legal name, contact, postal address, governing law,
+  liability cap, hosting region, event retention, effective date — is in the `LEGAL`
+  constant at the top of that file and renders as a visible bracketed placeholder under a
+  draft banner. Fill those, have counsel review (including the region-specific rights
+  section), set `isDraft: false`, then deploy. Keep the text true to the code: if SEC-10
+  (encrypting stored tool credentials) lands, the Security section can say so; until then it
+  deliberately doesn't. The release audit's remaining work is Gate 1 onward
+  (https://claude.ai/code/artifact/1e5b426a-b54e-405b-8b45-03fec727c72f).
 - **Extend session-trust to the remaining self-service connection endpoints.** **Done
   2026-09-12 (release audit SEC-01–05) — superseded, kept for history:** every endpoint now
   resolves identity from the session only (rule 7), and `/api/org`, `/api/policy`,

@@ -95,6 +95,10 @@ export function Login() {
             </button>{' '}
             — you'll land in your own workspace immediately, no company name needed.
           </p>
+          <p className="glossary" style={{ marginTop: 8 }}>
+            <a href="/legal/privacy">Privacy</a> &middot; <a href="/legal/terms">Terms</a> &middot;{' '}
+            <a href="/legal/subprocessors">Subprocessors</a>
+          </p>
           {import.meta.env.DEV && (
             <p className="glossary" style={{ marginTop: 8 }}>
               Local dev only: <code>jordan@</code>, <code>marta@</code>, <code>hana@</code> or{' '}

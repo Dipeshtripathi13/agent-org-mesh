@@ -10,6 +10,7 @@ import { Connections } from './pages/Connections';
 import { Controls } from './pages/Controls';
 import { CoverageMatrix } from './pages/CoverageMatrix';
 import { Escalations } from './pages/Escalations';
+import { Legal, legalPageFromPath } from './pages/Legal';
 import { Login } from './pages/Login';
 import { MyAgent } from './pages/MyAgent';
 import { OrgGraph } from './pages/OrgGraph';
@@ -362,6 +363,11 @@ function Shell() {
 }
 
 export default function App() {
+  // Legal pages are public and need no session, so they render before any auth provider
+  // mounts (no /api/auth/me request, no login gate).
+  const legalPage = legalPageFromPath(window.location.pathname);
+  if (legalPage) return <Legal page={legalPage} />;
+
   return (
     <AuthProvider>
       <StepUpProvider>
