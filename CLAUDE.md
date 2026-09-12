@@ -1415,6 +1415,36 @@ to get the meaningful 401 instead of a shape complaint.)
 genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,
 asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks.
 
+**New signups must verify their email, and anyone can reset a forgotten password by email
+(2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash
+at rest, single-use; issuing a new link of the same kind retires older ones; verification
+lasts 24 hours, reset 30 minutes; a link dies if the account's email no longer matches the
+address it was sent to). **Verification** is required only for accounts created by self-serve
+signup from now on (`accounts.email_verification_required`): every account that already
+existed stays usable rather than being locked out, and gets verified by a reset or an emailed
+invitation. It's enforced in `server.ts`'s `preHandler` verification gate, not the UI: a
+session whose account is pending gets 403 `email_unverified` from every `/api/*` route except
+the short `VERIFICATION_EXEMPT_ROUTES` list (login/signup/logout/me, verify and resend, reset,
+invitations, public catalogs, ingest). The frontend shows `VerifyEmailGate` instead of the app
+(`pages/EmailLinks.tsx`), and `/verify-email/:token` works without a session, so the link can be
+opened on another device. **Password reset** follows OWASP's Forgot Password guidance: the
+request always gets the same answer, returned before the lookup and send happen, so neither
+body nor timing reveals whether an account exists; it's throttled per IP and per address (3
+emails an hour); confirming sets the password, spends every outstanding reset link, revokes
+*all* sessions, and marks the email verified (receiving the link proves the inbox) in one
+transaction (`repo.resetPasswordWithToken`). This is what closes the trade-off stated in the
+invitations paragraph below: someone who registered a future employee's address first can no
+longer block them, because the real owner resets the password from their own inbox, which
+signs the squatter out everywhere, then accepts the invitation. Separately, an unverified account
+can no longer accept an invitation that was only shared by hand (an emailed one proves the inbox
+by itself). Tests read mail from `resendEmail.ts`'s in-memory `outbox`
+(`EMAIL_TRANSPORT=memory`, ignored in production) and follow the real links:
+`src/email.api.test.ts` (11 tests), mutation-tested — removing the gate fails 1, leaving other
+sessions alive after a reset fails 2 (including the squatter scenario), reusable links fail 4,
+letting unverified accounts accept a hand-shared invite fails 1, a reset response that reveals
+whether an account exists fails 1. Production needed `scripts/migrate-add-email-tokens.ts` run
+before the deploy.
+
 **Adding someone by email issues a one-time invitation link; it never links or creates an
 account (release audit SEC-08, 2026-09-12).** Before this, `POST /organizations/:orgId/people`
 linked the new chart entry to whichever account already held the typed email, and

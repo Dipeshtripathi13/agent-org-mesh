@@ -126,7 +126,11 @@ export interface ConnectorDef {
 /** `mustChangePassword` is true while this account is still on a temp password someone
  *  else generated for it (an invite, or an admin-initiated reset) — App.tsx's Shell forces
  *  the change before anything else renders. */
-export interface Account { id: number; name: string; email: string; mustChangePassword: boolean; emailVerified: boolean; }
+export interface Account {
+  id: number; name: string; email: string; mustChangePassword: boolean; emailVerified: boolean;
+  /** A new signup that hasn't verified its email yet — the app shows only the verify screen. */
+  emailVerificationPending: boolean;
+}
 /** A one-time invitation link, shown once to the admin who created it. */
 export interface InviteLink { id: string; email: string; url: string; expiresAt: string; emailSent: boolean; }
 export interface PendingInvitation {
@@ -236,6 +240,14 @@ export const api = {
   invitation: (token: string) => req<{ invitation: InvitationInfo }>(`/invitations/${token}`),
   acceptInvitation: (token: string) =>
     req<{ accepted: true; orgId: number; kind: 'person' | 'admin' }>(`/invitations/${token}/accept`, { method: 'POST' }),
+  verifyEmail: (token: string) =>
+    req<{ verified: true }>('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }),
+  resendVerification: () =>
+    req<{ sent: boolean; alreadyVerified?: boolean }>('/auth/verify-email/resend', { method: 'POST' }),
+  requestPasswordReset: (email: string) =>
+    req<{ ok: true; message: string }>('/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email }) }),
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    req<{ reset: true }>('/auth/password-reset/confirm', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
   setOrgAdminRole: (orgId: number, accountId: number, role: OrgRole) =>
     req<{ ok: true }>(`/organizations/${orgId}/admins/${accountId}`, {
       method: 'PATCH', body: JSON.stringify({ role }),

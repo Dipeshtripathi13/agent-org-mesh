@@ -38,6 +38,9 @@ export interface Account {
   /** Ownership of `email` has been proven — today only by accepting an invitation that was
    *  actually delivered there. Recorded, not yet required (schema.sql). */
   emailVerified: boolean;
+  /** A self-serve signup that hasn't verified yet — the API refuses everything but the
+   *  verification and account routes until it does (server.ts's verification gate). */
+  emailVerificationPending: boolean;
 }
 
 export type OrgRole = 'owner' | 'admin' | 'viewer';
@@ -230,17 +233,21 @@ function toAccount(row: any): Account {
   return {
     id: row.id, name: row.name, email: row.email,
     mustChangePassword: row.must_change_password, emailVerified: row.email_verified_at != null,
+    emailVerificationPending: row.email_verification_required === true && row.email_verified_at == null,
   };
 }
 
 export async function getAccount(id: number): Promise<Account | null> {
-  const { rows } = await pool.query('SELECT id, name, email, must_change_password, email_verified_at FROM accounts WHERE id = $1', [id]);
+  const { rows } = await pool.query(
+    'SELECT id, name, email, must_change_password, email_verified_at, email_verification_required FROM accounts WHERE id = $1',
+    [id],
+  );
   return rows.length ? toAccount(rows[0]) : null;
 }
 
 export async function getAccountByEmail(email: string): Promise<(Account & { passwordHash: string | null }) | null> {
   const { rows } = await pool.query(
-    'SELECT id, name, email, password_hash, must_change_password, email_verified_at FROM accounts WHERE email = $1',
+    'SELECT id, name, email, password_hash, must_change_password, email_verified_at, email_verification_required FROM accounts WHERE email = $1',
     [email],
   );
   if (rows.length === 0) return null;
@@ -257,11 +264,12 @@ export async function insertAccount(
   email: string,
   passwordHash: string | null,
   mustChangePassword = false,
+  emailVerificationRequired = false,
 ): Promise<Account> {
   const { rows } = await pool.query(
-    `INSERT INTO accounts (name, email, password_hash, must_change_password) VALUES ($1,$2,$3,$4)
-     RETURNING id, name, email, must_change_password, email_verified_at`,
-    [name, email, passwordHash, mustChangePassword],
+    `INSERT INTO accounts (name, email, password_hash, must_change_password, email_verification_required) VALUES ($1,$2,$3,$4,$5)
+     RETURNING id, name, email, must_change_password, email_verified_at, email_verification_required`,
+    [name, email, passwordHash, mustChangePassword, emailVerificationRequired],
   );
   return toAccount(rows[0]);
 }
@@ -566,9 +574,14 @@ export async function acceptInvitation(tokenHash: string, accountId: number, now
     if (inv.accepted_at) return fail(410, 'this invitation has already been used');
     if (new Date(inv.expires_at).getTime() <= new Date(now).getTime()) return fail(410, 'this invitation has expired — ask for a new one');
 
-    const { rows: accountRows } = await client.query('SELECT email FROM accounts WHERE id = $1', [accountId]);
+    const { rows: accountRows } = await client.query('SELECT email, email_verified_at FROM accounts WHERE id = $1', [accountId]);
     if (!accountRows[0] || accountRows[0].email.toLowerCase() !== inv.email.toLowerCase()) {
       return fail(403, `this invitation is for ${inv.email} — sign in with that account to accept it`);
+    }
+    // An emailed invitation proves the inbox by itself. One that was only shared by hand
+    // doesn't, so an account that merely claims this address must verify it first.
+    if (!accountRows[0].email_verified_at && !inv.emailed_at) {
+      return fail(403, 'verify your email address before accepting this invitation');
     }
 
     if (inv.kind === 'person') {
@@ -623,12 +636,126 @@ export async function createSession(accountId: number, tokenHash: string, now: s
 export async function resolveSession(
   tokenHash: string,
   now: string,
-): Promise<{ accountId: number; elevatedUntil: string | null } | null> {
+): Promise<{ accountId: number; elevatedUntil: string | null; verificationPending: boolean } | null> {
   const { rows } = await pool.query(
-    `SELECT account_id, elevated_until FROM sessions WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > $2`,
+    `SELECT s.account_id, s.elevated_until,
+            (a.email_verification_required AND a.email_verified_at IS NULL) AS verification_pending
+     FROM sessions s JOIN accounts a ON a.id = s.account_id
+     WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > $2`,
     [tokenHash, now],
   );
-  return rows.length ? { accountId: rows[0].account_id, elevatedUntil: rows[0].elevated_until } : null;
+  return rows.length
+    ? { accountId: rows[0].account_id, elevatedUntil: rows[0].elevated_until, verificationPending: rows[0].verification_pending === true }
+    : null;
+}
+
+/* ---------- email links: verification and password reset ---------- */
+
+export type EmailTokenPurpose = 'verify' | 'reset';
+
+/** Only the newest link of each purpose works: issuing one retires the account's older ones. */
+export async function createEmailToken(input: {
+  accountId: number;
+  email: string;
+  purpose: EmailTokenPurpose;
+  tokenHash: string;
+  now: string;
+  expiresAt: string;
+}): Promise<void> {
+  await pool.query(
+    'UPDATE email_tokens SET used_at = $3 WHERE account_id = $1 AND purpose = $2 AND used_at IS NULL',
+    [input.accountId, input.purpose, input.now],
+  );
+  await pool.query(
+    `INSERT INTO email_tokens (id, account_id, purpose, email, token_hash, created_at, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [randomUUID(), input.accountId, input.purpose, input.email, input.tokenHash, input.now, input.expiresAt],
+  );
+}
+
+export type EmailTokenResult =
+  | { ok: true; accountId: number; email: string }
+  | { ok: false; code: 404 | 410; error: string };
+
+/** Locks and spends one link inside the caller's transaction. A link sent to an address the
+ *  account no longer has is dead, so changing an email can't be undone by an old link. */
+async function spendEmailToken(
+  client: import('pg').PoolClient,
+  tokenHash: string,
+  purpose: EmailTokenPurpose,
+  now: string,
+): Promise<EmailTokenResult> {
+  const { rows } = await client.query(
+    `SELECT t.id, t.account_id, t.email, t.expires_at, t.used_at, a.email AS account_email
+     FROM email_tokens t JOIN accounts a ON a.id = t.account_id
+     WHERE t.token_hash = $1 AND t.purpose = $2
+     FOR UPDATE OF t`,
+    [tokenHash, purpose],
+  );
+  const t = rows[0];
+  if (!t) return { ok: false, code: 404, error: 'this link is not valid' };
+  if (t.used_at) return { ok: false, code: 410, error: 'this link has already been used, or a newer one was sent' };
+  if (new Date(t.expires_at).getTime() <= new Date(now).getTime()) {
+    return { ok: false, code: 410, error: 'this link has expired — request a new one' };
+  }
+  if (t.account_email.toLowerCase() !== t.email.toLowerCase()) {
+    return { ok: false, code: 410, error: 'this link was sent to an address this account no longer uses' };
+  }
+  await client.query('UPDATE email_tokens SET used_at = $2 WHERE id = $1', [t.id, now]);
+  return { ok: true, accountId: t.account_id, email: t.email };
+}
+
+export async function verifyEmailWithToken(tokenHash: string, now: string): Promise<EmailTokenResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await spendEmailToken(client, tokenHash, 'verify', now);
+    if (!result.ok) {
+      await client.query('ROLLBACK');
+      return result;
+    }
+    await client.query('UPDATE accounts SET email_verified_at = COALESCE(email_verified_at, $2) WHERE id = $1', [result.accountId, now]);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** OWASP Forgot Password: one transaction sets the new password, spends the link and every
+ *  other outstanding reset link, and revokes every session — so whoever held the account
+ *  before (including someone who registered this email first) is signed out. Receiving the
+ *  link proves the inbox, so the email counts as verified. */
+export async function resetPasswordWithToken(tokenHash: string, passwordHash: string, now: string): Promise<EmailTokenResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await spendEmailToken(client, tokenHash, 'reset', now);
+    if (!result.ok) {
+      await client.query('ROLLBACK');
+      return result;
+    }
+    await client.query(
+      `UPDATE accounts SET password_hash = $2, must_change_password = false, email_verified_at = COALESCE(email_verified_at, $3)
+       WHERE id = $1`,
+      [result.accountId, passwordHash, now],
+    );
+    await client.query('UPDATE sessions SET revoked_at = $2 WHERE account_id = $1 AND revoked_at IS NULL', [result.accountId, now]);
+    await client.query(
+      "UPDATE email_tokens SET used_at = $2 WHERE account_id = $1 AND purpose = 'reset' AND used_at IS NULL",
+      [result.accountId, now],
+    );
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function revokeSession(tokenHash: string, now: string): Promise<void> {

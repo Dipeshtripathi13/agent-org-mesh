@@ -43,7 +43,7 @@ import { runEscalationChecks } from './integrations/escalationEngine.js';
 import { generateToken, listTokens, resolveToken, revokeToken, generateAccountToken, listAccountTokens, revokeAccountToken, resolveAccountToken } from './integrations/ingestTokens.js';
 import { DEFAULT_SINCE_DAYS, allowedTextOnly } from './integrations/orchestrator.js';
 import { gatherAll, verifyProvider } from './integrations/resourceProviders.js';
-import { sendInvitationEmail } from './integrations/resendEmail.js';
+import { sendInvitationEmail, sendPasswordResetEmail, sendVerificationEmail } from './integrations/resendEmail.js';
 import { CONNECTOR_CATALOG } from './integrations/connectorCatalog.js';
 import { getGenericConnectionStatus } from './integrations/genericConnection.js';
 import { saveLinearConnection, getLinearStatus, disconnectLinear } from './integrations/linear.js';
@@ -172,6 +172,31 @@ app.addHook('onRoute', (route) => {
   };
 });
 
+/* ---------- mandatory email verification gate ----------
+   A self-serve signup can't use the product until it proves its email address: otherwise
+   anyone could register someone else's address and hold it. Enforced here, before every
+   handler, rather than trusted to the UI. Only the routes needed to verify, recover or leave
+   the account stay open; everything else answers 403 with code `email_unverified`. Accounts
+   created before this existed have email_verification_required = false and are unaffected. */
+const VERIFICATION_EXEMPT_ROUTES = new Set([
+  '/api/auth/login', '/api/auth/signup', '/api/auth/logout', '/api/auth/me', '/api/auth/change-password',
+  '/api/auth/verify-email', '/api/auth/verify-email/resend',
+  '/api/auth/password-reset/request', '/api/auth/password-reset/confirm',
+  '/api/invitations/:token', '/api/invitations/:token/accept',
+  '/api/runtimes', '/api/connectors/catalog', '/api/ingest/:source',
+]);
+app.addHook('preHandler', async (req, reply) => {
+  const route = req.routeOptions.url;
+  if (!route || !route.startsWith('/api/') || VERIFICATION_EXEMPT_ROUTES.has(route)) return;
+  const session = await currentSession(req);
+  if (session?.verificationPending) {
+    return reply.code(403).send({
+      error: 'Verify your email address to continue — use the link we sent you, or ask for a new one.',
+      code: 'email_unverified',
+    });
+  }
+});
+
 // Where the browser lands to sign in — used both for post-Gmail-OAuth redirects (already
 // existed) and now for the login link in invite emails.
 const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:5173';
@@ -243,7 +268,7 @@ async function setSessionCookie(
  *  response shape. */
 async function currentSession(
   req: { cookies: Record<string, string | undefined> },
-): Promise<{ accountId: number; elevatedUntil: string | null } | null> {
+): Promise<{ accountId: number; elevatedUntil: string | null; verificationPending: boolean } | null> {
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return null;
   return repo.resolveSession(hashSessionToken(token), new Date().toISOString());
@@ -437,6 +462,7 @@ app.post('/api/auth/login', {
     email: account.email,
     mustChangePassword: account.mustChangePassword,
     emailVerified: account.emailVerified,
+    emailVerificationPending: account.emailVerificationPending,
   };
   return { account: safeAccount };
 });
@@ -475,14 +501,16 @@ app.post('/api/auth/signup', {
   const existing = await repo.getAccountByEmail(normalizedEmail);
   if (existing?.passwordHash) {
     reply.code(409);
-    return { error: 'an account already exists for this email — log in instead' };
+    return { error: 'an account already exists for this email — log in, or reset the password if you can’t' };
   }
   const trimmedName = name.trim();
-  const account = await repo.insertAccount(trimmedName, normalizedEmail, hashPassword(password));
+  // Verification is required before the account can do anything but verify (see the gate).
+  const account = await repo.insertAccount(trimmedName, normalizedEmail, hashPassword(password), false, true);
   const { organization, person } = await repo.createOrganization(account.id, trimmedName, `${trimmedName}'s workspace`);
   await repo.insertInitialRevision(organization.id, structuredClone(DEFAULT_GRID));
   await setSessionCookie(reply, account.id, { elevate: true });
-  return { account, organization, person };
+  const verificationEmailSent = await sendVerificationLink(account);
+  return { account, organization, person, verificationEmailSent };
 });
 
 app.post('/api/auth/logout', async (req, reply) => {
@@ -682,6 +710,118 @@ app.delete('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
   }
   await repo.removeOrgAdmin(orgId, targetAdminId);
   return { ok: true };
+});
+
+/* ---------- email verification and self-service password reset ----------
+   Both are one-time links mailed to the account's address (repo.createEmailToken): random
+   token, SHA-256 hash at rest, single-use, only the newest of each kind valid. Verification
+   links last 24 hours, reset links 30 minutes (OWASP Forgot Password guidance). */
+
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+const RESET_TTL_MS = 30 * 60 * 1000;
+const appUrl = (path: string) => `${FRONTEND_URL.replace(/\/+$/, '')}${path}`;
+
+async function issueEmailToken(accountId: number, email: string, purpose: repo.EmailTokenPurpose): Promise<string> {
+  const token = `${purpose === 'verify' ? 'aov_' : 'aor_'}${randomBytes(32).toString('base64url')}`;
+  const now = new Date();
+  await repo.createEmailToken({
+    accountId, email, purpose, tokenHash: hashSessionToken(token), now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + (purpose === 'verify' ? VERIFY_TTL_MS : RESET_TTL_MS)).toISOString(),
+  });
+  return token;
+}
+
+async function sendVerificationLink(account: { id: number; name: string; email: string }): Promise<boolean> {
+  try {
+    const token = await issueEmailToken(account.id, account.email, 'verify');
+    return await sendVerificationEmail({ to: account.email, name: account.name, verifyUrl: appUrl(`/verify-email/${token}`) });
+  } catch (err) {
+    console.error({ err }, 'verification email failed');
+    return false;
+  }
+}
+
+/** No session needed: the link may be opened on a different device from the signup. */
+app.post('/api/auth/verify-email', {
+  config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
+  schema: bodySchema({ token: { type: 'string', pattern: '^aov_[A-Za-z0-9_-]{43}$' } }, ['token']),
+}, async (req, reply) => {
+  const { token } = req.body as { token: string };
+  const result = await repo.verifyEmailWithToken(hashSessionToken(token), new Date().toISOString());
+  if (!result.ok) {
+    reply.code(result.code);
+    return { error: result.error };
+  }
+  return { verified: true };
+});
+
+app.post('/api/auth/verify-email/resend', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const account = await repo.getAccount(accountId);
+  if (!account) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  if (account.emailVerified) return { sent: false, alreadyVerified: true };
+  return { sent: await sendVerificationLink(account) };
+});
+
+// Per-address throttle on reset emails, on top of the per-IP route limit, so nobody can flood
+// one inbox by rotating addresses. Over the limit, the response is identical and nothing is sent.
+const RESET_EMAILS_PER_HOUR = 3;
+const resetRequests = new Map<string, number[]>();
+function resetEmailAllowed(email: string): boolean {
+  const now = Date.now();
+  const recent = (resetRequests.get(email) ?? []).filter((t) => now - t < 60 * 60 * 1000);
+  if (resetRequests.size > 10_000) {
+    for (const [key, times] of resetRequests) if (times.every((t) => now - t >= 60 * 60 * 1000)) resetRequests.delete(key);
+  }
+  if (recent.length >= RESET_EMAILS_PER_HOUR) {
+    resetRequests.set(email, recent);
+    return false;
+  }
+  resetRequests.set(email, [...recent, now]);
+  return true;
+}
+
+/** Always the same answer, returned before the lookup and send happen, so neither the body nor
+ *  the response time says whether an account exists for this address. */
+app.post('/api/auth/password-reset/request', {
+  config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  schema: bodySchema({ email: str(254, 1) }, ['email']),
+}, async (req) => {
+  const email = (req.body as { email: string }).email.trim().toLowerCase();
+  if (resetEmailAllowed(email)) {
+    void (async () => {
+      try {
+        const account = await repo.getAccountByEmail(email);
+        if (!account) return;
+        const token = await issueEmailToken(account.id, account.email, 'reset');
+        await sendPasswordResetEmail({ to: account.email, name: account.name, resetUrl: appUrl(`/reset-password/${token}`) });
+      } catch (err) {
+        console.error({ err }, 'password reset email failed');
+      }
+    })();
+  }
+  return { ok: true, message: 'If an account exists for that email, a password reset link is on its way.' };
+});
+
+app.post('/api/auth/password-reset/confirm', {
+  config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+  schema: bodySchema({ token: { type: 'string', pattern: '^aor_[A-Za-z0-9_-]{43}$' }, newPassword: NEW_PASSWORD }, ['token', 'newPassword']),
+}, async (req, reply) => {
+  const { token, newPassword } = req.body as { token: string; newPassword: string };
+  const result = await repo.resetPasswordWithToken(hashSessionToken(token), hashPassword(newPassword), new Date().toISOString());
+  if (!result.ok) {
+    reply.code(result.code);
+    return { error: result.error };
+  }
+  loginFailures.delete(result.email.toLowerCase());
+  return { reset: true };
 });
 
 /* ---------- invitations (release audit SEC-08) ----------

@@ -12,6 +12,7 @@ import { CoverageMatrix } from './pages/CoverageMatrix';
 import { Escalations } from './pages/Escalations';
 import { Legal, legalPageFromPath } from './pages/Legal';
 import { AcceptInvite, inviteTokenFromPath } from './pages/AcceptInvite';
+import { EmailLinkPage, VerifyEmailGate, emailLinkFromPath } from './pages/EmailLinks';
 import { Login } from './pages/Login';
 import { MyAgent } from './pages/MyAgent';
 import { OrgGraph } from './pages/OrgGraph';
@@ -329,6 +330,11 @@ function Shell() {
         <div className="body">
           <Login />
         </div>
+      ) : account?.emailVerificationPending ? (
+        // The server refuses everything else until this account verifies; say so plainly.
+        <div className="body">
+          <VerifyEmailGate />
+        </div>
       ) : (
         <div className="body">
           <nav className="sidebar">
@@ -368,6 +374,9 @@ export default function App() {
   // mounts (no /api/auth/me request, no login gate).
   const legalPage = legalPageFromPath(window.location.pathname);
   if (legalPage) return <Legal page={legalPage} />;
+  // Emailed verification and reset links work without a session, possibly on another device.
+  const emailLink = emailLinkFromPath(window.location.pathname);
+  if (emailLink) return <EmailLinkPage link={emailLink} />;
   // An invitation link needs the auth providers (sign in / sign up, then accept) but not the
   // app shell, whose router would otherwise rewrite the /invite/... path away.
   const inviteToken = inviteTokenFromPath(window.location.pathname);

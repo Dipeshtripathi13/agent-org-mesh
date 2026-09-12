@@ -52,13 +52,17 @@ beforeAll(async () => {
   cookie.diego = await login('diego@agentorgmesh.local');
   cookie.marta = await login('marta@agentorgmesh.local');
   cookie.jordan = await login('jordan@agentorgmesh.local');
+  const outsiderEmail = `outsider-${Date.now()}@example.test`;
   const signup = await app.inject({
     method: 'POST',
     url: '/api/auth/signup',
-    payload: { name: 'Outsider', email: `outsider-${Date.now()}@example.test`, password: 'outsider-pass-1' },
+    payload: { name: 'Outsider', email: outsiderEmail, password: 'outsider-pass-1' },
   });
   expect(signup.statusCode, signup.body).toBe(200);
   cookie.outsider = await sessionCookie(signup);
+  // Signups must verify their email before using anything (email.api.test.ts covers that
+  // gate); this table is about authorization, so the outsider is a verified account.
+  await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [outsiderEmail]);
 
   ids.escalation = (await pool.query("SELECT id FROM escalations WHERE org_id = 1 AND status <> 'resolved' LIMIT 1")).rows[0].id;
   ids.otherClaim = (await pool.query('SELECT id FROM claims WHERE org_id = 1 AND person_id <> 11 LIMIT 1')).rows[0].id;

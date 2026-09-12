@@ -81,7 +81,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- Set only when ownership of this address has actually been proven — today, by accepting
   -- an invitation that was really delivered to it by email. Recorded, not yet required at
   -- signup: production can't send email until Resend is configured (release audit SEC-08).
-  email_verified_at    timestamptz
+  email_verified_at    timestamptz,
+  -- True for accounts created by self-serve signup after verification became mandatory: they
+  -- can't use the app until email_verified_at is set. Accounts that existed before stay usable
+  -- (false) rather than being locked out, and get verified by a reset or an emailed invitation.
+  email_verification_required boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS organizations (
@@ -498,6 +502,22 @@ CREATE TABLE IF NOT EXISTS ingested_events (
 );
 CREATE INDEX IF NOT EXISTS ingested_events_person_source_idx ON ingested_events(person_id, source, occurred_at);
 
+/* ---------- email links: verification and password reset ----------
+   One-time links sent to an account's address. Only the SHA-256 hash is stored; `email` is
+   the address the link was sent to, so a link stops working if the account's email changes.
+   Issuing a new link of the same purpose marks older unused ones used, so only the newest works. */
+CREATE TABLE IF NOT EXISTS email_tokens (
+  id          uuid PRIMARY KEY,
+  account_id  integer NOT NULL REFERENCES accounts(id),
+  purpose     text NOT NULL CHECK (purpose IN ('verify', 'reset')),
+  email       text NOT NULL,
+  token_hash  text NOT NULL UNIQUE,
+  created_at  timestamptz NOT NULL,
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS email_tokens_account_idx ON email_tokens(account_id, purpose);
+
 /* ---------- invitations ----------
    Release audit SEC-08: adding someone by email used to link the chart entry (or grant the
    admin role) to whichever account already held that email — so anyone who signed up early
@@ -590,6 +610,8 @@ GRANT SELECT, INSERT, DELETE ON account_custom_agents TO mesh_app;
 -- Invitations: created, accepted and revoked by stamping columns — never deleted by the app
 -- (a person's removal cascades their pending invitation away at the schema level).
 GRANT SELECT, INSERT, UPDATE ON invitations TO mesh_app;
+-- Email links: issued, then stamped used — never deleted by the app.
+GRANT SELECT, INSERT, UPDATE ON email_tokens TO mesh_app;
 
 -- Policy revisions: append a new row, never touch an old one.
 GRANT SELECT, INSERT ON policy_revisions TO mesh_app;

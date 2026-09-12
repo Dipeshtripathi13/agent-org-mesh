@@ -20,7 +20,9 @@ const mail = (who: string) => `${who}-${stamp}@example.test`;
 
 interface Actor { cookie: string; accountId: number; orgId: number; email: string }
 
-async function signup(who: string): Promise<Actor> {
+/** Signups are verified by default here — email.api.test.ts covers the verification gate.
+ *  Pass `verified: false` for an account that has only claimed its address. */
+async function signup(who: string, { verified = true }: { verified?: boolean } = {}): Promise<Actor> {
   const email = mail(who);
   const res = await app.inject({
     method: 'POST', url: '/api/auth/signup', remoteAddress: `10.8.0.${++ip}`,
@@ -28,6 +30,7 @@ async function signup(who: string): Promise<Actor> {
   });
   expect(res.statusCode, res.body).toBe(200);
   const body = res.json();
+  if (verified) await pool.query('UPDATE accounts SET email_verified_at = now() WHERE id = $1', [body.account.id]);
   const session = res.cookies.find((c) => c.name === 'aom_session')!;
   return { cookie: `aom_session=${session.value}`, accountId: body.account.id, orgId: body.organization.id, email };
 }
@@ -62,11 +65,11 @@ afterAll(async () => {
 
 describe('pre-registering a future employee’s email no longer captures their identity', () => {
   it('adding a person whose email already has an account links nothing and returns a link instead', async () => {
-    const squatter = await signup('future-cfo');
+    const squatter = await signup('future-cfo', { verified: false });
     const { person, invite } = await addPerson(owner, squatter.email);
 
     expect(invite?.url).toMatch(/\/invite\/aoi_[A-Za-z0-9_-]{43}$/);
-    expect(invite?.emailSent).toBe(false);
+    expect(invite?.emailSent).toBe(true);
     expect(person.accountId).toBeNull();
     const row = (await pool.query('SELECT account_id FROM people WHERE id = $1', [person.id])).rows[0];
     expect(row.account_id).toBeNull();
@@ -102,14 +105,15 @@ describe('accepting an invitation', () => {
     expect(wrongAccount.statusCode).toBe(403);
     expect(wrongAccount.json().error).toContain(mail('new-hire'));
 
-    const newHire = await signup('new-hire');
+    const newHire = await signup('new-hire', { verified: false });
     const ok = await accept(token, newHire);
     expect(ok.statusCode, ok.body).toBe(200);
     expect((await pool.query('SELECT account_id FROM people WHERE id = $1', [person.id])).rows[0].account_id).toBe(newHire.accountId);
 
     const me = (await app.inject({ method: 'GET', url: '/api/auth/me', headers: as(newHire) })).json();
     expect(me.people.some((p: { id: number }) => p.id === person.id)).toBe(true);
-    expect(me.account.emailVerified).toBe(false); // the invite was never emailed, so nothing was proven
+    expect(me.account.emailVerified).toBe(true); // accepting an emailed invitation proves the inbox
+    expect(me.account.emailVerificationPending).toBe(false);
 
     expect((await accept(token, newHire)).statusCode).toBe(410);
     expect((await app.inject({ method: 'GET', url: `/api/invitations/${token}` })).json().invitation.status).toBe('accepted');

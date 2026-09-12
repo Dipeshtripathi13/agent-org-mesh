@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { SignUp } from './SignUp';
+import { ForgotPassword } from './EmailLinks';
 
 // Read once at module load — before Shell's own mount effect normalizes the URL (it
 // replaceState's the query string away almost immediately, and Login itself doesn't
@@ -12,7 +13,7 @@ export function Login({ initialEmail = '' }: { initialEmail?: string } = {}) {
   const { login } = useAuth();
   // A marketing-site "Try it for free" link can land straight on org creation via
   // ?signup=1, instead of forcing an extra manual click past the login form first.
-  const [mode, setMode] = useState<'login' | 'signup'>(wantsSignupOnLoad ? 'signup' : 'login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(wantsSignupOnLoad ? 'signup' : 'login');
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,6 +33,7 @@ export function Login({ initialEmail = '' }: { initialEmail?: string } = {}) {
   };
 
   if (mode === 'signup') return <SignUp onBack={() => setMode('login')} initialEmail={initialEmail} />;
+  if (mode === 'forgot') return <ForgotPassword onBack={() => setMode('login')} initialEmail={email} />;
 
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
@@ -78,6 +80,13 @@ export function Login({ initialEmail = '' }: { initialEmail?: string } = {}) {
               style={{ width: '100%', marginTop: 4 }}
             >
               {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('forgot')}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: 12, color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer', justifySelf: 'start' }}
+            >
+              Forgot your password?
             </button>
           </div>
           {error && (
