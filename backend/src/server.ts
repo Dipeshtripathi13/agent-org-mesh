@@ -77,7 +77,13 @@ const isProduction = process.env.NODE_ENV === 'production';
 // 'warn'` keeps the default per-request info-level noise out of production logs while
 // making every real `.error()`/`.warn()` call actually reach stdout, which is what
 // Railway's log capture reads from.
-const app = Fastify({ logger: { level: 'warn' }, trustProxy: true });
+// Trust exactly one proxy hop (Railway's), so req.ip is the address Railway appended — the
+// rightmost X-Forwarded-For entry — and anything a client writes to its left is ignored.
+// `true` trusted every hop, so req.ip was whatever the client wrote first and the login
+// limiter was bypassable by rotating that header (release audit SEC-07, confirmed live).
+// Not the numeric form `1`: measured on this Fastify version, a number is silently ignored
+// and req.ip becomes the proxy's own address — one shared login limit for every user.
+const app = Fastify({ logger: { level: 'warn' }, trustProxy: (_address: string, hop: number) => hop < 1 });
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
 // in production, so CORS is disabled outright there rather than left permissively open.
@@ -319,18 +325,50 @@ const orgIdOfPersonOrNull = (id: number) =>
 // just via a timing channel instead of response content.
 const DUMMY_PASSWORD_HASH = hashPassword(randomUUID());
 
+// Per-email failed-login counter, alongside the per-IP route limit: the IP limit alone lets a
+// distributed attacker (many IPs) grind one known account. Counts failures only, resets on
+// success, and is checked for unknown emails too so it can't be used to probe which exist.
+const LOGIN_FAILURE_LIMIT = 5;
+const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const loginFailures = new Map<string, { count: number; resetAt: number }>();
+function loginLockedOut(email: string): boolean {
+  const entry = loginFailures.get(email);
+  if (!entry) return false;
+  if (entry.resetAt <= Date.now()) {
+    loginFailures.delete(email);
+    return false;
+  }
+  return entry.count >= LOGIN_FAILURE_LIMIT;
+}
+function recordLoginFailure(email: string): void {
+  const now = Date.now();
+  if (loginFailures.size > 10_000) {
+    for (const [key, value] of loginFailures) if (value.resetAt <= now) loginFailures.delete(key);
+  }
+  const entry = loginFailures.get(email);
+  if (!entry || entry.resetAt <= now) loginFailures.set(email, { count: 1, resetAt: now + LOGIN_FAILURE_WINDOW_MS });
+  else entry.count += 1;
+}
+
 app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email?.trim() || !password) {
     reply.code(400);
     return { error: 'email and password are required' };
   }
-  const account = await repo.getAccountByEmail(email.trim().toLowerCase());
+  const normalizedEmail = email.trim().toLowerCase();
+  if (loginLockedOut(normalizedEmail)) {
+    reply.code(429);
+    return { error: 'too many failed sign-in attempts for this account — wait 15 minutes and try again' };
+  }
+  const account = await repo.getAccountByEmail(normalizedEmail);
   const ok = verifyPassword(password, account?.passwordHash ?? DUMMY_PASSWORD_HASH);
   if (!account?.passwordHash || !ok) {
+    recordLoginFailure(normalizedEmail);
     reply.code(401);
     return { error: 'invalid email or password' };
   }
+  loginFailures.delete(normalizedEmail);
   await setSessionCookie(reply, account.id);
   // Typed as repo.Account deliberately, rather than an inline object literal: this has to
   // stay an explicit allowlist (getAccountByEmail also carries passwordHash, which must
