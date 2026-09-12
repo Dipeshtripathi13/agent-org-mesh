@@ -1,6 +1,7 @@
 import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
 import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 import { isSafeExternalUrl } from './urlSafety.js';
+import { deadline } from './outboundHttp.js';
 
 /**
  * The ModelProvider implementation for anything speaking the OpenAI chat-completions
@@ -59,6 +60,8 @@ async function callOpenAI(prompt: string, credentials?: ProviderCredentials): Pr
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(buildChatCompletionsRequest(prompt, credentials)),
+    // Longer than the 20s outbound default (outboundHttp.ts): a self-hosted model can be slow.
+    signal: deadline(90_000),
   });
   if (!res.ok) {
     throw new Error(`OpenAI-compatible endpoint returned HTTP ${res.status}: ${await res.text()}`);

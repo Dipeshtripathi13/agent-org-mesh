@@ -7,6 +7,7 @@ import {
   ingestAirflowClaim, ingestDbtClaim, ingestSnowflakeClaim, ingestDatabricksClaim, ingestTrelloClaim,
 } from './realClaims.js';
 import { getMainProvider } from './runtimeProvider.js';
+import { settleWithConcurrency } from './outboundHttp.js';
 
 /**
  * Orchestrator-worker fan-out (docs/agent-to-agent-communication.md §6): each connected
@@ -169,7 +170,8 @@ export async function gatherAll(orgId: number, personId: number, since: Date = s
     return d;
   };
 
-  const results = await Promise.allSettled(toRun.map((p) => p.ingest(orgId, personId, sinceFor(p.surfaceKey))));
+  // Bounded: a person can have a dozen connected tools, and ask-multi runs this per person.
+  const results = await settleWithConcurrency(toRun, 6, (p) => p.ingest(orgId, personId, sinceFor(p.surfaceKey)));
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       // eslint-disable-next-line no-console

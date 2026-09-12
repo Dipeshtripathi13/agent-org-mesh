@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { originalFetch } from './outboundHttp.js';
 import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
 import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
@@ -7,11 +8,21 @@ import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type Convers
 // construction does no network I/O, so this costs nothing and needs no cache invalidation.
 let client: Anthropic | null = null;
 
+// The SDK's own default is a 10-minute timeout with 2 retries — long enough to hold an ask
+// open for half an hour. Every caller already falls back to raw authorized data on failure.
+// It enforces this timeout itself (proved against a server that never answers), so it gets the
+// unwrapped fetch: the 20s outbound default would otherwise cut every long answer short.
+const CLIENT_LIMITS = {
+  timeout: 90_000,
+  maxRetries: 1,
+  fetch: ((...args: Parameters<typeof fetch>) => originalFetch()(...args)) as typeof fetch,
+};
+
 function getClient(apiKey?: string): Anthropic | null {
-  if (apiKey) return new Anthropic({ apiKey });
+  if (apiKey) return new Anthropic({ apiKey, ...CLIENT_LIMITS });
   const envKey = process.env.ANTHROPIC_API_KEY;
   if (!envKey) return null;
-  if (!client) client = new Anthropic({ apiKey: envKey });
+  if (!client) client = new Anthropic({ apiKey: envKey, ...CLIENT_LIMITS });
   return client;
 }
 

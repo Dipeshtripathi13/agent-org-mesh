@@ -12,6 +12,8 @@
  *  EMAIL_TRANSPORT=memory (the API test suite) records messages in `outbox` instead of sending,
  *  so tests can follow real links end to end. It is ignored under NODE_ENV=production. */
 
+import { deadline } from './outboundHttp.js';
+
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
 export interface OutboxMessage { to: string; subject: string; text: string; html: string; sentAt: string }
@@ -40,7 +42,7 @@ async function deliver(message: { to: string; subject: string; text: string; htm
       method: 'POST',
       headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
       body: JSON.stringify({ from, ...message }),
-      signal: AbortSignal.timeout(15_000),
+      signal: deadline(15_000),
     });
     if (!res.ok) {
       console.error(`resend send failed: ${res.status} ${await res.text().catch(() => '')}`);

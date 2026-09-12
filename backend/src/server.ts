@@ -22,6 +22,7 @@ import {
 } from './domain/coverage.js';
 import { encryptSecret } from './domain/crypto.js';
 import { assertCredentialKeyUsable } from './domain/credentials.js';
+import { installOutboundTimeout, mapWithConcurrency, settleWithConcurrency } from './integrations/outboundHttp.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
 import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
@@ -70,6 +71,9 @@ const isProduction = process.env.NODE_ENV === 'production';
 // usable key rather than failing every connect and every read at request time.
 if (isProduction) assertCredentialKeyUsable();
 
+// Every outbound call gets a deadline unless it sets its own (release audit OPS-04).
+installOutboundTimeout(Number(process.env.OUTBOUND_TIMEOUT_MS ?? 20_000));
+
 // trustProxy: this sits behind Railway's own reverse proxy in production, so req.ip has
 // to come from the forwarded header or every request looks like it's from the same
 // address — both for rate limiting below and for anything else that ever keys on IP.
@@ -94,6 +98,8 @@ const app = Fastify({
   trustProxy: (_address: string, hop: number) => hop < 1,
   // Largest legitimate body is a Snowflake PEM key (~2 KB); 256 KB leaves ample headroom.
   bodyLimit: 256 * 1024,
+  // Fastify's default is no limit. Long enough for ask-multi across 20 people with slow tools.
+  requestTimeout: 120_000,
 });
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
@@ -3055,7 +3061,8 @@ app.post('/api/agent/ask-multi', {
   ]);
   const now = new Date().toISOString();
 
-  const perPerson = await Promise.all(targetIds.map(async (targetId) => {
+  // At most 4 people at once — each one fans out again across that person's connected tools.
+  const perPerson = await mapWithConcurrency(targetIds, 4, async (targetId) => {
     const target = people.find((p) => p.id === targetId);
     if (!target) {
       return { personId: targetId, name: null, ok: false as const, reason: 'not found in this org chart' };
@@ -3115,7 +3122,7 @@ app.post('/api/agent/ask-multi', {
     }
 
     return { personId: target.id, name: target.name, ok: true as const, answer, withheldCount, coverage: snapshot.coverage, consultedSources };
-  }));
+  });
 
   const accepted = perPerson.filter((p): p is Extract<typeof p, { ok: true }> => p.ok);
   const rejected = perPerson.filter((p) => !p.ok);
@@ -3312,7 +3319,7 @@ app.post('/api/agent/ask-personal', {
           d.setUTCDate(d.getUTCDate() - (relevant.get(surfaceKey) ?? DEFAULT_SINCE_DAYS));
           return d;
         };
-        const results = await Promise.allSettled(toRun.map((p) => p.fetchDigest(accountId, sinceFor(p.surfaceKey))));
+        const results = await settleWithConcurrency(toRun, 6, (p) => p.fetchDigest(accountId, sinceFor(p.surfaceKey)));
         results.forEach((r, i) => {
           if (r.status === 'fulfilled' && r.value) {
             sections.push({ source: toRun[i].label, digest: r.value });

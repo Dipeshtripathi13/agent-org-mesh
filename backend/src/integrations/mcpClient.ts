@@ -16,6 +16,9 @@
  *  disclosure boundary (CLAUDE.md rule 1) both depend on that staying true. */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { withTimeout } from './outboundHttp.js';
+
+const MCP_SESSION_TIMEOUT_MS = 45_000;
 
 export interface RawCallToolResult {
   content?: { type: string; text?: string }[];
@@ -70,10 +73,18 @@ export async function withMcpSession<T>(
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
     requestInit: { headers: { Authorization: `Bearer ${bearerToken}` } },
   });
-  await client.connect(transport);
   try {
-    return await fn((name, args) => callMcpTool(client, name, args));
+    // Each HTTP request already has a deadline (outboundHttp.ts); this bounds the whole
+    // session, since a server can keep a response stream open without finishing it.
+    return await withTimeout(
+      (async () => {
+        await client.connect(transport);
+        return fn((name, args) => callMcpTool(client, name, args));
+      })(),
+      MCP_SESSION_TIMEOUT_MS,
+      `MCP session to ${new URL(serverUrl).host}`,
+    );
   } finally {
-    await transport.close();
+    await transport.close().catch(() => {});
   }
 }
