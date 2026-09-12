@@ -22,6 +22,7 @@ import {
 } from './domain/coverage.js';
 import { encryptSecret } from './domain/crypto.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
+import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
 import * as repo from './db/repo.js';
 import type { OrgRole } from './db/repo.js';
@@ -83,7 +84,12 @@ const isProduction = process.env.NODE_ENV === 'production';
 // limiter was bypassable by rotating that header (release audit SEC-07, confirmed live).
 // Not the numeric form `1`: measured on this Fastify version, a number is silently ignored
 // and req.ip becomes the proxy's own address — one shared login limit for every user.
-const app = Fastify({ logger: { level: 'warn' }, trustProxy: (_address: string, hop: number) => hop < 1 });
+const app = Fastify({
+  logger: { level: 'warn' },
+  trustProxy: (_address: string, hop: number) => hop < 1,
+  // Largest legitimate body is a Snowflake PEM key (~2 KB); 256 KB leaves ample headroom.
+  bodyLimit: 256 * 1024,
+});
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
 // in production, so CORS is disabled outright there rather than left permissively open.
@@ -116,13 +122,49 @@ await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 // line. The real error still goes to console.error either way (app.log is a no-op — see
 // the account+RBAC section below), so nothing is lost server-side.
 app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
-  console.error({ err, url: req.url, method: req.method }, 'unhandled request error');
   const status = err.statusCode ?? 500;
+  // 4xx here are expected rejections (schema validation, oversized bodies) — logging them
+  // as errors would bury real failures.
+  if (status >= 500) console.error({ err, url: req.url, method: req.method }, 'unhandled request error');
   if (status < 500) {
     reply.code(status).send({ error: err.message });
     return;
   }
   reply.code(500).send({ error: 'internal server error' });
+});
+
+/* ---------- request validation (release audit SEC-13) ----------
+   Handlers used to cast req.body with no checks: a missing targetId was a 500, an unknown
+   person id a 500, and POST /api/policy/cycle indexed the grid with any string (role
+   "__proto__" wrote through to Object.prototype). Fastify validates these schemas before a
+   handler runs and answers 400 with the reason; handlers keep their own trim/business checks. */
+
+const MAX_INT4 = 2147483647;
+const ID = { type: 'integer', minimum: 1, maximum: MAX_INT4 } as const;
+const str = (maxLength: number, minLength = 0) => ({ type: 'string', minLength, maxLength }) as const;
+const nullableStr = (maxLength: number) => ({ type: ['string', 'null'], maxLength }) as const;
+const EMAIL = { type: 'string', maxLength: 254, pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$' } as const;
+const PASSWORD = str(128, 1);
+const NEW_PASSWORD = str(128, 8);
+const ROLE = { type: 'string', enum: [...ROLES] } as const;
+const ORG_ROLE = { type: 'string', enum: ['owner', 'admin', 'viewer'] } as const;
+const UUID = { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' } as const;
+const QUESTION = str(2000);
+const bodySchema = (properties: Record<string, unknown>, required: string[] = []) =>
+  ({ body: { type: 'object', required, properties } }) as const;
+
+// Every numeric id in a path is validated here once, so no route can forget it.
+// (Claim, escalation, token and custom-agent ids are strings/uuids and are left alone.)
+app.addHook('onRoute', (route) => {
+  const schema = (route.schema ?? {}) as { params?: unknown };
+  if (schema.params) return;
+  const names = [...route.url.matchAll(/:([A-Za-z]+)/g)].map((m) => m[1]);
+  const numeric = names.filter((n) => ['orgId', 'personId', 'adminId'].includes(n) || (n === 'id' && route.url.startsWith('/api/person/')));
+  if (numeric.length === 0) return;
+  route.schema = {
+    ...route.schema,
+    params: { type: 'object', properties: Object.fromEntries(numeric.map((n) => [n, ID])) },
+  };
 });
 
 // Where the browser lands to sign in — used both for post-Gmail-OAuth redirects (already
@@ -355,7 +397,10 @@ function recordLoginFailure(email: string): void {
   else entry.count += 1;
 }
 
-app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
+app.post('/api/auth/login', {
+  config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+  schema: bodySchema({ email: str(254, 1), password: PASSWORD }, ['email', 'password']),
+}, async (req, reply) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email?.trim() || !password) {
     reply.code(400);
@@ -407,7 +452,10 @@ app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 mi
  *  their own main agent with no extra re-auth prompt. Rejects emails that already have a
  *  real (password-holding) account rather than doing something ambiguous with them;
  *  someone re-using an email should log in instead. */
-app.post('/api/auth/signup', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (req, reply) => {
+app.post('/api/auth/signup', {
+  config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  schema: bodySchema({ name: str(120, 1), email: EMAIL, password: NEW_PASSWORD }, ['name', 'email', 'password']),
+}, async (req, reply) => {
   const { name, email, password } = req.body as { name?: string; email?: string; password?: string };
   if (!name?.trim() || !email?.trim() || !password) {
     reply.code(400);
@@ -455,7 +503,10 @@ app.get('/api/auth/me', async (req) => {
 // exactly what makes this a real second factor of "are you still you" rather than a
 // second copy of the first factor. Rate-limited like login/change-password so a stolen
 // session cookie can't be used to grind the account's own password.
-app.post('/api/auth/step-up', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
+app.post('/api/auth/step-up', {
+  config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+  schema: bodySchema({ password: PASSWORD }, ['password']),
+}, async (req, reply) => {
   const token = req.cookies[SESSION_COOKIE];
   const accountId = await currentAccountId(req);
   if (accountId == null || !token) {
@@ -478,7 +529,10 @@ app.post('/api/auth/step-up', { config: { rateLimit: { max: 10, timeWindow: '15 
 // Rate-limited the same way login is (10/15min) — found during a security audit: this
 // previously only inherited the generous global 300/min ceiling, giving up to 300
 // guesses/minute at currentPassword to anyone holding a stolen session cookie.
-app.post('/api/auth/change-password', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (req, reply) => {
+app.post('/api/auth/change-password', {
+  config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+  schema: bodySchema({ currentPassword: PASSWORD, newPassword: NEW_PASSWORD }, ['currentPassword', 'newPassword']),
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -518,7 +572,7 @@ app.get('/api/organizations', async (req) => {
   return { organizations: accountId == null ? [] : await repo.listOrganizationsForAccount(accountId) };
 });
 
-app.post('/api/organizations', async (req, reply) => {
+app.post('/api/organizations', { schema: bodySchema({ name: str(120, 1) }, ['name']) }, async (req, reply) => {
   const check = await requireElevatedSession(req);
   if (!check.ok) {
     reply.code(check.code);
@@ -558,7 +612,9 @@ app.get('/api/organizations/:orgId/admins', async (req, reply) => {
   return { admins: await repo.listOrgAdmins(orgId) };
 });
 
-app.post('/api/organizations/:orgId/admins', async (req, reply) => {
+app.post('/api/organizations/:orgId/admins', {
+  schema: bodySchema({ email: EMAIL, name: str(120), role: ORG_ROLE }, ['email', 'role']),
+}, async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can invite admins', { elevated: true });
   if (!check.ok) {
@@ -621,7 +677,7 @@ app.post('/api/organizations/:orgId/admins', async (req, reply) => {
   };
 });
 
-app.patch('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
+app.patch('/api/organizations/:orgId/admins/:adminId', { schema: bodySchema({ role: ORG_ROLE }, ['role']) }, async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const targetAdminId = Number((req.params as { adminId: string }).adminId);
   const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can change roles', { elevated: true });
@@ -671,7 +727,14 @@ app.delete('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
  *  registered account (say, someone already a person in a different org) is how the same
  *  human ends up with a second, independent org-chart identity — real multi-org
  *  membership, not a duplicate. */
-app.post('/api/organizations/:orgId/people', async (req, reply) => {
+app.post('/api/organizations/:orgId/people', {
+  schema: bodySchema({
+    name: str(120, 1), title: str(120, 1), team: str(120, 1),
+    managerId: { type: ['integer', 'null'], minimum: 1, maximum: MAX_INT4 },
+    agentDeployed: { type: 'boolean' },
+    email: { anyOf: [EMAIL, { type: 'string', maxLength: 0 }, { type: 'null' }] },
+  }, ['name', 'title', 'team']),
+}, async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization');
   if (!check.ok) {
@@ -685,6 +748,12 @@ app.post('/api/organizations/:orgId/people', async (req, reply) => {
   if (!body.name?.trim() || !body.title?.trim() || !body.team?.trim()) {
     reply.code(400);
     return { error: 'name, title, and team are required' };
+  }
+  // A manager from another organization would splice two orgs' charts together, and
+  // deriveAllowedRoles would then grant cross-org "Direct manager" access (SEC-13).
+  if (body.managerId != null && !(await repo.getPeople(orgId)).some((p) => p.id === body.managerId)) {
+    reply.code(400);
+    return { error: 'the manager must be someone already in this organization' };
   }
 
   // Enforced here, not just claimed on the pricing page — an org already at its plan's
@@ -972,7 +1041,7 @@ app.get('/api/person/:id/export', async (req, reply) => {
    stays in history for "What it knows", but respond() already skips any claim with
    supersededBy set, so it drops out of every future answer immediately. */
 
-app.post('/api/claim/:id/correct', async (req, reply) => {
+app.post('/api/claim/:id/correct', { schema: bodySchema({ note: str(2000) }, ['note']) }, async (req, reply) => {
   const id = (req.params as { id: string }).id;
   const { note } = req.body as { note?: string };
   if (!note?.trim()) {
@@ -1096,7 +1165,7 @@ app.get('/api/connections', async (req, reply) => {
    Cycling your own surface is not a write to a connected system — it changes what the
    mesh is permitted to read, the same class of mutation as a policy-grid edit. */
 
-app.post('/api/person/:id/surface/cycle', async (req, reply) => {
+app.post('/api/person/:id/surface/cycle', { schema: bodySchema({ surfaceKey: str(40, 1) }, ['surfaceKey']) }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelf(req, id);
   if (!check.ok) {
@@ -1105,6 +1174,10 @@ app.post('/api/person/:id/surface/cycle', async (req, reply) => {
   }
   const { surfaceKey } = req.body as { surfaceKey: SurfaceKey };
   const before = await repo.getPerson(id);
+  if (!Object.prototype.hasOwnProperty.call(before.surfaces, surfaceKey)) {
+    reply.code(400);
+    return { error: 'unknown surface' };
+  }
   const person = await repo.updatePersonSurface(id, surfaceKey, nextSurfaceState(before.surfaces[surfaceKey]));
   const surfaces = await repo.getSurfaces();
   return { person, coverage: computeCoverage(person, surfaces) };
@@ -1214,7 +1287,12 @@ app.get('/api/organizations/:orgId/main-agent', async (req, reply) => {
  *  platform default, a non-empty string sets it. The key is encrypted before it's ever
  *  written to Postgres (domain/crypto.ts) and never returned by any response afterward —
  *  see sanitizeOrgMainAgent above. */
-app.post('/api/organizations/:orgId/main-agent', async (req, reply) => {
+app.post('/api/organizations/:orgId/main-agent', {
+  schema: bodySchema({
+    runtimeKey: str(60, 1), scope: { type: 'string', enum: ['full', 'narrow'] },
+    apiKey: nullableStr(500), baseUrl: nullableStr(500), model: nullableStr(120),
+  }, ['runtimeKey']),
+}, async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to set this organization\'s main agent', { elevated: true });
   if (!check.ok) {
@@ -1302,7 +1380,11 @@ app.get('/api/accounts/me/main-agent', async (req, reply) => {
  *  check (mainEligible, a real ModelProvider adapter), same encrypt-before-write and
  *  SSRF-guarded baseUrl as the org version — no `scope`/approval workflow, since there's
  *  no IT/Security gate for your own individual credential. */
-app.post('/api/accounts/me/main-agent', async (req, reply) => {
+app.post('/api/accounts/me/main-agent', {
+  schema: bodySchema({
+    runtimeKey: str(60, 1), apiKey: nullableStr(500), baseUrl: nullableStr(500), model: nullableStr(120),
+  }, ['runtimeKey']),
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -1360,7 +1442,7 @@ app.post('/api/accounts/me/main-agent', async (req, reply) => {
  *  forever (Controls' cycle button refuses to move it), so a newly registered Claude
  *  Code sub-agent could answer direct queries but silently never feed "Ask yourself" —
  *  found live testing a fresh self-serve org. */
-app.post('/api/person/:id/runtimes', async (req, reply) => {
+app.post('/api/person/:id/runtimes', { schema: bodySchema({ runtimeKey: str(60, 1) }, ['runtimeKey']) }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const selfCheck = await requireSelf(req, id);
   if (!selfCheck.ok) {
@@ -1459,7 +1541,10 @@ app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
  *  session logs. Different from the endpoint above: that one reports what already
  *  happened; this one looks live. Claude-code only — there's no equivalent CLI to shell
  *  out to for the other catalog runtimes. */
-app.post('/api/person/:id/runtimes/claude-code/ask-live', { config: { rateLimit: { max: 20, timeWindow: '15 minutes' } } }, async (req, reply) => {
+app.post('/api/person/:id/runtimes/claude-code/ask-live', {
+  config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
+  schema: bodySchema({ question: QUESTION }, ['question']),
+}, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelf(req, id);
   if (!check.ok) {
@@ -1603,7 +1688,7 @@ app.delete('/api/person/:id/gmail', async (req, reply) => {
    tokens, fully owned by the person, same as the Gmail row) so this backend can poll on
    their behalf; it is never echoed back to the frontend after saving. */
 
-app.post('/api/person/:id/github', async (req, reply) => {
+app.post('/api/person/:id/github', { schema: bodySchema({ token: str(500) }, ['token']) }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelf(req, id);
   if (!check.ok) {
@@ -1658,7 +1743,9 @@ app.delete('/api/person/:id/github', async (req, reply) => {
    endpoint that derives it from the token alone. UNVERIFIED against a real instance — see
    jira.ts's module comment and CLAUDE.md's "where to go next". */
 
-app.post('/api/person/:id/jira', async (req, reply) => {
+app.post('/api/person/:id/jira', {
+  schema: bodySchema({ siteUrl: str(500), email: str(254), apiToken: str(500) }, ['siteUrl', 'email', 'apiToken']),
+}, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelf(req, id);
   if (!check.ok) {
@@ -1859,7 +1946,10 @@ app.get('/api/person/:id/connectors', async (req, reply) => {
   return { statuses };
 });
 
-app.post('/api/person/:id/connectors/:key', async (req, reply) => {
+app.post('/api/person/:id/connectors/:key', {
+  // Fields vary per connector (connectorCatalog.ts); every value is a bounded string.
+  schema: { body: { type: 'object', additionalProperties: str(8192) } },
+}, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const key = (req.params as { key: string }).key as SurfaceKey;
   const check = await requireSelf(req, id);
@@ -1954,7 +2044,9 @@ app.get('/api/accounts/me/connectors', async (req, reply) => {
   return { statuses };
 });
 
-app.post('/api/accounts/me/connectors/:key', async (req, reply) => {
+app.post('/api/accounts/me/connectors/:key', {
+  schema: { body: { type: 'object', additionalProperties: str(8192) } },
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2023,7 +2115,7 @@ app.post('/api/accounts/me/connectors/:key/verify', async (req, reply) => {
    variants), gated the same way every other /api/accounts/me/* route is — logged in as
    yourself, nothing else, since there's no org role to check. */
 
-app.post('/api/accounts/me/github', async (req, reply) => {
+app.post('/api/accounts/me/github', { schema: bodySchema({ token: str(500) }, ['token']) }, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2059,7 +2151,9 @@ app.delete('/api/accounts/me/github', async (req, reply) => {
   return { ok: true };
 });
 
-app.post('/api/accounts/me/jira', async (req, reply) => {
+app.post('/api/accounts/me/jira', {
+  schema: bodySchema({ siteUrl: str(500), email: str(254), apiToken: str(500) }, ['siteUrl', 'email', 'apiToken']),
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2104,7 +2198,7 @@ app.get('/api/accounts/me/runtimes', async (req, reply) => {
   const [catalog, registered] = await Promise.all([repo.getRuntimeCatalog(), repo.getAccountRuntimes(accountId)]);
   return { catalog, registered };
 });
-app.post('/api/accounts/me/runtimes', async (req, reply) => {
+app.post('/api/accounts/me/runtimes', { schema: bodySchema({ runtimeKey: str(60, 1) }, ['runtimeKey']) }, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2134,7 +2228,7 @@ app.delete('/api/accounts/me/runtimes/:key', async (req, reply) => {
   return { registered: await repo.getAccountRuntimes(accountId) };
 });
 
-app.post('/api/accounts/me/ingest-tokens', async (req, reply) => {
+app.post('/api/accounts/me/ingest-tokens', { schema: bodySchema({ label: str(80) }, ['label']) }, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2174,7 +2268,9 @@ app.delete('/api/accounts/me/ingest-tokens/:tokenId', async (req, reply) => {
  *  generated above, not a new secret of its own. Account-only, same as every other
  *  personal-agent piece — see account_custom_agents' own schema.sql comment for why this
  *  never touches SurfaceKey or the claims/policy pipeline. */
-app.post('/api/accounts/me/custom-agents', async (req, reply) => {
+app.post('/api/accounts/me/custom-agents', {
+  schema: bodySchema({ name: str(80), purpose: str(500) }, ['name', 'purpose']),
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
@@ -2218,7 +2314,7 @@ app.delete('/api/accounts/me/custom-agents/:id', async (req, reply) => {
 
 const INGEST_SOURCES = ['claude-code', 'codex', 'gemini-cli'];
 
-app.post('/api/person/:id/ingest-tokens', async (req, reply) => {
+app.post('/api/person/:id/ingest-tokens', { schema: bodySchema({ label: str(80) }, ['label']) }, async (req, reply) => {
   const id = Number((req.params as { id: string }).id);
   const check = await requireSelf(req, id);
   if (!check.ok) {
@@ -2336,7 +2432,9 @@ app.get('/api/policy', async (req, reply) => {
 /** Editing writes a NEW revision. Nothing updates in place. The single most sensitive
  *  mutating action in the app — it changes what's disclosed org-wide — so it requires
  *  'admin'+, same bar as adding/removing people. */
-app.post('/api/policy/cycle', async (req, reply) => {
+app.post('/api/policy/cycle', {
+  schema: bodySchema({ role: ROLE, dataClass: { type: 'string', enum: [...CONFIGURABLE_CLASSES] } }, ['role', 'dataClass']),
+}, async (req, reply) => {
   const orgId = orgIdFromQuery(req);
   const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization\'s policy', { elevated: true });
   if (!check.ok) {
@@ -2375,7 +2473,9 @@ async function verifyRequesterRole(orgId: number, requesterId: number, targetId:
   return deriveAllowedRoles(requesterId, targetId, people).includes(claimedRole);
 }
 
-app.post('/api/query', async (req, reply) => {
+app.post('/api/query', {
+  schema: bodySchema({ targetId: ID, role: ROLE, question: QUESTION, persist: { type: 'boolean' } }, ['targetId', 'role']),
+}, async (req, reply) => {
   const body = req.body as {
     targetId: number;
     role: RequesterRole;
@@ -2492,7 +2592,12 @@ app.post('/api/query', async (req, reply) => {
  * write up as a direct answer. See orchestrator.ts's allowedTextOnly — WONT/CANT text
  * never reaches the model, only a count of how much was withheld.
  */
-app.post('/api/agent/ask', async (req, reply) => {
+app.post('/api/agent/ask', {
+  schema: bodySchema(
+    { targetId: ID, role: ROLE, question: QUESTION, persist: { type: 'boolean' }, conversationId: UUID },
+    ['targetId', 'role', 'question'],
+  ),
+}, async (req, reply) => {
   const body = req.body as {
     targetId: number;
     role: RequesterRole;
@@ -2707,7 +2812,13 @@ app.post('/api/agent/ask', async (req, reply) => {
  *  another selected person's data folded in. The one combined answer is built a second
  *  time, from each accepted target's own already-synthesized (never raw) answer, so
  *  nothing reaches that final call that wasn't already independently authorized. */
-app.post('/api/agent/ask-multi', async (req, reply) => {
+app.post('/api/agent/ask-multi', {
+  // Each target is its own gather + model call, so the selection is capped.
+  schema: bodySchema(
+    { targetIds: { type: 'array', minItems: 1, maxItems: 20, items: ID }, role: ROLE, question: QUESTION, persist: { type: 'boolean' } },
+    ['targetIds', 'role', 'question'],
+  ),
+}, async (req, reply) => {
   const body = req.body as { requesterId?: number; role?: RequesterRole; targetIds?: number[]; question?: string; persist?: boolean };
   if (!body.question?.trim()) {
     reply.code(400);
@@ -2938,7 +3049,9 @@ function daysLabel(days: number): string {
  *  nobody else could ever ask about. Same "never hard-fail" shape as the org ask: a
  *  missing or unreachable provider degrades to a real, textual answer explaining why,
  *  never a thrown error that would skip persisting the turn. */
-app.post('/api/agent/ask-personal', async (req, reply) => {
+app.post('/api/agent/ask-personal', {
+  schema: bodySchema({ question: str(4000), conversationId: UUID }, ['question']),
+}, async (req, reply) => {
   const accountId = await currentAccountId(req);
   if (accountId == null) {
     reply.code(401);
