@@ -41,7 +41,12 @@ function subscriptionOnlyEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+// A local-dev demo only. On a server, `claude -p <someone's question>` with the Read tool can
+// open any absolute path the process can — /app/backend/.env included (release audit SEC-12).
+const disabledInProduction = () => process.env.NODE_ENV === 'production';
+
 export async function claudeCliAvailable(): Promise<boolean> {
+  if (disabledInProduction()) return false;
   if (confirmedAvailable) return true;
   try {
     await execFileAsync('claude', ['--version'], { timeout: 5_000, env: subscriptionOnlyEnv() });
@@ -60,6 +65,7 @@ export interface CliAskResult {
  *  narrow (never Bash/Write/Edit) so a live "ask" can inspect a directory but never act on
  *  it, matching CLAUDE.md's read-only-system rule at the process level, not just in copy. */
 export async function askClaudeCli(prompt: string, cwd: string): Promise<CliAskResult> {
+  if (disabledInProduction()) throw new Error('the live claude CLI is disabled on this deployment');
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync('claude', [

@@ -56,11 +56,16 @@ export async function getClaudeCodeActivitySince(since: Date = startOfToday(), p
   let localAvailable = false;
 
   let entries: string[] = [];
-  try {
-    entries = await readdir(SESSIONS_DIR);
-    localAvailable = true;
-  } catch {
-    // No local session log on this machine — fine, pushed events (below) may still cover it.
+  // Local transcripts belong to whoever runs the server, not to the person being asked
+  // about — on a shared deployment they would leak the host's sessions into anyone's answer
+  // (release audit SEC-12). Pushed events below are the real, per-person mechanism.
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      entries = await readdir(SESSIONS_DIR);
+      localAvailable = true;
+    } catch {
+      // No local session log on this machine — fine, pushed events (below) may still cover it.
+    }
   }
 
   for (const name of entries.filter((f) => f.endsWith('.jsonl'))) {
