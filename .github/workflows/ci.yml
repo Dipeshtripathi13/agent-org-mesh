@@ -1,0 +1,81 @@
+# Release audit OPS-03. Runs on every push to the deploy branches and on pull requests.
+# Railway deploys from the `prod` branch; enable "Wait for CI" on the Railway service so a red
+# run never ships.
+name: CI
+
+on:
+  push:
+    branches: [main, prod, qa, dev]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend — typecheck, unit tests, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  api:
+    name: Backend — API authorization, invitations, email and encryption suites
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mesh_admin
+          POSTGRES_PASSWORD: mesh_admin_dev_only
+          POSTGRES_DB: agent_org_mesh
+        # Same host port as docker-compose.yml, so vitest.api.config.ts's defaults apply unchanged.
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U mesh_admin -d agent_org_mesh"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run test:api
+
+  frontend:
+    name: Frontend — typecheck, tests, build, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
