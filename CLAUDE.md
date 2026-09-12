@@ -372,6 +372,21 @@ honest reason every other new connector in this project does; update this note o
 Trello account is available.
 
 ## Where to go next
+- **Never trust a Railway-side redeploy until the deploy source is fixed.** On 2026-09-12,
+  adding `RESEND_API_KEY`/`EMAIL_FROM` on Railway triggered an automatic redeploy that rebuilt
+  production from **pre-audit code** (the remote `prod`, `qa` and `dev` branches were still at
+  `7f798ab`, 2026-08-25, 60 commits behind `main`). For ~15 minutes anonymous callers could
+  read rosters and disclosure history again, and connectors couldn't decrypt their tokens. It
+  was caught by re-probing production after the variable change and restored with
+  `railway up` from `main`. After *any* Railway variable change, restart or redeploy, re-run
+  the anonymous probes (an unknown `/api/invitations/aoi_…` token must return "this invitation
+  link is not valid"; `/api/org?orgId=…` must return 401) and confirm the deployed commit.
+- **Email is configured on production** (Resend, sender `noreply@contact.eternitynest.com`,
+  verified domain) — see `integrations/resendEmail.ts`'s module comment for exactly what was
+  verified. Unblocked by it: mandatory email verification at signup, and the emailed
+  self-service password reset (which also closes the invitation-blocking trade-off in the
+  SEC-08 paragraph). The Resend key was pasted into a chat session on 2026-09-12; rotate it
+  in Resend and update Railway.
 - **Complete the legal pages, then deploy them.** `frontend/src/pages/Legal.tsx` (public
   `/legal/privacy`, `/legal/terms`, `/legal/subprocessors`, linked from sign-in and the
   signup consent line) was drafted 2026-09-12 from what the code actually does. Every fact

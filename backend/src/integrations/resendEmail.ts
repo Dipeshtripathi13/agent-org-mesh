@@ -3,9 +3,12 @@
  *  Sends invitation links, never passwords (release audit AUTH-02 / SEC-08): the link is the
  *  one-time proof that its recipient may claim an invited chart entry or admin role.
  *
- *  UNVERIFIED AGAINST A REAL SEND — production has no RESEND_API_KEY configured as of
- *  2026-09-12. The request follows Resend's documented API (POST /emails). Without a key,
- *  nothing is sent and the caller still shows the invitation link once to the inviting admin. */
+ *  Verified 2026-09-12: production has RESEND_API_KEY and EMAIL_FROM
+ *  (noreply@contact.eternitynest.com, a domain verified in Resend). A direct send to Resend's
+ *  delivered@resend.dev test inbox reported `delivered`, and this function, driven by a real
+ *  add-person invite through the local API, returned true and stamped the invitation as
+ *  emailed. A send to a real human inbox from production itself hasn't been observed yet.
+ *  Without a key nothing is sent, and the caller still shows the link once to the admin. */
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
