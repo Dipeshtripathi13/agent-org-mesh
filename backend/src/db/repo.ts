@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { hashEntry, verifyChain } from '../domain/audit.js';
 import { computeEscalationAge } from '../domain/escalations.js';
+import { decryptCredential, encryptCredential } from '../domain/credentials.js';
 import type {
   AccountMainAgent,
   AgentRuntime,
@@ -1086,11 +1087,13 @@ export interface OAuthConnection {
   siteUrl: string | null;
 }
 
+// Credentials are encrypted at rest (domain/credentials.ts) and decrypted only here, on the
+// way out of the database — every connector reads through this one mapper.
 function toOAuthConnection(row: any): OAuthConnection {
   return {
     provider: row.provider,
-    accessToken: row.access_token,
-    refreshToken: row.refresh_token,
+    accessToken: decryptCredential(row.access_token),
+    refreshToken: row.refresh_token == null ? null : decryptCredential(row.refresh_token),
     expiresAt: iso(row.expires_at),
     connectedEmail: row.connected_email,
     siteUrl: row.site_url,
@@ -1124,7 +1127,11 @@ export async function saveOAuthConnection(personId: number, input: {
        connected_email = EXCLUDED.connected_email,
        site_url = EXCLUDED.site_url,
        updated_at = EXCLUDED.updated_at`,
-    [personId, input.provider, input.accessToken, input.refreshToken, input.expiresAt, input.connectedEmail, input.siteUrl ?? null, new Date().toISOString()],
+    [
+      personId, input.provider, encryptCredential(input.accessToken),
+      input.refreshToken == null ? null : encryptCredential(input.refreshToken),
+      input.expiresAt, input.connectedEmail, input.siteUrl ?? null, new Date().toISOString(),
+    ],
   );
 }
 
@@ -1162,7 +1169,11 @@ export async function saveAccountOAuthConnection(accountId: number, input: {
        connected_email = EXCLUDED.connected_email,
        site_url = EXCLUDED.site_url,
        updated_at = EXCLUDED.updated_at`,
-    [accountId, input.provider, input.accessToken, input.refreshToken, input.expiresAt, input.connectedEmail, input.siteUrl ?? null, new Date().toISOString()],
+    [
+      accountId, input.provider, encryptCredential(input.accessToken),
+      input.refreshToken == null ? null : encryptCredential(input.refreshToken),
+      input.expiresAt, input.connectedEmail, input.siteUrl ?? null, new Date().toISOString(),
+    ],
   );
 }
 

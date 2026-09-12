@@ -132,8 +132,8 @@ function Privacy() {
       <Section title="Security">
         <p>
           Connections are encrypted in transit. Passwords are stored as salted scrypt hashes and session tokens as SHA-256
-          hashes. Model provider keys that an organization supplies are encrypted at rest with AES-256-GCM. The audit log
-          is hash-chained so tampering is detectable.
+          hashes. Credentials for tools you connect, and model provider keys an organization supplies, are encrypted at
+          rest with AES-256-GCM. The audit log is hash-chained so tampering is detectable.
         </p>
       </Section>
 

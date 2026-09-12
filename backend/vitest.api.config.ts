@@ -22,6 +22,8 @@ export default defineConfig({
       NODE_ENV: 'test',
       ANTHROPIC_API_KEY: '',
       OPENAI_API_KEY: '',
+      // Test-only key (exactly 32 bytes) — never used outside the disposable test database.
+      CREDENTIAL_ENCRYPTION_KEY: Buffer.from('test-only-credential-key-32bytes').toString('base64'),
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-client-secret',
       GOOGLE_REDIRECT_URI: 'http://localhost:3001/api/oauth/gmail/callback',

@@ -379,9 +379,9 @@ Trello account is available.
   liability cap, hosting region, event retention, effective date — is in the `LEGAL`
   constant at the top of that file and renders as a visible bracketed placeholder under a
   draft banner. Fill those, have counsel review (including the region-specific rights
-  section), set `isDraft: false`, then deploy. Keep the text true to the code: if SEC-10
-  (encrypting stored tool credentials) lands, the Security section can say so; until then it
-  deliberately doesn't. The release audit's remaining work is Gate 1 onward
+  section), set `isDraft: false`, then deploy. Keep the text true to the code — e.g. the Security
+  section's claim that tool credentials are encrypted at rest became true with SEC-10
+  (`domain/credentials.ts`, 2026-09-12); re-check claims like that whenever storage changes. The release audit's remaining work is Gate 1 onward
   (https://claude.ai/code/artifact/1e5b426a-b54e-405b-8b45-03fec727c72f).
 - **Extend session-trust to the remaining self-service connection endpoints.** **Done
   2026-09-12 (release audit SEC-01–05) — superseded, kept for history:** every endpoint now

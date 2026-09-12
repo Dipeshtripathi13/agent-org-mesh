@@ -21,6 +21,7 @@ import {
   stateLabel,
 } from './domain/coverage.js';
 import { encryptSecret } from './domain/crypto.js';
+import { assertCredentialKeyUsable } from './domain/credentials.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
 import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
@@ -64,6 +65,10 @@ import { saveDatabricksConnection, getDatabricksStatus, disconnectDatabricks } f
 import { ACCOUNT_CONNECT_HANDLERS, ACCOUNT_DISCONNECT_HANDLERS, ACCOUNT_STATUS_HANDLERS, ACCOUNT_DIGEST_PROVIDERS, accountCustomAgentProviders, verifyAccountProvider } from './integrations/personalConnectors.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Tool credentials are encrypted at rest (domain/credentials.ts). Refuse to start without a
+// usable key rather than failing every connect and every read at request time.
+if (isProduction) assertCredentialKeyUsable();
 
 // trustProxy: this sits behind Railway's own reverse proxy in production, so req.ip has
 // to come from the forwarded header or every request looks like it's from the same
