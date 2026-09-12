@@ -194,8 +194,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: init?.body ? { 'content-type': 'application/json', ...(init?.headers ?? {}) } : init?.headers,
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => null) as { error?: string } | null;
-    throw new ApiError(res.status, body?.error ?? `${res.status} ${path}`);
+    const body = await res.json().catch(() => null) as { error?: string; requestId?: string } | null;
+    // A server failure's own message is deliberately generic; the request ID is what a person
+    // can quote so the matching log line (and Sentry event) can be found.
+    const message = res.status >= 500 && body?.requestId
+      ? `Something went wrong on our side. Reference: ${body.requestId}`
+      : body?.error ?? `${res.status} ${path}`;
+    throw new ApiError(res.status, message);
   }
   return res.json() as Promise<T>;
 }

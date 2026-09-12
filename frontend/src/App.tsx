@@ -370,6 +370,11 @@ function Shell() {
 }
 
 export default function App() {
+  // Local development only (stripped from production builds): /?debugCrash throws during
+  // render so the crash screen and its report can be checked by hand.
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('debugCrash')) {
+    throw new Error('Deliberate render crash (?debugCrash, development only)');
+  }
   // Legal pages are public and need no session, so they render before any auth provider
   // mounts (no /api/auth/me request, no login gate).
   const legalPage = legalPageFromPath(window.location.pathname);

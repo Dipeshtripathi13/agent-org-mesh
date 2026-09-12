@@ -374,6 +374,11 @@ honest reason every other new connector in this project does; update this note o
 Trello account is available.
 
 ## Where to go next
+- **Switch on the reliability settings only the operator can.** (1) In Railway, enable "Wait for
+  CI" on the service so a red GitHub Actions run on `prod` never deploys. (2) In GitHub, protect
+  `main`/`prod` so CI must pass before merging. (3) For Sentry, create a Node project and set
+  `SENTRY_DSN` (optionally `SENTRY_ENVIRONMENT`) on Railway — nothing else is needed; confirm a
+  test error appears, then note it here.
 - **Never trust a Railway-side redeploy until the deploy source is fixed.** On 2026-09-12,
   adding `RESEND_API_KEY`/`EMAIL_FROM` on Railway triggered an automatic redeploy that rebuilt
   production from **pre-audit code** (the remote `prod`, `qa` and `dev` branches were still at
@@ -1416,6 +1421,52 @@ to get the meaningful 401 instead of a shape complaint.)
 `resourceProviders.ts`, `jira.ts`, and `notion.ts` all carry their real status now. Still
 genuinely UNVERIFIED and unchanged: github's MCP-backed commit read, linear, confluence,
 asana, gitlab, hubspot, zendesk, calendar, airflow, dbt, snowflake, databricks.
+
+**Every outbound call has a deadline, and the fan-outs that multiply them are bounded (release
+audit OPS-04, 2026-09-12).** No call to a connector, a model provider or Resend had a timeout, so
+one hung vendor held a request open indefinitely and ask-multi multiplied it by every person and
+tool. `integrations/outboundHttp.ts`'s `installOutboundTimeout` wraps the global `fetch` once at
+startup (20s, `OUTBOUND_TIMEOUT_MS`), covering all ~24 connector modules and the MCP SDK
+transport with no per-file changes. The default is *combined* with any signal a caller passes,
+because SDKs pass signals that never fire: the MCP transport sends its session AbortController's
+signal on every request, so a wrapper that deferred to "any signal" left those calls with no
+deadline at all — found only by proving it against a server that accepts and never answers (hung
+past 8s before, 2.1s after). Code that needs a different limit uses `deadline(ms)` (the
+OpenAI-compatible call: 90s; Resend: 15s), which the wrapper leaves alone. The Anthropic SDK gets
+`originalFetch()` and its own `timeout: 90_000, maxRetries: 1` (its defaults were 10 minutes and
+2 retries); proved that through the wrapped fetch it would have been cut to the 20s default. MCP
+sessions are capped at 45s end to end, Fastify's `requestTimeout` is 120s, ask-multi runs 4
+people at a time, and per-person connector reads plus the personal digest bridge run 6 at a time
+(`mapWithConcurrency`/`settleWithConcurrency`).
+
+**CI runs on every push to `main`, `prod`, `qa` and `dev` and on pull requests (release audit
+OPS-03, 2026-09-12)** — `.github/workflows/ci.yml`: backend typecheck, unit tests and production
+dependency audit; every `*.api.test.ts` suite against a Postgres 16 service on the compose port;
+frontend typecheck, tests, build and audit. Two things it can't enforce by itself (see "Where to
+go next"): Railway's "Wait for CI" setting, and branch protection.
+
+**Errors are tracked: request IDs, structured logs, a crash screen and browser reports, with
+Sentry ready to switch on (release audit OPS-06/OPS-09, 2026-09-12).** Every response carries
+`x-request-id` (a caller's well-formed ID is kept, otherwise a UUID). A server failure returns
+only `{ error: 'internal server error', requestId }` and logs one JSON line on stderr
+(`integrations/errorReporting.ts`: source, request ID, method, route *pattern* — never the raw
+URL — status, error and stack), readable in Railway's logs; 4xx rejections aren't logged as
+errors. The frontend wraps the app in `components/ErrorBoundary.tsx` (a crash screen instead of a
+blank page) and reports render crashes, uncaught errors and unhandled rejections through
+`lib/errorReporting.ts` (deduplicated, at most 10 per page) to `POST /api/client-errors` — open to
+anonymous and unverified sessions on purpose, rate limited (20 per 5 minutes per IP), bounded by
+schema, and logged the same way. Invitation, verification and reset tokens live in URL paths, so
+they're redacted in the browser, again in the log line, and again in every Sentry event. Server
+errors shown in the UI include "Reference: <request ID>". Setting `SENTRY_DSN` on Railway turns
+on Sentry with no code change: one Node project receives both server errors and forwarded browser
+reports, so no Sentry code ships to users' browsers; it's configured with no default
+integrations, no default PII and no tracing, so it only ever sends what this module passes it.
+`/?debugCrash` throws during render in a Vite dev build only (stripped from production; checked).
+Guarded by `src/observability.api.test.ts` (9) and `errorReporting.test.ts` (4, including a
+capturing Sentry transport proving events really send with a DSN and never without),
+mutation-tested: leaking the error message in a 500, dropping redaction, and dropping the request
+ID header each fail. Also fixed alongside: a query-string `orgId` above int4 returned 500 from the
+database; it's now treated as no org (403).
 
 **Schema changes are numbered migrations, applied automatically before every start
 (release audit OPS-01, 2026-09-12).** The old `backend/db/schema.sql` could only `DROP SCHEMA`

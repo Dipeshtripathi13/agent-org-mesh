@@ -23,6 +23,7 @@ import {
 import { encryptSecret } from './domain/crypto.js';
 import { assertCredentialKeyUsable } from './domain/credentials.js';
 import { installOutboundTimeout, mapWithConcurrency, settleWithConcurrency } from './integrations/outboundHttp.js';
+import { initErrorReporting, reportBrowserError, reportServerError, type BrowserErrorReport } from './integrations/errorReporting.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
 import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
@@ -74,6 +75,9 @@ if (isProduction) assertCredentialKeyUsable();
 // Every outbound call gets a deadline unless it sets its own (release audit OPS-04).
 installOutboundTimeout(Number(process.env.OUTBOUND_TIMEOUT_MS ?? 20_000));
 
+// Structured error logs always; also sent to Sentry once SENTRY_DSN is set (release audit OPS-06).
+initErrorReporting();
+
 // trustProxy: this sits behind Railway's own reverse proxy in production, so req.ip has
 // to come from the forwarded header or every request looks like it's from the same
 // address — both for rate limiting below and for anything else that ever keys on IP.
@@ -100,6 +104,11 @@ const app = Fastify({
   bodyLimit: 256 * 1024,
   // Fastify's default is no limit. Long enough for ask-multi across 20 people with slow tools.
   requestTimeout: 120_000,
+  // Keep a caller's correlation ID when it looks like one, otherwise mint a UUID.
+  genReqId: (req) => {
+    const incoming = req.headers['x-request-id'];
+    return typeof incoming === 'string' && /^[A-Za-z0-9._-]{8,64}$/.test(incoming) ? incoming : randomUUID();
+  },
 });
 // Same-origin once frontend and API are served from this one process (see the static
 // registration below) — cross-origin requests have no legitimate reason to hit this API
@@ -136,12 +145,21 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
   const status = err.statusCode ?? 500;
   // 4xx here are expected rejections (schema validation, oversized bodies) — logging them
   // as errors would bury real failures.
-  if (status >= 500) console.error({ err, url: req.url, method: req.method }, 'unhandled request error');
   if (status < 500) {
     reply.code(status).send({ error: err.message });
     return;
   }
-  reply.code(500).send({ error: 'internal server error' });
+  // One structured line per failure (and to Sentry when SENTRY_DSN is set). The route
+  // pattern is logged, never the raw URL, which can carry one-time tokens.
+  reportServerError(err, { requestId: req.id, method: req.method, route: req.routeOptions?.url ?? 'unmatched', status });
+  // The request ID lets a person quote exactly which failure they hit.
+  reply.code(500).send({ error: 'internal server error', requestId: req.id });
+});
+
+// Every response carries its request ID, so a browser report, a log line and a support
+// question can all be matched to the same request.
+app.addHook('onRequest', async (req, reply) => {
+  reply.header('x-request-id', req.id);
 });
 
 /* ---------- request validation (release audit SEC-13) ----------
@@ -190,6 +208,7 @@ const VERIFICATION_EXEMPT_ROUTES = new Set([
   '/api/auth/password-reset/request', '/api/auth/password-reset/confirm',
   '/api/invitations/:token', '/api/invitations/:token/accept',
   '/api/runtimes', '/api/connectors/catalog', '/api/ingest/:source',
+  '/api/client-errors',
 ]);
 app.addHook('preHandler', async (req, reply) => {
   const route = req.routeOptions.url;
@@ -216,7 +235,8 @@ function escapeHtml(s: string): string {
 function orgIdFromQuery(req: { query: unknown }): number {
   const q = req.query as { orgId?: string };
   const parsed = Number(q.orgId);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  // Above int4 the database would reject the query with a 500; treat it as no org instead.
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 2147483647 ? parsed : 0;
 }
 
 /* ---------- platform: real account authentication + RBAC ----------
@@ -716,6 +736,32 @@ app.delete('/api/organizations/:orgId/admins/:adminId', async (req, reply) => {
   }
   await repo.removeOrgAdmin(orgId, targetAdminId);
   return { ok: true };
+});
+
+/* ---------- browser error reports (release audit OPS-06 / OPS-09) ----------
+   The frontend's crash screen and global error listeners post here. Anonymous on purpose —
+   a crash on the sign-in page matters as much as one behind it — so it's rate limited,
+   size-bounded by schema, and never trusted for anything but a log line. Secrets that can
+   appear in a browser path (invite, verification and reset tokens) are redacted server-side
+   too, whatever the client already did. */
+app.post('/api/client-errors', {
+  config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
+  schema: bodySchema({
+    kind: { type: 'string', enum: ['render', 'error', 'unhandledrejection'] },
+    message: str(1000, 1),
+    stack: str(8000),
+    componentStack: str(8000),
+    path: str(500),
+    release: str(100),
+  }, ['kind', 'message']),
+}, async (req, reply) => {
+  const accountId = await currentAccountId(req).catch(() => null);
+  reportBrowserError(req.body as BrowserErrorReport, {
+    requestId: req.id,
+    accountId,
+    userAgent: String(req.headers['user-agent'] ?? '').slice(0, 200),
+  });
+  return reply.code(204).send();
 });
 
 /* ---------- email verification and self-service password reset ----------
