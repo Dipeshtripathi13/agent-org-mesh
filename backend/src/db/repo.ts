@@ -1104,6 +1104,75 @@ export async function auditForSubject(personId: number): Promise<AuditEntry[]> {
   return rows.map(toAuditEntry);
 }
 
+/** One "someone asked about you" notification: a persisted ask by someone else about one of
+ *  this account's own people. Derived from audit_log, never stored separately. The subject
+ *  already sees who asked and what (`/api/audit/subject/:id`), so nothing new is disclosed. */
+export interface AskedAboutYouNotification {
+  id: string;
+  askedAt: string;
+  askerName: string;
+  askerRole: string;
+  question: string;
+  personId: number;
+  orgId: number;
+  orgName: string;
+  unread: boolean;
+}
+
+export async function listAskedAboutYou(accountId: number, limit = 20): Promise<{ items: AskedAboutYouNotification[]; unreadCount: number }> {
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    pool.query(
+      `SELECT a.id, a.created_at, a.requester_role, a.question, a.target_person_id, a.org_id,
+              o.name AS org_name, COALESCE(r.name, 'Someone') AS asker_name,
+              a.created_at > COALESCE(nr.seen_through, '-infinity') AS unread
+         FROM audit_log a
+         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1
+         JOIN organizations o ON o.id = a.org_id
+         LEFT JOIN people r ON r.id = a.requester_id
+         LEFT JOIN notification_reads nr ON nr.account_id = $1
+        WHERE a.requester_id <> a.target_person_id
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT $2`,
+      [accountId, limit],
+    ),
+    pool.query(
+      `SELECT count(*)::int AS n
+         FROM audit_log a
+         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1
+         LEFT JOIN notification_reads nr ON nr.account_id = $1
+        WHERE a.requester_id <> a.target_person_id
+          AND a.created_at > COALESCE(nr.seen_through, '-infinity')`,
+      [accountId],
+    ),
+  ]);
+  return {
+    items: rows.map((row) => ({
+      id: row.id,
+      askedAt: iso(row.created_at),
+      askerName: row.asker_name,
+      askerRole: row.requester_role,
+      question: row.question,
+      personId: row.target_person_id,
+      orgId: row.org_id,
+      orgName: row.org_name,
+      unread: row.unread,
+    })),
+    unreadCount: countRows[0].n,
+  };
+}
+
+/** Marks notifications read up to `through` (the newest one the person actually saw, so an
+ *  ask landing while the list was open still counts as unread). Never moves backwards and
+ *  never past the database's own clock. */
+export async function markAskedAboutYouSeen(accountId: number, through: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO notification_reads (account_id, seen_through) VALUES ($1, LEAST($2::timestamptz, now()))
+     ON CONFLICT (account_id) DO UPDATE
+       SET seen_through = GREATEST(notification_reads.seen_through, EXCLUDED.seen_through)`,
+    [accountId, through],
+  );
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;

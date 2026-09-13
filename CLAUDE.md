@@ -1526,6 +1526,23 @@ the prompt the OpenAI-compatible adapter actually sends), `eventIngestion.test.t
 covered by a test: the Anthropic adapter's own `safePromptName` calls (same change, applied by the
 same script as the tested adapter).
 
+**A bell in the top bar says when someone asked about you (2026-09-13).** Notifications aren't
+stored: they're the `audit_log` rows where someone *else* asked about one of this account's own
+people, across every org it belongs to (`repo.listAskedAboutYou`) — the same rows "Who asked
+about me" already shows the subject, so nothing new is disclosed. The only new state is
+`notification_reads` (migration 0003: one `seen_through` per account). `GET /api/notifications`
+returns the latest 20 plus an unread count; `POST /api/notifications/seen { through }` marks read up
+to the newest item the person actually saw (never "now", so an ask landing while the panel is open
+stays unread), never moves backwards (`GREATEST`) and never past the database clock (`LEAST(…,
+now())`). `components/NotificationBell.tsx` polls once a minute while the tab is visible, refreshes
+on becoming visible, clears the badge on open, and each entry opens "Who asked about me" in that
+entry's org. Shown only to accounts with an org-chart identity (a personal-only account can't be
+asked about). Wording helpers live in `lib/notifications.ts` ("Marta Vieira asked about you, as an
+executive", "5 min ago"). Tests: `notifications.api.test.ts` (7), `lib/notifications.test.ts`;
+6 mutations (unscoped to own people, self-asks included, uncapped or backwards read marker, count
+ignoring reads, no login check) all fail the suite. Checked in a real browser at desktop and 400px
+widths. Not built: email or push delivery, and escalations in the same bell.
+
 **New signups must verify their email, and anyone can reset a forgotten password by email
 (2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash
 at rest, single-use; issuing a new link of the same kind retires older ones; verification

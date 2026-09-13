@@ -3264,6 +3264,29 @@ app.get('/api/audit/subject/:id', async (req, reply) => {
   return { entries: entries.filter((e) => e.requesterId === access.personId) };
 });
 
+/** "Someone asked about you" — the bell in the top bar. Every persisted ask by someone else
+ *  about any of this account's own people, across every org it belongs to, newest first. */
+app.get('/api/notifications', async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  return repo.listAskedAboutYou(accountId);
+});
+
+app.post('/api/notifications/seen', {
+  schema: bodySchema({ through: { type: 'string', format: 'date-time', maxLength: 40 } }, ['through']),
+}, async (req, reply) => {
+  const accountId = await currentAccountId(req);
+  if (accountId == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  await repo.markAskedAboutYouSeen(accountId, (req.body as { through: string }).through);
+  return { ok: true };
+});
+
 /** Chats for one (requester, target) pair — My agent → Ask yourself (requesterId ===
  *  targetId) or a real cross-person Ask thread — derived from that pair's own real audit
  *  rows (listConversationsForPair groups them; nothing new is stored). */

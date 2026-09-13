@@ -25,6 +25,7 @@ import { SetUpMyAgent } from './pages/SetUpMyAgent';
 import { WhatItKnows } from './pages/WhatItKnows';
 import { WhoAsked } from './pages/WhoAsked';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { NotificationBell } from './components/NotificationBell';
 
 const ADMIN = [
   { key: 'overview', label: 'Overview', el: <Overview /> },
@@ -156,10 +157,10 @@ function ProfileMenu({
 }
 
 function Topbar({
-  panel, switchPanel, hasOwnIdentity, onChangePassword,
+  panel, switchPanel, hasOwnIdentity, onChangePassword, onOpenWhoAsked,
 }: {
   panel: 'admin' | 'me'; switchPanel: (p: 'admin' | 'me') => void; hasOwnIdentity: boolean;
-  onChangePassword: () => void;
+  onChangePassword: () => void; onOpenWhoAsked: (orgId: number | null) => void;
 }) {
   const { meId, identities } = useMe();
   const { account, logout } = useAuth();
@@ -190,6 +191,10 @@ function Topbar({
       {showMeSwitcher && <MeSwitcher />}
       <span className="spacer" />
       <span className="readonly"><i className="dot-live" />Read-only &middot; no write scope</span>
+      {/* Only someone who is a person in an org chart can be asked about. */}
+      {account && hasOwnIdentity && !account.mustChangePassword && !account.emailVerificationPending && (
+        <NotificationBell onOpenAll={onOpenWhoAsked} />
+      )}
       {account && (
         <ProfileMenu
           panel={panel}
@@ -231,6 +236,7 @@ function pathFor(route: Route): string {
 function Shell() {
   const [{ panel, screen }, setRoute] = useState<Route>(() => parsePath(window.location.pathname));
   const { account, orgRoles, people: myIdentities, loading: authLoading } = useAuth();
+  const { setMeOrg } = useMe();
   // Voluntary "Change password" from the profile menu. The *forced* case below doesn't
   // use this flag at all — it's driven purely by the account's own server-side
   // must_change_password, so it can't be dismissed by any client state.
@@ -288,6 +294,10 @@ function Shell() {
   const switchPanel = (p: Panel) =>
     go({ panel: p, screen: p === 'admin' ? (hasAdminRole ? 'overview' : 'organizations') : 'mine' });
   const setScreen = (key: string) => go({ panel, screen: key });
+  const openWhoAsked = (orgId: number | null) => {
+    if (orgId != null) setMeOrg(orgId);
+    go({ panel: 'me', screen: 'whoasked' });
+  };
 
   // Both panels require a real login first — "My agent" no longer works fully logged-out.
   // That reverses what used to be a deliberate, documented demo affordance (a free
@@ -322,6 +332,7 @@ function Shell() {
         switchPanel={switchPanel}
         hasOwnIdentity={hasOwnIdentity}
         onChangePassword={() => setChangePasswordOpen(true)}
+        onOpenWhoAsked={openWhoAsked}
       />
 
       {gate === 'checking' ? (

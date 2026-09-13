@@ -1,3 +1,5 @@
+import type { AskedAboutYou } from './notifications';
+
 export type Tier = 'T1' | 'T2' | 'T3' | 'WONT' | 'CANT';
 export type Disposition = 'allow' | 'redact' | 'refuse';
 export type SurfaceState = 'connected' | 'partial' | 'stale' | 'absent' | 'outOfScope';
@@ -360,6 +362,12 @@ export const api = {
       snapshot: AgentResponse; conversationId: string | null;
     }[];
   }>(`/audit/subject/${id}`),
+  /** The top-bar bell: asks by other people about any of this account's own people. */
+  notifications: () => req<{ items: AskedAboutYou[]; unreadCount: number }>('/notifications'),
+  /** Marks read up to the newest notification actually shown (never "now", so an ask that
+   *  lands while the list is open still counts as unread). */
+  markNotificationsSeen: (through: string) =>
+    req<{ ok: true }>('/notifications/seen', { method: 'POST', body: JSON.stringify({ through }) }),
   listConversations: (targetId: number) => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
   }>(`/agent/conversations?targetId=${targetId}`),

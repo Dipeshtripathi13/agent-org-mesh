@@ -199,6 +199,50 @@ button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--acc
 .profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 5px; padding-top: 11px; }
 .profile-dropdown button.danger:hover { background: var(--hold-bg); color: var(--hold); }
 
+/* Notification bell — "someone asked about you". See components/NotificationBell.tsx. */
+.notif { position: relative; }
+.notif-bell {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 50%; border: 1px solid transparent; background: none;
+  color: var(--ink2); transition: background-color var(--ease), border-color var(--ease), color var(--ease);
+}
+.notif-bell:hover, .notif-bell[aria-expanded='true'] { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent-hover); }
+.notif-badge {
+  position: absolute; top: 3px; right: 2px; min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 999px; background: var(--accent); color: #fff; border: 2px solid var(--panel);
+  font-size: 10px; font-weight: 700; line-height: 13px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.notif-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 20;
+  width: 360px; max-width: calc(100vw - 32px);
+  background: var(--panel); border: 1px solid var(--rule2); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-3); display: flex; flex-direction: column; overflow: hidden;
+  animation: pop-in var(--dur-fast) var(--ease-out) both;
+}
+.notif-head { padding: 12px 14px; border-bottom: 1px solid var(--rule); font-size: var(--text-sm); }
+.notif-empty { margin: 0; padding: 18px 14px; font-size: var(--text-sm); color: var(--ink3); }
+.notif-list { list-style: none; margin: 0; padding: 0; max-height: min(420px, 60vh); overflow-y: auto; }
+.notif-list li + li { border-top: 1px solid var(--rule); }
+.notif-item {
+  width: 100%; display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 11px 14px; border: 0; background: none; color: var(--ink); transition: background-color var(--ease);
+}
+.notif-item:hover { background: var(--accent-bg); }
+.notif-item.is-unread { background: #fdf7fa; }
+.notif-item.is-unread:hover { background: var(--accent-bg); }
+.notif-line { display: flex; align-items: baseline; gap: 7px; font-size: var(--text-sm); font-weight: 500; }
+.notif-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; transform: translateY(-1px); }
+.notif-question {
+  font-size: var(--text-sm); color: var(--ink2); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.notif-time { font-size: var(--text-xs); color: var(--ink4); }
+.notif-all {
+  border: 0; border-top: 1px solid var(--rule); background: none; padding: 11px 14px;
+  font-size: var(--text-sm); color: var(--accent); text-align: left; transition: background-color var(--ease);
+}
+.notif-all:hover { background: var(--accent-bg); color: var(--accent-hover); }
+
 /* Step-up re-auth prompt — an inline modal over whatever sensitive action triggered it
    (StepUpContext.tsx), not a full-page gate. */
 .stepup-overlay {
