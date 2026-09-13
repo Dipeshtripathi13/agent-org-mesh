@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { originalFetch } from './outboundHttp.js';
 import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
+import { formatPriorTurns, safePromptName, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
 // The platform-wide default client (env-var key), cached like before. An org with its own
 // credentials (ProviderCredentials.apiKey) gets a fresh, uncached client instead — client
@@ -52,7 +52,7 @@ export async function summarizeDailyActivity(personName: string, sections: Activ
   }
   const body = sections.map((s) => `## ${s.source}\n${s.digest}`).join('\n\n');
   return callClaude([
-    `You are writing ${personName}'s "what did I do today" summary from real activity data.`,
+    `You are writing ${safePromptName(personName)}'s "what did I do today" summary from real activity data.`,
     'Use only what is in the sections below — never invent or infer anything not supported by them.',
     'Write 3-6 concise bullet points, grouped sensibly by source or theme. Plain text, no headers.',
     '',
@@ -70,7 +70,7 @@ export async function summarizeDailyActivity(personName: string, sections: Activ
  */
 export async function writeActivityClaim(personName: string, digest: string, credentials?: ProviderCredentials): Promise<string> {
   const text = await callClaude([
-    `Write ONE concise, factual sentence describing ${personName}'s work today, for a manager status view.`,
+    `Write ONE concise, factual sentence describing ${safePromptName(personName)}'s work today, for a manager status view.`,
     'Base it only on the real activity log below — never invent or infer anything beyond it.',
     'Plain sentence, no bullet points, no preamble, no quotes around it.',
     '',
@@ -112,7 +112,7 @@ export async function selectRelevantSurfaces(question: string, candidates: Surfa
         '',
         wrapUntrustedData('question', question),
         '',
-        listing,
+        wrapUntrustedData('connected-tools', listing),
       ].join('\n'),
       credentials,
     );
@@ -134,7 +134,7 @@ export async function answerFromActivity(personName: string, question: string, s
   }
   const body = sections.map((s) => `## ${s.source}\n${s.digest}`).join('\n\n');
   return callClaude([
-    `You are ${personName}'s aggregator agent, answering a question using only their real, connected activity data below.`,
+    `You are ${safePromptName(personName)}'s aggregator agent, answering a question using only their real, connected activity data below.`,
     'Answer only from what is in the sections below — never invent or infer anything not supported by them.',
     'If the data below does not contain enough to answer, say so plainly rather than guessing.',
     'Be concise and direct.',
@@ -153,7 +153,7 @@ export async function answerFromActivity(personName: string, question: string, s
 export async function converseFreely(personName: string, question: string, priorTurns?: ConversationTurn[], credentials?: ProviderCredentials, sections?: ActivitySection[]): Promise<string> {
   const body = sections && sections.length > 0 ? sections.map((s) => `## ${s.source}\n${s.digest}`).join('\n\n') : null;
   return callClaude([
-    `You are ${personName}'s own personal assistant, answering directly and conversationally.`,
+    `You are ${safePromptName(personName)}'s own personal assistant, answering directly and conversationally.`,
     'Be concise and helpful.',
     body ? 'Below is what your connected tools returned for this question — real activity where there was any, and an honest "nothing found" note where a tool was checked but had nothing relevant. Use it; never claim a tool listed there isn\'t connected.' : '',
     '',

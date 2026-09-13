@@ -27,6 +27,30 @@ export interface NormalizedEvent {
  *  Returns null for anything unrecognized or for tool calls we don't consider narrative
  *  (mirrors NARRATIVE_TOOLS in claudeCodeActivity.ts) — silently ignored, not an error,
  *  since a hook fires on every tool call and most aren't interesting. */
+/** Longest event text kept. Summaries are one-line descriptions ("Ran the test suite",
+ *  a file path); anything longer is either noise or an attempt to smuggle a paragraph into a
+ *  later prompt (release audit SEC-14). */
+export const MAX_EVENT_SUMMARY_CHARS = 500;
+/** Most recent events rendered into one digest; older ones are counted, not listed. */
+export const MAX_DIGEST_EVENTS = 200;
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** One line, no control characters, bounded. Collapsing newlines matters: a multi-line
+ *  summary could otherwise fake extra "- ..." bullets in the digest a model reads. */
+function cleanSummary(value: string): string | null {
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_EVENT_SUMMARY_CHARS);
+  return cleaned || null;
+}
+
+/** A pushed timestamp is the caller's claim. Unparseable → now; in the future → now, so an
+ *  event can't be dated past the 90-day retention cleanup (db/retention.ts). */
+function occurredAtFrom(value: unknown, now = new Date()): string {
+  if (typeof value !== 'string') return now.toISOString();
+  const time = Date.parse(value);
+  if (Number.isNaN(time) || time > now.getTime() + FUTURE_TOLERANCE_MS) return now.toISOString();
+  return new Date(time).toISOString();
+}
+
 export function normalizeIngestPayload(body: unknown): NormalizedEvent | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
@@ -35,21 +59,19 @@ export function normalizeIngestPayload(body: unknown): NormalizedEvent | null {
     if (!NARRATIVE_TOOLS.has(b.tool_name)) return null;
     const input = (b.tool_input as Record<string, unknown>) ?? {};
     if (b.tool_name === 'Bash') {
-      const description = input.description;
-      if (typeof description !== 'string' || !description.trim()) return null;
-      return { kind: 'action', summary: description.trim(), occurredAt: new Date().toISOString() };
+      const description = typeof input.description === 'string' ? cleanSummary(input.description) : null;
+      if (!description) return null;
+      return { kind: 'action', summary: description, occurredAt: new Date().toISOString() };
     }
-    const filePath = input.file_path;
-    if (typeof filePath !== 'string' || !filePath.trim()) return null;
-    return { kind: 'file', summary: filePath.trim(), occurredAt: new Date().toISOString() };
+    const filePath = typeof input.file_path === 'string' ? cleanSummary(input.file_path) : null;
+    if (!filePath) return null;
+    return { kind: 'file', summary: filePath, occurredAt: new Date().toISOString() };
   }
 
-  if ((b.kind === 'action' || b.kind === 'file') && typeof b.summary === 'string' && b.summary.trim()) {
-    return {
-      kind: b.kind,
-      summary: b.summary.trim(),
-      occurredAt: typeof b.occurredAt === 'string' ? b.occurredAt : new Date().toISOString(),
-    };
+  if ((b.kind === 'action' || b.kind === 'file') && typeof b.summary === 'string') {
+    const summary = cleanSummary(b.summary);
+    if (!summary) return null;
+    return { kind: b.kind, summary, occurredAt: occurredAtFrom(b.occurredAt) };
   }
 
   return null;
@@ -86,5 +108,8 @@ export async function getAccountEventsSince(accountId: number, source: string, s
  *  ingestPushedEventsClaim (codex/gemini-cli's real claim pipeline) turns into a claim. */
 export function formatIngestedEventsDigest(events: IngestedEvent[]): string | null {
   if (events.length === 0) return null;
-  return events.map((e) => `- ${e.summary}`).join('\n');
+  const recent = events.slice(-MAX_DIGEST_EVENTS);
+  const omitted = events.length - recent.length;
+  const lines = recent.map((e) => `- ${e.summary}`);
+  return omitted > 0 ? [`- (${omitted} earlier events not shown)`, ...lines].join('\n') : lines.join('\n');
 }

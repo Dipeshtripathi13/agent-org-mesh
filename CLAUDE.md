@@ -1505,6 +1505,27 @@ migrates data, not schema). Guarded by `src/db/migrations.api.test.ts` (9 tests 
 database), mutation-tested: accepting an edited migration, adopting a partial schema, and not
 rolling back a failed migration each fail the suite.
 
+**External text reaching a model prompt can't break out of its data block, and pushed activity
+is bounded (release audit SEC-14, 2026-09-13).** `wrapUntrustedData` (`modelProvider.ts`) used to
+wrap raw text in `<label>` tags with nothing stopping that text from containing `</label>` itself,
+which ended the block early and turned whatever followed into instructions. It now neutralises
+every known label tag inside the content (`UNTRUSTED_LABELS`, spacing/case tricks included — add a
+new label there, the type enforces it) and caps each block at 24,000 characters with a visible
+"… omitted" note. Previously-unwrapped inputs are wrapped too: earlier chat turns
+(`formatPriorTurns`, `conversation-so-far`) and the router's tool listing (`connected-tools` — a
+custom agent's name and purpose are user-typed). A person's name goes into instruction text, so
+both adapters pass it through `safePromptName` (one line, no angle brackets, 80 chars). On the
+ingest side (`eventIngestion.ts`): a summary is flattened to one line with control characters
+removed (a multi-line summary could fake extra digest bullets) and capped at 500 characters; an
+unparseable `occurredAt` becomes now, and a future one is clamped to now so it can't dodge the
+90-day cleanup; a digest lists at most the latest 200 events and counts the rest.
+`POST /api/ingest/:source` is rate limited to 120 a minute **per token** (keyed on the token's
+hash), so a leaked token can't flood from many addresses. Tests: `promptSafety.test.ts` (including
+the prompt the OpenAI-compatible adapter actually sends), `eventIngestion.test.ts`,
+`ingest.api.test.ts`; 11 mutations (each protection removed in turn) all fail the suites. Not
+covered by a test: the Anthropic adapter's own `safePromptName` calls (same change, applied by the
+same script as the tested adapter).
+
 **New signups must verify their email, and anyone can reset a forgotten password by email
 (2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash
 at rest, single-use; issuing a new link of the same kind retires older ones; verification

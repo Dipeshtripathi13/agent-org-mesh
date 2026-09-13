@@ -2603,7 +2603,20 @@ app.delete('/api/person/:id/ingest-tokens/:tokenId', async (req, reply) => {
  *  then a personal account's — the two token spaces are disjoint (one hashed value can
  *  never match both tables), so trying both costs one extra lookup only on the account
  *  path, never a real ambiguity. */
-app.post('/api/ingest/:source', async (req, reply) => {
+app.post('/api/ingest/:source', {
+  // Per token, not per IP: a leaked token must not be able to flood someone's activity (and
+  // later prompts) from many addresses. A hook fires per tool call, so 120 a minute is generous.
+  config: {
+    rateLimit: {
+      max: 120,
+      timeWindow: '1 minute',
+      keyGenerator: (req: { headers: Record<string, unknown>; ip: string }) => {
+        const auth = req.headers.authorization;
+        return typeof auth === 'string' && auth.startsWith('Bearer ') ? `ingest:${hashSessionToken(auth.slice(7).trim())}` : `ingest-ip:${req.ip}`;
+      },
+    },
+  },
+}, async (req, reply) => {
   const source = (req.params as { source: string }).source;
   const auth = req.headers.authorization;
   const token = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : null;
