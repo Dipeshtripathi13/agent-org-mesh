@@ -9,14 +9,17 @@ import type { ReactNode } from 'react';
  * filled in. This is a draft: have counsel review it before relying on it.
  */
 const LEGAL = {
-  companyName: '[Company legal name]',
-  contactEmail: '[privacy contact email]',
-  postalAddress: '[registered postal address]',
-  governingLaw: '[governing law and courts]',
-  liabilityCap: '[liability cap — set with counsel]',
-  hostingRegion: '[hosting region, e.g. United States]',
-  eventRetention: '[retention period for pushed tool activity]',
-  effectiveDate: '[effective date]',
+  // Not yet a registered legal entity (as of 2026-09-12); update once it is.
+  companyName: 'Eternity Nest',
+  contactEmail: 'privacy@eternitynest.com',
+  governingLaw: 'the laws of the State of [state], United States',
+  // A common default for a free beta — have counsel confirm before relying on it.
+  liabilityCap: 'the greater of US$100 or the amounts you paid Eternity Nest in the 12 months before the claim',
+  // Railway region us-east4, confirmed from the running production container.
+  hostingRegion: 'the United States (Virginia)',
+  // Enforced by backend/src/db/retention.ts.
+  eventRetentionDays: 90,
+  effectiveDate: '[effective date — set when published]',
   isDraft: true,
 };
 
@@ -47,8 +50,8 @@ function Privacy() {
     <>
       <Section title="Who we are">
         <p>
-          Agent Org Mesh is operated by {LEGAL.companyName}, {LEGAL.postalAddress}. Questions about this policy or your
-          data: {LEGAL.contactEmail}.
+          Agent Org Mesh is operated by {LEGAL.companyName}. Questions about this policy or your data:{' '}
+          <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>.
         </p>
       </Section>
 
@@ -117,7 +120,8 @@ function Privacy() {
           Account and organization data is kept while the account or organization exists. Audit log entries are
           append-only by design and are kept for the life of the organization, so the record of what was disclosed
           cannot be rewritten. Disconnecting a tool deletes its stored credential. You can delete personal-agent chats at
-          any time. Activity sent by your own tools is kept for {LEGAL.eventRetention}.
+          any time. Raw activity your own tools send us is deleted automatically after {LEGAL.eventRetentionDays} days;
+          summaries already written from it can remain in your organization&rsquo;s claims and in the audit log.
         </p>
       </Section>
 
@@ -219,7 +223,10 @@ function Terms() {
       </Section>
 
       <Section title="Fees">
-        <p>[Pricing terms — for example, free during beta; paid plans billed as described at purchase.]</p>
+        <p>
+          The service is free during the beta. If paid plans are introduced, their prices and terms will be shown before
+          you are asked to pay, and nothing will be charged without your agreement.
+        </p>
       </Section>
 
       <Section title="Ending your use">
