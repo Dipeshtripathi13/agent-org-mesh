@@ -1543,6 +1543,36 @@ executive", "5 min ago"). Tests: `notifications.api.test.ts` (7), `lib/notificat
 ignoring reads, no login check) all fail the suite. Checked in a real browser at desktop and 400px
 widths. Not built: email or push delivery, and escalations in the same bell.
 
+**First run is guided, and the employee-facing screens speak plainly (2026-09-13).** Found by
+signing up a brand-new account and screenshotting every screen, not by reading code. Changes:
+- **A real honesty bug, fixed first.** Controls' "Cycle" button (`POST
+  /api/person/:id/surface/cycle`) turned a tool from *not connected* to *connected* with no
+  credential, so anyone could make coverage look complete and requesters' answers named tools
+  that were never read. It's now pause/resume: `nextSurfaceState(current, hasRealConnection)`
+  pauses any active state to `absent`, and resumes only when a stored credential (the person's
+  `STATUS_HANDLERS` entry) or, for push-based tools, a pushed event exists; otherwise 409 "Connect
+  it in Set up my agent first". Golden tests in `coverage.test.ts` changed deliberately;
+  `surfaceControls.api.test.ts`; 4 mutations caught.
+- **"Get started" checklist** on My agent (`components/GettingStarted.tsx`, logic in
+  `lib/gettingStarted.ts`): choose the AI that answers, connect a tool, ask a first question, and
+  (admins only) add your team. Every tick is derived from real data; it vanishes when all are done;
+  "Hide" is per browser. Non-admins are told an admin chooses the agent. `lib/navigate.ts` lets a
+  page change screens through Shell's existing popstate routing.
+- **Landing page** lists only connected tools instead of 24 rows of `absent`/`outOfScope`.
+- **Coverage sentence** (`policy.ts`): "Checked 3 of 8 tools (38%). Missing: Slack, Jira (out of
+  date). Nothing was guessed to fill the gaps." Every gap is still named; the word "Missing" must
+  stay because `server.ts`'s `silentGaps` counter (and older stored answers) depend on it — pinned
+  by a golden test.
+- **Labels:** T1/T2/T3 badges read From records / From activity / Unconfirmed; WONT/CANT read
+  Withheld / Never collected (still visibly different, rule 4). "Surfaces", "aggregator", "claims",
+  "requester", "audit" removed from employee screens; the org agent panel offers owners/admins a
+  "Choose the AI" button instead of "your admin hasn't set one".
+- **Demo leftovers removed:** hardcoded Confluence/Salesforce text on What it knows; "Northbeam
+  tenant" hosts and "Org default. Enterprise agreement…" in the shared runtime catalog (seed +
+  migration 0004); Who asked about me's empty state wrongly said your own asks appear there.
+Not yet reworded: Admin screens (Overview, Policy matrix, Coverage matrix, Audit log), Preview's
+intro, and OrgSetup.
+
 **New signups must verify their email, and anyone can reset a forgotten password by email
 (2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash
 at rest, single-use; issuing a new link of the same kind retires older ones; verification

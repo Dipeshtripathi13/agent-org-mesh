@@ -199,6 +199,52 @@ button.whoami:hover, button.whoami[aria-expanded='true'] { background: var(--acc
 .profile-dropdown button.danger { border-top: 1px solid var(--rule); margin-top: 5px; padding-top: 11px; }
 .profile-dropdown button.danger:hover { background: var(--hold-bg); color: var(--hold); }
 
+/* A button that reads as an inline link inside running text. */
+.linklike {
+  display: inline; padding: 0; border: 0; background: none; font: inherit;
+  color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.linklike:hover { color: var(--accent-hover); }
+
+/* First-run checklist on My agent. See components/GettingStarted.tsx. */
+.getting-started {
+  margin-top: var(--sp-5); background: var(--panel); border: 1px solid var(--accent-border);
+  border-radius: var(--radius); box-shadow: var(--shadow-1); padding: var(--sp-4) var(--sp-5);
+}
+.getting-started header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.getting-started header > div { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+.getting-started h2 { margin: 0; font-size: var(--text-md); letter-spacing: -0.01em; }
+.getting-started-progress { font-size: var(--text-xs); color: var(--ink3); font-variant-numeric: tabular-nums; }
+.getting-started-hide { border: 0; background: none; color: var(--ink3); font-size: var(--text-sm); padding: 2px 4px; }
+.getting-started-hide:hover { color: var(--ink); }
+.getting-started ol { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: 2px; }
+.getting-started li {
+  display: grid; grid-template-columns: 24px 1fr auto; gap: var(--sp-3); align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--rule);
+}
+.getting-started li:first-child { border-top: 0; }
+.getting-started-check {
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--rule2);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #fff;
+}
+.getting-started li.is-done .getting-started-check { background: var(--ok); border-color: var(--ok); }
+.getting-started-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.getting-started-text strong { font-size: var(--text-sm); font-weight: 600; }
+.getting-started-text span { font-size: var(--text-sm); color: var(--ink2); }
+.getting-started li.is-done .getting-started-text strong { color: var(--ink3); text-decoration: line-through; text-decoration-color: var(--rule2); }
+.getting-started li .btn { height: 34px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .getting-started li { grid-template-columns: 24px 1fr; }
+  .getting-started li .btn { grid-column: 2; justify-self: start; }
+}
+
+/* Connected-tools list on My agent. */
+.tool-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.tool-list li { padding: 9px 0; border-top: 1px solid var(--rule); font-size: var(--text-sm); }
+.tool-list li:first-child { border-top: 0; padding-top: 0; }
+.tool-note { color: var(--partial); }
+.tool-reads { display: block; color: var(--ink3); font-size: var(--text-xs); margin-top: 2px; }
+
 /* Notification bell — "someone asked about you". See components/NotificationBell.tsx. */
 .notif { position: relative; }
 .notif-bell {

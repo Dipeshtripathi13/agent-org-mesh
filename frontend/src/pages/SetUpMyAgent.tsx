@@ -7,6 +7,7 @@ import { ConnectorsPanel } from '../components/ConnectorsPanel';
 import { CredentialsFields } from '../components/primitives';
 import { useAuth } from '../lib/AuthContext';
 import { useMe } from '../lib/MeContext';
+import { navigate } from '../lib/navigate';
 
 const SCOPE_LABEL: Record<RuntimeScope, string> = {
   full: 'Full scope', narrow: 'Narrowed scope', pending: 'Awaiting approval',
@@ -104,24 +105,23 @@ function PersonalMainAgentPanel() {
 
   return (
     <>
-      <h2 className="label" style={{ marginTop: 0 }}>Your personal agent</h2>
+      <h2 className="label" style={{ marginTop: 0 }}>Your private agent</h2>
       <p className="sub">
-        Separate from any organization's agent — the one that answers in <strong>My
-        agent</strong>'s personal mode. Nobody else can ever see or use this, whether or
-        not you're also part of an organization.
+        Just for you &mdash; separate from your organization&rsquo;s agent. No one else can use
+        it, see your chats, or read the tools you connect here.
       </p>
       <div className="panel" style={{ marginTop: 18 }}>
         <header>
-          <span className="label">Your main agent</span>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>just for you</span>
+          <span className="label">Which AI answers</span>
+          <span style={{ fontSize: 11, color: 'var(--ink3)' }}>just for you</span>
         </header>
         <div className="inner">
           {showForm ? (
             <>
               <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
                 {main
-                  ? 'Editing your main agent. New questions will read through it immediately.'
-                  : 'No main agent set yet — nothing will answer in "Ask yourself" until you set one.'}
+                  ? 'Changes apply to your next question.'
+                  : 'Not chosen yet — your private agent can’t answer until you pick one.'}
               </p>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)', maxWidth: 260 }}>
                 Agent
@@ -161,7 +161,7 @@ function PersonalMainAgentPanel() {
                   onClick={submit}
                   style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
                 >
-                  {main ? 'Save changes' : 'Set main agent'}
+                  {main ? 'Save changes' : 'Use this AI'}
                 </button>
                 {main && (
                   <button className="chip" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
@@ -221,6 +221,8 @@ export function SetUpMyAgent() {
 
 function OrgSetUpMyAgent() {
   const { meId, meOrgId } = useMe();
+  const { orgRoles } = useAuth();
+  const isOrgAdmin = orgRoles[meOrgId] === 'owner' || orgRoles[meOrgId] === 'admin';
   const [catalog, setCatalog] = useState<AgentRuntime[]>([]);
   const [orgMain, setOrgMain] = useState<OrgMainAgent | null>(null);
 
@@ -240,18 +242,16 @@ function OrgSetUpMyAgent() {
     <>
       <h2 className="label" style={{ marginTop: 32 }}>Your organization's agent</h2>
       <p className="sub">
-        The only one connected to the org &mdash; it's the one that reads through your
-        surfaces on <strong>Controls</strong> and the one other people's questions reach.
-        It's set once for everyone by an organization admin, not chosen here. Everything you
-        connect below &mdash; sub-agents and data sources alike &mdash; is personal: it
-        never touches org surfaces, and nobody outside you can query or read it directly.
+        This is the agent that answers when people in your organization ask about each other,
+        including about you. One is chosen for the whole organization by its admins. The tools you
+        connect below are what it can read about your work.
       </p>
 
       <div className="panel" style={{ marginTop: 18 }}>
         <header>
-          <span className="label">Main &middot; aggregator agent</span>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-            set by your organization's admin
+          <span className="label">Which AI answers</span>
+          <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+            {isOrgAdmin ? 'you can change this in Admin' : 'chosen by your organization’s admins'}
           </span>
         </header>
         <div className="inner">
@@ -280,15 +280,24 @@ function OrgSetUpMyAgent() {
                 </p>
               )}
               <p className="glossary" style={{ marginTop: 9 }}>
-                Read-only here &mdash; an organization admin sets this for everyone from
-                Admin &rarr; Organizations. Everyone in the org shares the same one.
+                Everyone in the organization shares this one.{' '}
+                {isOrgAdmin && <button type="button" className="linklike" onClick={() => navigate('/admin/organizations')}>Change it in Admin</button>}
               </p>
             </div>
           ) : (
-            <p style={{ fontSize: 12, color: 'var(--ink2)', margin: 0 }}>
-              Your organization admin hasn't set up a main agent yet &mdash; nothing is
-              connected to the org until they do.
-            </p>
+            isOrgAdmin ? (
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <p style={{ fontSize: 13, color: 'var(--ink2)', margin: 0 }}>
+                  Not chosen yet &mdash; no one can get answers until you pick one.
+                </p>
+                <button type="button" className="btn btn-primary" onClick={() => navigate('/admin/organizations')}>Choose the AI</button>
+              </div>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--ink2)', margin: 0 }}>
+                Your organization&rsquo;s admins haven&rsquo;t chosen one yet, so no one can get
+                answers until they do.
+              </p>
+            )
           )}
         </div>
       </div>

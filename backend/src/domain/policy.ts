@@ -72,9 +72,19 @@ function buildCoverageStatement(
     })
     .map((s) => `${s.name} (${stateLabel(person.surfaces[s.key])})`);
 
+  // Plain words (2026-09-13): the old sentence repeated "(not connected)" after every tool, which
+  // for a new account meant 24 repetitions. Every gap is still named; only an out-of-date tool
+  // carries a qualifier, since "not connected" is the default meaning of Missing. The word
+  // "Missing" must stay: server.ts's silentGaps check (and older stored answers) rely on it.
+  const missingNames = surfaces
+    .filter((s) => {
+      const state = person.surfaces[s.key];
+      return state === 'absent' || state === 'stale';
+    })
+    .map((s) => (person.surfaces[s.key] === 'stale' ? `${s.name} (out of date)` : s.name));
   const text = missing.length
-    ? `Answered from ${readSurfaces.length} of ${report.inScopeCount} in-scope surfaces — ${report.percent}% coverage. Missing or unreliable: ${missing.join(', ')}. Nothing was inferred to fill these gaps.`
-    : `Answered from all ${report.inScopeCount} in-scope surfaces — ${report.percent}% coverage, all inside the freshness window.`;
+    ? `Checked ${readSurfaces.length} of ${report.inScopeCount} tools (${report.percent}%). Missing: ${missingNames.join(', ')}. Nothing was guessed to fill the gaps.`
+    : `Checked all ${report.inScopeCount} tools (${report.percent}%), all up to date.`;
 
   return { percent: report.percent, readSurfaces, missingSurfaces: missing, text };
 }

@@ -34,9 +34,10 @@ export function WhatItKnows() {
       <div className="crumb">My agent &middot; what it knows</div>
       <h1>What it knows</h1>
       <p className="sub">
-        Your current work picture as your agent would describe it. Every claim carries its tier
-        and evidence &mdash; and a way to correct it. A correction supersedes the claim; it drops
-        out of every future answer immediately, but stays visible here as history.
+        What your agent currently says about your work, built from the tools you&rsquo;ve
+        connected. Each item links to where it came from. If something is wrong, correct it: the
+        correction replaces it in every future answer straight away, and the original stays here
+        as history.
       </p>
 
       <div className="stagger" style={{ display: 'grid', gap: 12, marginTop: 18 }}>
@@ -111,13 +112,18 @@ export function WhatItKnows() {
           </div>
         )}
 
-        <div style={{ border: '1px dashed var(--rule2)', background: 'repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px)', padding: 14 }}>
-          <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>What your agent could not form a view on</p>
-          <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 5, marginBottom: 0, maxWidth: '80ch' }}>
-            Design-doc work (Confluence) and anything customer-facing (Salesforce, out of scope
-            for your role). Rather than infer from Slack, your agent leaves these blank.
-          </p>
-        </div>
+        {active.length === 0 && corrected.length === 0 && (
+          <div className="panel" style={{ marginTop: 0 }}>
+            <div className="inner">
+              <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Nothing yet</p>
+              <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '5px 0 0', maxWidth: '70ch' }}>
+                Your agent hasn&rsquo;t summarized any of your work so far. Connect a tool in{' '}
+                <strong>Set up my agent</strong>; once it has activity, what your agent says
+                about you appears here, and you can correct anything that&rsquo;s wrong.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

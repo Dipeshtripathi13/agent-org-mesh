@@ -1421,7 +1421,21 @@ app.post('/api/person/:id/surface/cycle', { schema: bodySchema({ surfaceKey: str
     reply.code(400);
     return { error: 'unknown surface' };
   }
-  const person = await repo.updatePersonSurface(id, surfaceKey, nextSurfaceState(before.surfaces[surfaceKey]));
+  const current = before.surfaces[surfaceKey];
+  // Resuming needs something real behind it: a stored credential, or (for the push-based
+  // tools, whose status handler just reads this same surface state) a pushed event on record.
+  const hasRealConnection = current !== 'absent' ? false
+    : (INGEST_SOURCES as readonly string[]).includes(surfaceKey)
+      ? (await repo.getIngestedEventsSince(id, surfaceKey, new Date(0))).length > 0
+      : (await STATUS_HANDLERS[surfaceKey]?.(id))?.connected ?? false;
+  const next = nextSurfaceState(current, hasRealConnection);
+  if (current === 'absent' && next === 'absent') {
+    const surfaces = await repo.getSurfaces();
+    const name = surfaces.find((s) => s.key === surfaceKey)?.name ?? surfaceKey;
+    reply.code(409);
+    return { error: `${name} isn't connected yet. Connect it in Set up my agent first.` };
+  }
+  const person = await repo.updatePersonSurface(id, surfaceKey, next);
   const surfaces = await repo.getSurfaces();
   return { person, coverage: computeCoverage(person, surfaces) };
 });

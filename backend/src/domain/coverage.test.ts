@@ -130,25 +130,33 @@ describe('usableSurfaces', () => {
   });
 });
 
-describe('nextSurfaceState — the self-service cycle', () => {
-  it('cycles connected -> partial -> absent -> connected', () => {
-    expect(nextSurfaceState('connected')).toBe('partial');
-    expect(nextSurfaceState('partial')).toBe('absent');
-    expect(nextSurfaceState('absent')).toBe('connected');
+// Deliberately changed 2026-09-13: the old cycle turned `absent` into `connected` with no
+// credential behind it, so a person could make their coverage look complete and requesters'
+// answers named tools that were never connected. Pause/resume replaces it.
+describe('nextSurfaceState — pause and resume', () => {
+  it('pausing any active state stops reading the tool', () => {
+    for (const s of ['connected', 'partial', 'stale'] as SurfaceState[]) {
+      expect(nextSurfaceState(s, true)).toBe('absent');
+      expect(nextSurfaceState(s, false)).toBe('absent');
+    }
   });
 
-  it('stale jumps directly to absent, not back into the connected/partial cycle', () => {
-    expect(nextSurfaceState('stale')).toBe('absent');
+  it('resuming restores connected only when a real connection exists', () => {
+    expect(nextSurfaceState('absent', true)).toBe('connected');
+    expect(nextSurfaceState('absent', false)).toBe('absent');
   });
 
-  it('outOfScope is a fixed point — a role can\'t opt itself into scope by cycling', () => {
-    expect(nextSurfaceState('outOfScope')).toBe('outOfScope');
+  it("outOfScope is a fixed point — a role can't opt itself into scope", () => {
+    expect(nextSurfaceState('outOfScope', true)).toBe('outOfScope');
+    expect(nextSurfaceState('outOfScope', false)).toBe('outOfScope');
   });
 
-  it('is a true cycle: four applications from any connectable state return to it', () => {
-    let s: SurfaceState = 'connected';
-    for (let i = 0; i < 3; i++) s = nextSurfaceState(s);
-    expect(s).toBe('connected');
+  it('no sequence of presses reaches connected without a real connection', () => {
+    let s: SurfaceState = 'absent';
+    for (let i = 0; i < 5; i++) {
+      s = nextSurfaceState(s, false);
+      expect(s).not.toBe('connected');
+    }
   });
 });
 

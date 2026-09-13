@@ -167,9 +167,9 @@ export function Ask() {
       <div className="crumb">My agent &middot; ask</div>
       <h1>Ask</h1>
       <p className="sub">
-        Ask a real question — the target's main agent gathers its own real, connected
-        resources, then answers using only what the policy grid already authorizes for
-        your role. Your name is written into the target&rsquo;s own log the moment you ask.
+        Ask about someone&rsquo;s work. Their agent checks the tools they&rsquo;ve connected and
+        answers with only what your relationship to them allows. They can see that you asked,
+        and what you were told.
       </p>
 
       <div className="panel">
@@ -331,10 +331,9 @@ export function Ask() {
             me&rdquo; log, with your name on it, at the moment you run it.
           </p>
           <p className="glossary" style={{ marginTop: 8 }}>
-            The answer above is written by a real Claude API call from only the items
-            below marked as disclosed — never from anything withheld — if the backend
-            has an API key configured; otherwise you get that same authorized data
-            as-is, clearly labeled as such.
+            The answer is written only from what you&rsquo;re allowed to see &mdash; never from
+            anything withheld. &ldquo;Show how this was derived&rdquo; lists every item, including
+            what was withheld and why.
           </p>
         </div>
       </div>

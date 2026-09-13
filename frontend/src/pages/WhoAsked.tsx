@@ -18,20 +18,20 @@ export function WhoAsked() {
       <div className="crumb">My agent &middot; who asked about me</div>
       <h1>Who asked about me</h1>
       <p className="sub">
-        Every read of your agent, who made it, exactly what was returned, and what was refused.
-        Nothing here is hidden from you.
+        Every time someone asked your agent about you: who, when, and exactly what they were told
+        or not told. Nothing here is hidden from you.
       </p>
 
       <div className="panel">
         <header>
-          <span className="label">{data.entries.length} reads</span>
+          <span className="label">{data.entries.length === 1 ? '1 question' : `${data.entries.length} questions`}</span>
         </header>
 
         {data.entries.length === 0 ? (
           <div className="inner">
             <p style={{ margin: 0, fontSize: 12, color: 'var(--ink2)' }}>
-              No reads yet. Try the Ask screen &mdash; a query you run there appears here at the
-              same instant it&rsquo;s answered.
+              No one has asked about you yet. When someone does, it appears here straight away,
+              and the bell at the top of the page lights up.
             </p>
           </div>
         ) : (
@@ -48,7 +48,7 @@ export function WhoAsked() {
                   {new Date(e.createdAt).toISOString().slice(11, 19)}Z
                 </span>
                 <span style={{ fontSize: 12 }}>
-                  <strong>{e.requesterRole}</strong> asked: {e.question}
+                  <strong>{e.requesterRole === 'Self' ? 'You' : `As ${e.requesterRole.toLowerCase()}`}</strong>: {e.question}
                 </span>
                 <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
                   rev {e.policyRevisionId}

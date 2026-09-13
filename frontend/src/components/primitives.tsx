@@ -36,8 +36,10 @@ export function AnimatedNumber({ value, durationMs = 700 }: { value: number; dur
   return <>{display}</>;
 }
 
+/** Tier codes are for the policy engine; people see what they mean. Withheld (policy said no)
+ *  and never collected (structurally absent) stay visibly different — never one label. */
 const TIER_LABEL: Record<Tier, string> = {
-  T1: 'T1', T2: 'T2', T3: 'T3', WONT: "\u25EB won't", CANT: '\u2298 can\u0027t',
+  T1: 'From records', T2: 'From activity', T3: 'Unconfirmed', WONT: '\u25EB Withheld', CANT: '\u2298 Never collected',
 };
 
 /** Tier badge. T1 and T3 must never be confusable at a glance. */
@@ -109,9 +111,10 @@ export function CoverageKey() {
 export function RefusalGlossary() {
   return (
     <p className="glossary">
-      <strong>&#9707; won&rsquo;t</strong> &mdash; the agent holds it, policy blocks disclosure;
-      reversible in the policy matrix. <strong>&#8856; can&rsquo;t</strong> &mdash; never ingested,
-      so no policy change applies.
+      <strong>&#9707; Withheld</strong> &mdash; the agent has this, but your organization&rsquo;s
+      sharing rules don&rsquo;t allow it for this person; an admin can change those rules.{' '}
+      <strong>&#8856; Never collected</strong> &mdash; no agent ever reads this, so no rule change
+      could reveal it.
     </p>
   );
 }

@@ -4,7 +4,9 @@ import {
   relativeTime, turnFromAuditEntry, turnFromPersonalEntry,
   type RawEntry, type RawPersonalEntry, type ThreadTurn, type ConversationSummary,
 } from '../lib/conversations';
-import { ClaimItem, CoverageBar, CoverageKey, RefusalGlossary } from '../components/primitives';
+import { ClaimItem, RefusalGlossary } from '../components/primitives';
+import { GettingStarted } from '../components/GettingStarted';
+import { navigate } from '../lib/navigate';
 import { useAuth } from '../lib/AuthContext';
 import { useMe } from '../lib/MeContext';
 
@@ -19,7 +21,7 @@ let localTurnId = 0;
  *  threaded down as a prop, since both MyAgent and SetUpMyAgent need it independently and
  *  the nav array that renders them isn't set up to pass props through. */
 export function MyAgent() {
-  const { people: identities } = useAuth();
+  const { account, orgRoles, people: identities } = useAuth();
   const personal = identities.length === 0;
   // An org member can still ask their own, separate personal agent — `usePersonalAgent`
   // is the toggle for that; a true no-org account has no toggle at all, it's always on.
@@ -29,6 +31,8 @@ export function MyAgent() {
   const [me, setMe] = useState<Person | null>(null);
   const [surfaces, setSurfaces] = useState<Surface[]>([]);
   const [neverIngested, setNever] = useState<string[]>([]);
+  const [orgHasAgent, setOrgHasAgent] = useState(false);
+  const [peopleInOrg, setPeopleInOrg] = useState(1);
   const [draft, setDraft] = useState('');
   const [entries, setEntries] = useState<RawEntry[]>([]);
   const [personalEntries, setPersonalEntries] = useState<RawPersonalEntry[]>([]);
@@ -88,7 +92,9 @@ export function MyAgent() {
         setMe(d.people.find((p) => p.id === meId) ?? null);
         setSurfaces(d.surfaces);
         setNever(d.neverIngested);
+        setPeopleInOrg(d.people.length);
       });
+      api.orgMainAgent(meOrgId).then((d) => { if (!cancelled) setOrgHasAgent(d.registered != null); }).catch(() => {});
     }
     return () => { cancelled = true; };
   }, [personal, meId, meOrgId]);
@@ -175,9 +181,9 @@ export function MyAgent() {
   const chatPanel = (
     <div className="panel" style={{ marginTop: 0, display: 'flex', flexDirection: 'column' }}>
       <header>
-        <span className="label">Ask yourself</span>
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-          {showPersonalChat ? 'your own personal agent' : 'same real Ask, just about you'}
+        <span className="label">Ask about your own work</span>
+        <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+          {showPersonalChat ? 'your private agent' : 'your organization’s agent'}
         </span>
       </header>
       <div className="inner chat-panel-body" style={{ padding: 0 }}>
@@ -215,21 +221,15 @@ export function MyAgent() {
             <p className="glossary" style={{ margin: '0 0 12px' }}>
               {showPersonalChat ? (
                 <>
-                  Answered by your own configured main agent — see <strong>Set up my
-                  agent</strong> to connect one. Nothing here is shared with anyone; there's
-                  no organization for anyone else to ask through.
+                  Answered by your private agent, which only you can use &mdash; choose which AI
+                  it uses in <strong>Set up my agent</strong>. Nothing here is shared with anyone.
                 </>
               ) : (
                 <>
-                  Runs the exact same <strong>Ask</strong> your manager or a peer would use —
-                  role fixed to <strong>Self</strong> (always fully allowed). Each question
-                  decides on its own which of your connected tools (Claude Code, GitHub,
-                  Gmail) are actually relevant and only reads those — shown as
-                  &ldquo;Consulted&rdquo; under the answer. Follow-ups in this chat are
-                  answered with this chat's own earlier turns as real context. Every turn is
-                  its own real, audited ask, written into your own &ldquo;Who asked about
-                  me&rdquo; log. For asking about someone else, use
-                  <strong> Ask</strong> in the sidebar.
+                  Ask anything about your own work. For each question your agent picks which of
+                  your connected tools are relevant, reads only those, and lists them under the
+                  answer. Follow-up questions in the same chat keep the earlier context. To ask
+                  about someone else, use <strong>Ask</strong> in the sidebar.
                 </>
               )}
             </p>
@@ -258,14 +258,14 @@ export function MyAgent() {
                         <div className="runtime-card" style={{ background: '#f8f9fa' }}>
                           {!showPersonalChat && (
                             <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                              ANSWER &middot; {turn.result.withheldCount > 0 ? `${turn.result.withheldCount} item(s) withheld, not included below` : 'nothing withheld for Self'}
+                              ANSWER{turn.result.withheldCount > 0 ? ` · ${turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld` : ''}
                             </span>
                           )}
                           <p style={{ margin: showPersonalChat ? 0 : '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
                         </div>
                         {turn.result.consultedSources.length > 0 && (
                           <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                            CONSULTED &middot; {turn.result.consultedSources.join(', ')}
+                            CHECKED &middot; {turn.result.consultedSources.join(', ')}
                           </p>
                         )}
                         {hasDerivation && (
@@ -274,7 +274,7 @@ export function MyAgent() {
                               onClick={() => toggleDetail(turn.id)}
                               style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
                             >
-                              {expandedIds.has(turn.id) ? 'Hide' : 'Show'} how this was derived — the full, unmodified disclosure
+                              {expandedIds.has(turn.id) ? 'Hide' : 'Show'} where this answer came from
                             </button>
                             {expandedIds.has(turn.id) && (
                               <div style={{ marginTop: 8 }}>
@@ -324,10 +324,9 @@ export function MyAgent() {
         <div className="crumb">My agent &middot; Personal</div>
         <h1>Ask yourself</h1>
         <p className="sub">
-          You're not part of an organization, so this is your own personal agent — not
-          shared with, or visible to, anyone else. See <strong>Set up my agent</strong> to
-          connect one. Want to invite others or build an org chart instead? Click your
-          name, top right, for <strong>Admin login</strong>.
+          This is your private agent &mdash; no one else can use it or see your chats. Choose
+          which AI answers, and connect your tools, in <strong>Set up my agent</strong>. To bring
+          in a team, open the menu under your name and choose <strong>Admin</strong>.
         </p>
         <div style={{ marginTop: 18 }}>{chatPanel}</div>
       </>
@@ -336,18 +335,35 @@ export function MyAgent() {
 
   if (!me) return <p className="sub">Loading&hellip;</p>;
 
+  const connected = surfaces.filter((s) => me.surfaces[s.key] === 'connected' || me.surfaces[s.key] === 'partial' || me.surfaces[s.key] === 'stale');
+  const unconnectedCount = me.coverage.inScopeCount - me.coverage.connectedCount;
+
   return (
     <>
       <div className="crumb">My agent &middot; {me.name}</div>
-      <h1>What your agent is connected to</h1>
+      <h1>Your agent</h1>
       <p className="sub">
-        Nothing on this page is hidden from you. See <strong>Preview</strong> for exactly what
-        each requester would get if they asked right now.
+        Ask it about your own work below. When someone else asks about you, it answers them with
+        only what their relationship to you allows &mdash; and you can see every question in{' '}
+        <strong>Who asked about me</strong>.
       </p>
 
+      {account && (
+        <GettingStarted
+          accountId={account.id}
+          input={{
+            hasAnsweringAgent: orgHasAgent,
+            isOrgAdmin: orgRoles[meOrgId] === 'owner' || orgRoles[meOrgId] === 'admin',
+            connectedTools: me.coverage.connectedCount,
+            askedQuestions: conversations.length,
+            peopleInOrg,
+          }}
+        />
+      )}
+
       <div style={{ display: 'flex', gap: 6, marginTop: 14 }}>
-        <button className="chip" aria-pressed={!usePersonalAgent} onClick={() => setUsePersonalAgent(false)}>Ask yourself</button>
-        <button className="chip" aria-pressed={usePersonalAgent} onClick={() => setUsePersonalAgent(true)}>My personal agent</button>
+        <button className="chip" aria-pressed={!usePersonalAgent} onClick={() => setUsePersonalAgent(false)}>Your organization&rsquo;s agent</button>
+        <button className="chip" aria-pressed={usePersonalAgent} onClick={() => setUsePersonalAgent(true)}>Your private agent</button>
       </div>
 
       <div className="split-row" style={{ marginTop: 18 }}>
@@ -359,39 +375,41 @@ export function MyAgent() {
           <div className="grid2">
             <div className="panel" style={{ marginTop: 0 }}>
               <header>
-                <span className="label">Connected surfaces</span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-                  {me.coverage.connectedCount} of {me.coverage.inScopeCount} in scope &middot; {me.coverage.percent}%
+                <span className="label">Tools it reads</span>
+                <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+                  {me.coverage.connectedCount} of {me.coverage.inScopeCount} connected
                 </span>
               </header>
               <div className="inner">
-                <CoverageBar states={surfaces.map((s) => me.surfaces[s.key])} height={8} />
-                <CoverageKey />
-                <div className="scroll">
-                <table style={{ marginTop: 12 }}>
-                  <tbody>
-                    {surfaces.map((s) => (
-                      <tr key={s.key}>
-                        <td style={{ fontSize: 12 }}>{s.name} <span style={{ color: 'var(--ink4)', fontFamily: 'var(--mono)', fontSize: 10 }}>{s.feedsTier}</span></td>
-                        <td style={{ fontSize: 11, color: 'var(--ink3)' }}>{s.doesNotRead}</td>
-                        <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-                          {me.surfaces[s.key]}
-                        </td>
-                      </tr>
+                {connected.length === 0 ? (
+                  <p style={{ fontSize: 13, color: 'var(--ink2)', margin: 0 }}>
+                    None yet. Connect the tools you work in from{' '}
+                    <button type="button" className="linklike" onClick={() => navigate('/me/setup')}>Set up my agent</button>
+                    {' '}&mdash; your agent only ever reads them.
+                  </p>
+                ) : (
+                  <ul className="tool-list">
+                    {connected.map((s) => (
+                      <li key={s.key}>
+                        <strong>{s.name}</strong>
+                        {me.surfaces[s.key] !== 'connected' && <span className="tool-note"> &middot; {me.surfaces[s.key] === 'stale' ? 'out of date' : 'limited'}</span>}
+                        <span className="tool-reads">{s.reads}</span>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
-                </div>
-                <div className="coverage-note">
-                  {me.coverage.gaps.length
-                    ? `Because ${me.coverage.gaps.join(', and ')}, answers about those areas are incomplete — and every answer says so.`
-                    : 'All surfaces in scope for your role are live and inside the freshness window.'}
-                </div>
+                  </ul>
+                )}
+                {unconnectedCount > 0 && (
+                  <div className="coverage-note">
+                    {connected.length === 0
+                      ? 'Until a tool is connected, answers about your work will say there was nothing to check.'
+                      : `Answers say plainly which of the other ${unconnectedCount === 1 ? 'tool' : `${unconnectedCount} tools`} they couldn’t check — nothing is guessed to fill the gap.`}
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="panel" style={{ marginTop: 0 }}>
-              <header><span className="label">Never connected, by construction</span></header>
+              <header><span className="label">Never read, for anyone</span></header>
               <div className="inner">
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {neverIngested.map((n) => (
@@ -399,8 +417,8 @@ export function MyAgent() {
                   ))}
                 </div>
                 <p className="glossary">
-                  These are absent from ingestion org-wide. There is no setting on this page, or
-                  anywhere else, that turns them on.
+                  No agent in this product collects these, in any organization, and there is no
+                  setting anywhere that changes that.
                 </p>
               </div>
             </div>

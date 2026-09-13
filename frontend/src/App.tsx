@@ -349,7 +349,7 @@ function Shell() {
       ) : (
         <div className="body">
           <nav className="sidebar">
-            <h2>{panel === 'admin' ? 'Admin · IT & exec' : hasOwnIdentity ? 'My agent · employee' : 'My agent · personal'}</h2>
+            <h2>{panel === 'admin' ? 'Admin' : 'My agent'}</h2>
             <div className="navlist">
               {nav.map((n) => (
                 <button
@@ -364,8 +364,8 @@ function Shell() {
             </div>
             <p className="navfoot">
               {panel === 'admin'
-                ? 'Every query you run appears in the subject’s own log, attributed to you.'
-                : 'This panel is yours. Nothing on it is hidden from you.'}
+                ? 'Anything you look up about a person shows in their “Who asked about me”, with your name.'
+                : 'Everything your agent holds about you is visible here.'}
             </p>
           </nav>
           <main className="main">{active.el}</main>

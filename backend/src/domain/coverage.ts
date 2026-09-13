@@ -26,14 +26,15 @@ export function stateLabel(state: SurfaceState): string {
   return LABEL[state];
 }
 
-/** Cycle order for a person's own surface control: connected → partial → absent → connected.
- *  `outOfScope` never appears here — a role either has a surface in scope or doesn't;
- *  the employee can't opt a surface into scope, only connect or disconnect one that is. */
-export function nextSurfaceState(current: SurfaceState): SurfaceState {
+/** A person's own pause/resume control (Controls). Pausing any active state stops the agent
+ *  reading that tool. Resuming only restores `connected` when a real credential or pushed
+ *  activity actually exists — this used to cycle `absent → connected` unconditionally, which let
+ *  anyone mark a tool connected with nothing behind it, and every requester's answer then named
+ *  that tool as a live source. `outOfScope` is a fixed point: a role can't opt itself into scope. */
+export function nextSurfaceState(current: SurfaceState, hasRealConnection: boolean): SurfaceState {
   if (current === 'outOfScope') return current;
-  return ({ connected: 'partial', partial: 'absent', stale: 'absent', absent: 'connected' } as const)[
-    current
-  ];
+  if (current === 'absent') return hasRealConnection ? 'connected' : 'absent';
+  return 'absent';
 }
 
 export function computeCoverage(person: Person, surfaces: Surface[]): CoverageReport {

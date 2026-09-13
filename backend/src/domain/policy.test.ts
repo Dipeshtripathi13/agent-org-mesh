@@ -127,6 +127,32 @@ describe('invariants', () => {
       expect(res.coverage.text.length).toBeGreaterThan(0);
     }
   });
+
+  // Wording deliberately changed 2026-09-13 (plain words, no "(not connected)" after every tool).
+  // What must never change: every gap is named in the sentence, and the sentence says "Missing" —
+  // server.ts counts an answer whose gaps aren't announced that way as a silent gap.
+  it('names every missing tool in plain words, marking only out-of-date ones', () => {
+    const res = answer(13, 'Direct manager'); // Ruben: Slack and Confluence absent, Jira stale
+    const text = res.coverage.text;
+    expect(text).toContain('Missing: ');
+    expect(text).toMatch(/^Checked \d+ of \d+ tools \(\d+%\)\./);
+    expect(text).not.toContain('(not connected)');
+    expect(text).toContain('Jira (out of date)');
+    for (const entry of res.coverage.missingSurfaces) {
+      const name = entry.replace(/ \([^)]*\)$/, '');
+      expect(text).toContain(name);
+    }
+    expect(text).toContain('Nothing was guessed to fill the gaps.');
+  });
+
+  it('a fully connected answer says so without a Missing list', () => {
+    for (const person of PEOPLE) {
+      const res = answer(person.id, 'Direct manager');
+      if (res.coverage.percent === null || res.coverage.missingSurfaces.length > 0) continue;
+      expect(res.coverage.text).toMatch(/^Checked all \d+ tools \(\d+%\), all up to date\.$/);
+      return;
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ */
