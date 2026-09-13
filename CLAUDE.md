@@ -404,9 +404,12 @@ Trello account is available.
   12-months liability cap as a placeholder default. Pushed tool activity is deleted after 90 days,
   and that is enforced, not just stated: migration `0002_activity_retention` grants the app role
   DELETE on `ingested_events`/`account_ingested_events` only, and `src/db/retention.ts` purges
-  older rows a minute after start and every 6 hours (`retention.api.test.ts`). **Still blocking
-  publication:** `eternitynest.com` has **no MX records**, so `privacy@eternitynest.com` can't
-  receive mail yet — set up a mailbox or forwarding first; the US **state** for governing law;
+  older rows a minute after start and every 6 hours (`retention.api.test.ts`). `privacy@eternitynest.com` now receives
+  mail (2026-09-13: ImprovMX forwarding to the operator's Gmail — MX `mx1/mx2.improvmx.com` and
+  SPF on the root domain; Resend's records under `contact.` are separate and must not be
+  touched; a test sent from production arrived). The filled-in `Legal.tsx` is parked in
+  `git stash` ("legal pages: Eternity Nest details…") while the legal work is on hold — restore
+  it with `git stash pop`. **Still blocking publication:** the US **state** for governing law;
   the effective date (set on publish); counsel review of the whole text, including the
   region-specific rights section; then set `isDraft: false`.
 - **Complete the legal pages, then deploy them.** `frontend/src/pages/Legal.tsx` (public
