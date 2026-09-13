@@ -397,6 +397,18 @@ Trello account is available.
   self-service password reset (which also closes the invitation-blocking trade-off in the
   SEC-08 paragraph). The Resend key was pasted into a chat session on 2026-09-12; rotate it
   in Resend and update Railway.
+- **Legal pages — status 2026-09-12.** Filled in from the operator: operated by "Eternity Nest"
+  (not yet a registered legal entity — update the pages once it is), contact
+  `privacy@eternitynest.com`, governed by US law, hosting region United States (Virginia,
+  Railway `us-east4`, read from the running container), free during the beta, and a US$100 /
+  12-months liability cap as a placeholder default. Pushed tool activity is deleted after 90 days,
+  and that is enforced, not just stated: migration `0002_activity_retention` grants the app role
+  DELETE on `ingested_events`/`account_ingested_events` only, and `src/db/retention.ts` purges
+  older rows a minute after start and every 6 hours (`retention.api.test.ts`). **Still blocking
+  publication:** `eternitynest.com` has **no MX records**, so `privacy@eternitynest.com` can't
+  receive mail yet — set up a mailbox or forwarding first; the US **state** for governing law;
+  the effective date (set on publish); counsel review of the whole text, including the
+  region-specific rights section; then set `isDraft: false`.
 - **Complete the legal pages, then deploy them.** `frontend/src/pages/Legal.tsx` (public
   `/legal/privacy`, `/legal/terms`, `/legal/subprocessors`, linked from sign-in and the
   signup consent line) was drafted 2026-09-12 from what the code actually does. Every fact

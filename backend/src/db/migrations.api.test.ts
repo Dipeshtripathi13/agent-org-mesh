@@ -7,13 +7,20 @@ import { loadMigrations, MIGRATIONS_DIR, runMigrations, type MigrationReport } f
 
 /**
  * The migration runner against a real Postgres (release audit OPS-01), on its own disposable
- * database so it can drop and recreate freely without touching the other API suites' data.
+ * database so it can drop and recreate freely. Expectations are derived from whatever migrations
+ * exist in backend/db/migrations, so adding a migration never breaks these tests.
  */
 
 const adminUrl = new URL(process.env.TEST_DATABASE_ADMIN_URL!);
 const DB = 'agent_org_mesh_migrations_test';
 const dbUrl = (() => { const u = new URL(adminUrl); u.pathname = `/${DB}`; return u.toString(); })();
 const maintenanceUrl = (() => { const u = new URL(adminUrl); u.pathname = '/postgres'; return u.toString(); })();
+
+const REAL = loadMigrations();
+const REAL_FILES = REAL.map((m) => m.file);
+const pad = (n: number) => String(n).padStart(4, '0');
+const NEXT = pad(REAL.length + 1);
+const AFTER_NEXT = pad(REAL.length + 2);
 
 const tempDirs: string[] = [];
 const open: pg.Client[] = [];
@@ -58,22 +65,20 @@ afterAll(async () => {
 });
 
 describe('migration runner', () => {
-  it('builds an empty database from the baseline, then does nothing on a second run', async () => {
+  it('builds an empty database from every migration, then does nothing on a second run', async () => {
     const client = await connect();
-    const first = await runMigrations(client);
-    expect(first).toEqual({ adoptedBaseline: false, applied: ['0001_baseline.sql'], alreadyApplied: 0 });
+    expect(await runMigrations(client)).toEqual({ adoptedBaseline: false, applied: REAL_FILES, alreadyApplied: 0 });
     for (const table of ['accounts', 'invitations', 'email_tokens', 'audit_log']) expect(await tableExists(client, table)).toBe(true);
 
-    const second = await runMigrations(client);
-    expect(second).toEqual({ adoptedBaseline: false, applied: [], alreadyApplied: 1 });
-    const rows = (await client.query('SELECT version, name, adopted FROM schema_migrations')).rows;
-    expect(rows).toEqual([{ version: 1, name: 'baseline', adopted: false }]);
+    expect(await runMigrations(client)).toEqual({ adoptedBaseline: false, applied: [], alreadyApplied: REAL.length });
+    const rows = (await client.query('SELECT version, name, adopted FROM schema_migrations ORDER BY version')).rows;
+    expect(rows).toEqual(REAL.map((m) => ({ version: m.version, name: m.name, adopted: false })));
   });
 
   it('applies a new migration exactly once', async () => {
     const client = await connect();
-    const dir = migrationsWith({ '0002_add_probe_table.sql': 'CREATE TABLE probe_table (id integer PRIMARY KEY);' });
-    expect((await runMigrations(client, loadMigrations(dir))).applied).toEqual(['0001_baseline.sql', '0002_add_probe_table.sql']);
+    const dir = migrationsWith({ [`${NEXT}_add_probe_table.sql`]: 'CREATE TABLE probe_table (id integer PRIMARY KEY);' });
+    expect((await runMigrations(client, loadMigrations(dir))).applied).toEqual([...REAL_FILES, `${NEXT}_add_probe_table.sql`]);
     expect(await tableExists(client, 'probe_table')).toBe(true);
     expect((await runMigrations(client, loadMigrations(dir))).applied).toEqual([]);
   });
@@ -82,35 +87,35 @@ describe('migration runner', () => {
     const client = await connect();
     await runMigrations(client);
     const dir = migrationsWith({
-      '0002_half_finished.sql': 'CREATE TABLE half_finished (id integer);\nSELECT column_that_does_not_exist FROM accounts;',
+      [`${NEXT}_half_finished.sql`]: 'CREATE TABLE half_finished (id integer);\nSELECT column_that_does_not_exist FROM accounts;',
     });
-    await expect(runMigrations(client, loadMigrations(dir))).rejects.toThrow(/0002_half_finished\.sql failed and was rolled back/);
+    await expect(runMigrations(client, loadMigrations(dir))).rejects.toThrow(new RegExp(`${NEXT}_half_finished\\.sql failed and was rolled back`));
     expect(await tableExists(client, 'half_finished')).toBe(false);
-    expect((await client.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map((r) => r.version)).toEqual([1]);
+    expect((await client.query('SELECT version FROM schema_migrations ORDER BY version')).rows.map((r) => r.version)).toEqual(REAL.map((m) => m.version));
   });
 
   it('refuses to continue when an applied migration was edited', async () => {
     const client = await connect();
-    const dir = migrationsWith({ '0002_add_probe_table.sql': 'CREATE TABLE probe_table (id integer PRIMARY KEY);' });
+    const file = `${NEXT}_add_probe_table.sql`;
+    const dir = migrationsWith({ [file]: 'CREATE TABLE probe_table (id integer PRIMARY KEY);' });
     await runMigrations(client, loadMigrations(dir));
-    writeFileSync(join(dir, '0002_add_probe_table.sql'), 'CREATE TABLE probe_table (id integer PRIMARY KEY, extra text);');
-    await expect(runMigrations(client, loadMigrations(dir))).rejects.toThrow(/0002_add_probe_table\.sql was changed after it was applied/);
+    writeFileSync(join(dir, file), 'CREATE TABLE probe_table (id integer PRIMARY KEY, extra text);');
+    await expect(runMigrations(client, loadMigrations(dir))).rejects.toThrow(new RegExp(`${file.replace('.', '\\.')} was changed after it was applied`));
   });
 
   it('refuses when the database records a migration that no longer exists', async () => {
     const client = await connect();
-    await runMigrations(client, loadMigrations(migrationsWith({ '0002_add_probe_table.sql': 'CREATE TABLE probe_table (id integer);' })));
-    await expect(runMigrations(client)).rejects.toThrow(/records version 2, but no such migration file exists/);
+    await runMigrations(client, loadMigrations(migrationsWith({ [`${NEXT}_add_probe_table.sql`]: 'CREATE TABLE probe_table (id integer);' })));
+    await expect(runMigrations(client)).rejects.toThrow(new RegExp(`records version ${REAL.length + 1}, but no such migration file exists`));
   });
 
-  it('adopts a database that already has the full schema without re-running the baseline (production)', async () => {
+  it('adopts a database that already has the baseline schema, then applies what came after it (production)', async () => {
     const client = await connect();
-    const [baseline] = loadMigrations();
-    await client.query(baseline.sql);
+    await client.query(REAL[0].sql);
     await client.query("INSERT INTO organizations (slug, name, created_at) VALUES ('existing', 'Existing Org', now())");
 
     const report = await runMigrations(client);
-    expect(report).toEqual({ adoptedBaseline: true, applied: [], alreadyApplied: 1 });
+    expect(report).toEqual({ adoptedBaseline: true, applied: REAL_FILES.slice(1), alreadyApplied: 1 });
     expect((await client.query('SELECT adopted FROM schema_migrations WHERE version = 1')).rows[0].adopted).toBe(true);
     expect((await client.query("SELECT count(*)::int AS n FROM organizations WHERE slug = 'existing'")).rows[0].n).toBe(1);
   });
@@ -125,15 +130,14 @@ describe('migration runner', () => {
   it('serialises two runners starting at the same time', async () => {
     const [a, b] = [await connect(), await connect()];
     const reports: MigrationReport[] = await Promise.all([runMigrations(a), runMigrations(b)]);
-    const applied = reports.flatMap((r) => r.applied);
-    expect(applied).toEqual(['0001_baseline.sql']);
-    expect((await a.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(1);
+    expect(reports.flatMap((r) => r.applied)).toEqual(REAL_FILES);
+    expect((await a.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(REAL.length);
   });
 });
 
 describe('loading migration files', () => {
   it('rejects badly named files and gaps in numbering', () => {
     expect(() => loadMigrations(migrationsWith({ 'add_thing.sql': 'SELECT 1;' }))).toThrow(/must be named NNNN_lowercase_name\.sql/);
-    expect(() => loadMigrations(migrationsWith({ '0003_skipped_two.sql': 'SELECT 1;' }))).toThrow(/without gaps/);
+    expect(() => loadMigrations(migrationsWith({ [`${AFTER_NEXT}_skipped_one.sql`]: 'SELECT 1;' }))).toThrow(/without gaps/);
   });
 });
