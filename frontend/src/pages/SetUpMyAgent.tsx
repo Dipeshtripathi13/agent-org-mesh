@@ -32,6 +32,17 @@ export function ingestSnippet(source: IngestSource, url: string, token: string):
       }, null, 2),
     };
   }
+  if (source === 'codex') {
+    // Codex runs hooks from the project's .codex/hooks.json (same PostToolUse shape as Claude
+    // Code). Unlike Claude Code's settings.local.json, git doesn't ignore this file, and it
+    // holds the token — found in the end-to-end test, 2026-09-13.
+    return {
+      file: '.codex/hooks.json in the project you want to report on. It contains your token: add .codex/hooks.json to that project\'s .gitignore. Codex asks you to trust the hook the first time it runs.',
+      snippet: JSON.stringify({
+        hooks: { PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: curl }] }] },
+      }, null, 2),
+    };
+  }
   return {
     file: `your ${SOURCE_LABEL[source]} hook config — the exact key varies by version, but any hook/telemetry mechanism that can run a shell command works`,
     snippet: curl,

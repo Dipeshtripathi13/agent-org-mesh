@@ -187,7 +187,8 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   const availableRuntimes = runtimeCatalog.filter((r) => !registeredRuntimeKeys.has(r.key));
 
   const gmailConnected = gmailAvailable && !!gmail?.connected;
-  const totalConnectedCount = connected.length + registeredRuntimes.length + customAgents.length + (gmailConnected ? 1 : 0);
+  // Calendar is already in `connected` (its status mirrors the Google sign-in), so it isn't added again.
+  const totalConnectedCount = connected.length + registeredRuntimes.length + customAgents.length;
 
   const openConnect = (key: string) => {
     setOpenKey(key);
@@ -354,7 +355,6 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
 
   const openDef = catalog.find((c) => c.key === openKey);
   const openRuntime = runtimeCatalog.find((r) => r.key === openKey);
-  const openIsGmail = openKey === 'gmail';
   const openIsNewCustomAgent = openKey === 'custom-agent-new';
   const openCustomAgent = customAgents.find((a) => `custom:${a.id}` === openKey);
 
@@ -408,20 +408,6 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
               </div>
               );
             })}
-
-            {gmailConnected && owner.kind === 'person' && (
-              <div className="runtime-card" style={{ marginBottom: 0 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>Gmail</span>
-                  {gmail?.email && (
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>{gmail.email}</span>
-                  )}
-                  <span style={{ fontSize: 11, color: 'var(--ink3)' }}>feeds your own daily summary only, never the org</span>
-                  <span className="spacer" />
-                  <button className="chip" disabled={busy} onClick={() => openConnect('gmail')}>Manage</button>
-                </div>
-              </div>
-            )}
 
             {registeredRuntimes.map((r) => {
               const entry = runtimeByKey.get(r.runtimeKey);
@@ -536,11 +522,6 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                   ))}
                 </optgroup>
               ))}
-              {gmailAvailable && !gmailConnected && (
-                <optgroup label="Gmail">
-                  <option value="gmail">Gmail</option>
-                </optgroup>
-              )}
               {availableRuntimes.length > 0 && (
                 <optgroup label="Sub-agents">
                   {availableRuntimes.map((r) => (
@@ -560,19 +541,34 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
 
           {openDef && openDef.authType === 'oauth-google' && owner.kind === 'person' && (
             <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
-              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>{openDef.helpText}</p>
-              <div style={{ display: 'flex', gap: 7 }}>
-                <a
-                  className="chip"
-                  href={api.gmailConnectUrl(owner.personId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ height: 32, display: 'inline-flex', alignItems: 'center', padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, textDecoration: 'none' }}
-                >
-                  Connect Gmail
-                </a>
-                <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Cancel</button>
-              </div>
+              {gmailConnected ? (
+                <>
+                  <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
+                    Connected{gmail?.email ? <> as <strong>{gmail.email}</strong></> : null}. Your agent reads event
+                    titles and busy times, read-only.
+                  </p>
+                  <div style={{ display: 'flex', gap: 7 }}>
+                    <button className="chip" disabled={busy} onClick={disconnectGmailAction}>Disconnect</button>
+                    <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Close</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>{openDef.helpText}</p>
+                  <div style={{ display: 'flex', gap: 7 }}>
+                    <a
+                      className="chip"
+                      href={api.gmailConnectUrl(owner.personId)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ height: 32, display: 'inline-flex', alignItems: 'center', padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, textDecoration: 'none' }}
+                    >
+                      Connect Google Calendar
+                    </a>
+                    <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Cancel</button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -653,10 +649,10 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                       {snippet}
                     </pre>
                     <p className="glossary" style={{ marginTop: 8 }}>
-                      Every command/file-editing tool call will push a real observation. Only
-                      Bash/Edit/Write/NotebookEdit calls are kept; everything else is received
-                      and silently dropped. One token works for any of these three tools —
-                      whichever endpoint your hook config actually posts to.
+                      Each shell command and file edit pushes one observation: the first line of
+                      a command (obvious secrets masked) or the edited file's path relative to the
+                      project. Other tool calls are received and dropped. File reads, file
+                      contents and command output are never sent.
                     </p>
                   </div>
                 );
@@ -664,40 +660,6 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
             </div>
           )}
 
-          {openIsGmail && owner.kind === 'person' && gmailConnected && (
-            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
-              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
-                Connected as <strong>{gmail?.email}</strong>. Feeds your own daily summary
-                and self-ask only — never the org.
-              </p>
-              <div style={{ display: 'flex', gap: 7 }}>
-                <button className="chip" disabled={busy} onClick={disconnectGmailAction}>Disconnect</button>
-                <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Close</button>
-              </div>
-            </div>
-          )}
-
-          {openIsGmail && owner.kind === 'person' && !gmailConnected && (
-            <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>
-              <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>
-                Read-only, today's messages only (subject and snippet, never full bodies).
-                Feeds your own daily summary and self-ask only — never the org. Connecting
-                also enables Calendar automatically, via the same one-time Google consent.
-              </p>
-              <div style={{ display: 'flex', gap: 7 }}>
-                <a
-                  className="chip"
-                  href={api.gmailConnectUrl(owner.personId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ height: 32, display: 'inline-flex', alignItems: 'center', padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, textDecoration: 'none' }}
-                >
-                  Connect Gmail
-                </a>
-                <button className="chip" disabled={busy} onClick={() => setOpenKey(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
 
           {openRuntime && (
             <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--rule2)', borderRadius: 2 }}>

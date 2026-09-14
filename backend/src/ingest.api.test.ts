@@ -17,7 +17,7 @@ async function mintToken(label: string): Promise<string> {
 }
 
 const push = (token: string, payload: unknown, remoteAddress = '10.6.0.1') =>
-  app.inject({ method: 'POST', url: '/api/ingest/codex', remoteAddress, headers: { authorization: `Bearer ${token}` }, payload: payload as never });
+  app.inject({ method: 'POST', url: '/api/ingest/claude-code', remoteAddress, headers: { authorization: `Bearer ${token}` }, payload: payload as never });
 
 beforeAll(async () => {
   ({ app } = await import('./server.js'));

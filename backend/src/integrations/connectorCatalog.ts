@@ -16,7 +16,10 @@ import type { SurfaceKey } from '../domain/types.js';
  *                     against the provider, shows up as Connected), but no ingestion is
  *                     wired yet — same honest gap this codebase already carries for
  *                     other work, just declared explicitly here instead of implied.
- *  - 'coming-soon' — genuinely cannot be connected yet: the auth is OAuth-only and needs
+ *  - 'coming-soon' — cannot be connected yet. Either it hasn't been verified end to end against
+ *                     real accounts (2026-09-14: launch ships only GitHub, Jira, Linear, Claude
+ *                     Code, Codex, Notion and Google Calendar; the others keep their code but stay
+ *                     off until each is verified), or the auth is OAuth-only and needs
  *                     the platform operator to register a developer app with that vendor
  *                     first (a client id/secret in env vars), the same shape as Gmail's
  *                     own GOOGLE_CLIENT_ID/SECRET before those existed. Shown in the
@@ -96,9 +99,9 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     helpText: 'Generate a token below, then paste it into your Codex CLI hook/telemetry config.',
   },
   {
-    key: 'gemini-cli', name: 'Gemini CLI', category: 'code', authType: 'ingest-token', status: 'live',
+    key: 'gemini-cli', name: 'Gemini CLI', category: 'code', authType: 'ingest-token', status: 'coming-soon',
     fields: [],
-    helpText: 'Generate a token below, then paste it into your Gemini CLI telemetry config.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
     key: 'notion', name: 'Notion', category: 'docs', authType: 'pat', status: 'live',
@@ -106,112 +109,112 @@ export const CONNECTOR_CATALOG: ConnectorDef[] = [
     helpText: 'notion.so/my-integrations → New integration. Share the pages you want read with it.',
   },
   {
-    key: 'confluence', name: 'Confluence', category: 'docs', authType: 'pat-with-site', status: 'live',
+    key: 'confluence', name: 'Confluence', category: 'docs', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'siteUrl', label: 'Site URL', placeholder: 'https://yourteam.atlassian.net' },
       { key: 'email', label: 'Email' },
       { key: 'apiToken', label: 'API token', secret: true },
     ],
-    helpText: 'Same Atlassian account and API token as Jira — one token covers both.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'asana', name: 'Asana', category: 'project-mgmt', authType: 'pat', status: 'live',
+    key: 'asana', name: 'Asana', category: 'project-mgmt', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'Personal access token', secret: true }],
-    helpText: 'Asana → My Settings → Apps → Manage Developer Apps → Personal access tokens.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'gitlab', name: 'GitLab', category: 'code', authType: 'pat-with-site', status: 'live',
+    key: 'gitlab', name: 'GitLab', category: 'code', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'token', label: 'Personal access token', placeholder: 'glpat-...', secret: true },
       { key: 'siteUrl', label: 'Instance URL (self-hosted only)', placeholder: 'https://gitlab.com', optional: true },
     ],
-    helpText: 'GitLab → Edit profile → Access tokens. read_api scope is enough. Leave the instance URL blank for gitlab.com.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'hubspot', name: 'HubSpot', category: 'crm', authType: 'pat', status: 'live',
+    key: 'hubspot', name: 'HubSpot', category: 'crm', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'Private app access token', secret: true }],
-    helpText: 'HubSpot → Settings → Integrations → Private Apps → create one with read-only CRM scopes.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'zendesk', name: 'Zendesk', category: 'support', authType: 'pat-with-site', status: 'live',
+    key: 'zendesk', name: 'Zendesk', category: 'support', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'siteUrl', label: 'Subdomain', placeholder: 'yourcompany' },
       { key: 'email', label: 'Email' },
       { key: 'apiToken', label: 'API token', secret: true },
     ],
-    helpText: 'Zendesk Admin Center → Apps and integrations → APIs → Zendesk API → Add API token.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
     key: 'calendar', name: 'Google Calendar', category: 'calendar', authType: 'oauth-google', status: 'live',
     fields: [],
-    helpText: 'Uses the same Google sign-in as Gmail — connect Gmail in this panel to enable Calendar too.',
+    helpText: 'Sign in with Google to let your agent read your calendar: event titles and busy times, read-only.',
   },
   {
-    key: 'airflow', name: 'Airflow', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    key: 'airflow', name: 'Airflow', category: 'data-eng', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'siteUrl', label: 'Webserver URL', placeholder: 'https://airflow.yourcompany.com' },
       { key: 'username', label: 'Username' },
       { key: 'password', label: 'Password', secret: true },
     ],
-    helpText: 'A dedicated user with the built-in Viewer role — Airflow → Security → List Users → Add a user, role: Viewer.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'dbt', name: 'dbt Cloud', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    key: 'dbt', name: 'dbt Cloud', category: 'data-eng', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'token', label: 'Service account token', secret: true },
       { key: 'accountId', label: 'Account ID' },
       { key: 'siteUrl', label: 'Host (only if not cloud.getdbt.com)', placeholder: 'https://cloud.getdbt.com', optional: true },
     ],
-    helpText: 'dbt Cloud → Account settings → Service tokens → create one with Read-Only or Metadata-only permissions.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'snowflake', name: 'Snowflake', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    key: 'snowflake', name: 'Snowflake', category: 'data-eng', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'account', label: 'Account identifier', placeholder: 'myorg-myaccount' },
       { key: 'username', label: 'Username' },
       { key: 'privateKey', label: 'Private key (PEM)', secret: true, multiline: true },
       { key: 'warehouse', label: 'Warehouse', optional: true },
     ],
-    helpText: 'Register a public key on this user (ALTER USER ... SET RSA_PUBLIC_KEY=...) and paste the matching private key — Snowflake\'s own recommended auth for service accounts, never a password.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'databricks', name: 'Databricks', category: 'data-eng', authType: 'pat-with-site', status: 'live',
+    key: 'databricks', name: 'Databricks', category: 'data-eng', authType: 'pat-with-site', status: 'coming-soon',
     fields: [
       { key: 'workspaceUrl', label: 'Workspace URL', placeholder: 'https://dbc-xxxxxxxx-xxxx.cloud.databricks.com' },
       { key: 'clientId', label: 'Service principal client ID' },
       { key: 'clientSecret', label: 'OAuth client secret', secret: true },
     ],
-    helpText: 'Create a service principal (Workspace admin settings → Identity and access → Service principals), generate an OAuth secret for it, and grant it CAN VIEW on the jobs you want read — Databricks\' own recommended auth for automated access, never a personal access token tied to a human account.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'trello', name: 'Trello', category: 'project-mgmt', authType: 'pat', status: 'live',
+    key: 'trello', name: 'Trello', category: 'project-mgmt', authType: 'pat', status: 'coming-soon',
     fields: [
       { key: 'apiKey', label: 'API key' },
       { key: 'token', label: 'Token', secret: true },
     ],
-    helpText: 'trello.com/power-ups/admin → generate an API key, then authorize a token from that same page.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
 
   // ---- connectable: real connect+validate, ingestion not yet wired ----
   {
-    key: 'airtable', name: 'Airtable', category: 'project-mgmt', authType: 'pat', status: 'connectable',
+    key: 'airtable', name: 'Airtable', category: 'project-mgmt', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'Personal access token', placeholder: 'pat...', secret: true }],
-    helpText: 'airtable.com/create/tokens — read-only scopes on the bases you want read.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'monday', name: 'Monday.com', category: 'project-mgmt', authType: 'pat', status: 'connectable',
+    key: 'monday', name: 'Monday.com', category: 'project-mgmt', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'API token', secret: true }],
-    helpText: 'Monday → Avatar → Developers → My Access Tokens.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'figma', name: 'Figma', category: 'design', authType: 'pat', status: 'connectable',
+    key: 'figma', name: 'Figma', category: 'design', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'Personal access token', placeholder: 'figd_...', secret: true }],
-    helpText: 'Figma → Settings → Personal access tokens.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
   {
-    key: 'discord', name: 'Discord', category: 'comms', authType: 'pat', status: 'connectable',
+    key: 'discord', name: 'Discord', category: 'comms', authType: 'pat', status: 'coming-soon',
     fields: [{ key: 'token', label: 'Bot token', secret: true }],
-    helpText: 'discord.com/developers/applications → your app → Bot → Reset/copy token.',
+    helpText: 'Not available yet — we turn a tool on only after it has been verified end to end against real accounts.',
   },
 
   // ---- coming soon: needs a platform-registered OAuth app first ----

@@ -58,8 +58,10 @@ export async function getClaudeCodeActivitySince(since: Date = startOfToday(), p
   let entries: string[] = [];
   // Local transcripts belong to whoever runs the server, not to the person being asked
   // about — on a shared deployment they would leak the host's sessions into anyone's answer
-  // (release audit SEC-12). Pushed events below are the real, per-person mechanism.
-  if (process.env.NODE_ENV !== 'production') {
+  // (release audit SEC-12). Even in local development they did exactly that: the end-to-end
+  // test (2026-09-13) got the developer's own session described as a test employee's work.
+  // Pushed events below are the real, per-person mechanism; the local scan is opt-in only.
+  if (process.env.CLAUDE_CODE_LOCAL_TRANSCRIPTS === '1' && process.env.NODE_ENV !== 'production') {
     try {
       entries = await readdir(SESSIONS_DIR);
       localAvailable = true;

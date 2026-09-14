@@ -1,12 +1,11 @@
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-// calendar.readonly rides along with the same consent screen and the same access token —
-// Google Calendar (surfaces_catalog's 'calendar') is real but deliberately has no
-// connection row of its own (see googleCalendar.ts): it's just "is Gmail connected," read
-// with a wider scope. Scopes are baked into a token at consent time, so this only takes
-// effect for a connection made after this line changed — not a live concern yet, since no
-// real Gmail consent has actually round-tripped against this app (see CLAUDE.md).
-const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly openid email';
+// Calendar only (launch decision, 2026-09-14). Gmail's read scope is a Google "restricted"
+// scope: letting anyone outside a 100-person test list sign in needs Google's app verification
+// plus a paid third-party security assessment, so Gmail stays "coming soon" until that's done.
+// Scopes are fixed at consent time; people who connected before this keep their older token,
+// and nothing in the app reads Gmail any more.
+const SCOPE = 'https://www.googleapis.com/auth/calendar.readonly openid email';
 
 function requireEnv(name: string): string {
   const value = process.env[name];

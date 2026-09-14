@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatIngestedEventsDigest, MAX_DIGEST_EVENTS, MAX_EVENT_SUMMARY_CHARS, normalizeIngestPayload } from './eventIngestion.js';
+import { formatIngestedEventsDigest, MAX_DIGEST_EVENTS, MAX_EVENT_SUMMARY_CHARS, normalizeIngestPayload, redactSecrets, relativePath } from './eventIngestion.js';
 import type { IngestedEvent } from '../db/repo.js';
 
 /**
@@ -28,8 +28,16 @@ describe('normalizeIngestPayload — Claude Code native hook shape', () => {
     expect(normalizeIngestPayload({ tool_name: 'Read', tool_input: { file_path: 'x.ts' } })).toBeNull();
   });
 
-  it('rejects a Bash call with no description, even though the tool_name matches', () => {
-    expect(normalizeIngestPayload({ tool_name: 'Bash', tool_input: { command: 'npm test' } })).toBeNull();
+  // Deliberately changed 2026-09-14: this used to be rejected, which silently discarded every
+  // Codex shell call (Codex never sends a description). The first line of the command is used.
+  it('falls back to the first line of the command when a Bash call has no description', () => {
+    expect(normalizeIngestPayload({ tool_name: 'Bash', tool_input: { command: 'npm test\nnpm run build' } }))
+      .toMatchObject({ kind: 'action', summary: 'Ran: npm test' });
+  });
+
+  it('rejects a Bash call with neither a description nor a command', () => {
+    expect(normalizeIngestPayload({ tool_name: 'Bash', tool_input: {} })).toBeNull();
+    expect(normalizeIngestPayload({ tool_name: 'Bash', tool_input: { command: '   \n  ' } })).toBeNull();
   });
 
   it('rejects a Bash call whose description is only whitespace', () => {
@@ -47,6 +55,83 @@ describe('normalizeIngestPayload — Claude Code native hook shape', () => {
 
   it('handles a missing tool_input entirely without throwing', () => {
     expect(normalizeIngestPayload({ tool_name: 'Bash' })).toBeNull();
+  });
+});
+
+describe('normalizeIngestPayload — Codex PostToolUse hook (real payload shape, captured 2026-09-13)', () => {
+  const cwd = '/Users/someone/work/billing-service';
+  const codexShell = {
+    session_id: '01a09bde-ff0b-7220-8f45-6e91f53e2150', turn_id: '01a09bde-ffb9-7bf1-8b4e-913f4feea174',
+    transcript_path: '/Users/someone/.codex/sessions/2026/09/13/rollout.jsonl', cwd,
+    hook_event_name: 'PostToolUse', model: 'gpt-5.6-sol', permission_mode: 'bypassPermissions',
+    tool_name: 'Bash', tool_input: { command: 'python3 test_tax.py' }, tool_response: '', tool_use_id: 'exec-ff5a4fd7',
+  };
+
+  it('records a Codex shell call from its command', () => {
+    expect(normalizeIngestPayload(codexShell)).toMatchObject({ kind: 'action', summary: 'Ran: python3 test_tax.py' });
+  });
+
+  it('never stores anything but the summary — no transcript path, session id or working directory', () => {
+    const stored = JSON.stringify(normalizeIngestPayload(codexShell));
+    expect(stored).not.toContain('/Users/someone');
+    expect(stored).not.toContain('01a09bde');
+  });
+
+  it('masks credentials that appear in a command line', () => {
+    const cases: [string, string][] = [
+      ["curl -H 'Authorization: Bearer abc.def.ghi' https://api.example.com", 'abc.def.ghi'],
+      ['export GITHUB_TOKEN=ghp_0123456789abcdefghijABCDEFGHIJ', 'ghp_0123456789abcdefghijABCDEFGHIJ'],
+      ['psql postgres://admin:hunter2@db.internal/app', 'hunter2'],
+      ['deploy --api-key=sk-live-0123456789abcdefghij', 'sk-live-0123456789abcdefghij'],
+      ['curl -u deploy:s3cret https://ci.example.com', 's3cret'],
+    ];
+    for (const [command, secret] of cases) {
+      const summary = normalizeIngestPayload({ ...codexShell, tool_input: { command } })!.summary;
+      expect(summary, command).not.toContain(secret);
+      expect(summary).toContain('[redacted]');
+    }
+  });
+
+  it("records a Codex apply_patch edit as the files it touched, never the patch contents", () => {
+    // The real apply_patch payload Codex sent in the end-to-end test (patch body abridged).
+    const patch = '*** Begin Patch\n*** Add File: tax.py\n+def vat(amount, rate):\n+    return round(amount * rate, 2)\n*** Add File: test_tax.py\n+from tax import vat\n*** End Patch';
+    const event = normalizeIngestPayload({ ...codexShell, tool_name: 'apply_patch', tool_input: { command: patch } });
+    expect(event).toMatchObject({ kind: 'file', summary: 'tax.py, test_tax.py' });
+    expect(event!.summary).not.toContain('def vat');
+  });
+
+  it('keeps an absolute patch path relative to the project', () => {
+    const patch = `*** Begin Patch\n*** Update File: ${cwd}/src/invoice.py\n@@\n-a\n+b\n*** Delete File: ${cwd}/old.py\n*** End Patch`;
+    expect(normalizeIngestPayload({ ...codexShell, tool_name: 'apply_patch', tool_input: { command: patch } })?.summary)
+      .toBe('src/invoice.py, old.py');
+  });
+
+  it('ignores an apply_patch with no file headers', () => {
+    expect(normalizeIngestPayload({ ...codexShell, tool_name: 'apply_patch', tool_input: { command: 'not a patch' } })).toBeNull();
+  });
+
+  it('caps a long command', () => {
+    const summary = normalizeIngestPayload({ ...codexShell, tool_input: { command: `echo ${'x'.repeat(2000)}` } })!.summary;
+    expect(summary.length).toBeLessThanOrEqual('Ran: '.length + 160);
+  });
+});
+
+describe('relativePath / redactSecrets', () => {
+  it('reports paths relative to the project, never the full local path', () => {
+    expect(relativePath('/Users/ben/work/app/src/invoice.py', '/Users/ben/work/app')).toBe('src/invoice.py');
+    expect(relativePath('/Users/ben/work/app/src/invoice.py', '/Users/ben/work/app/')).toBe('src/invoice.py');
+    expect(relativePath('/etc/hosts', '/Users/ben/work/app')).toBe('etc/hosts');
+    expect(relativePath('/Users/ben/secret-project/notes.md', undefined)).toBe('secret-project/notes.md');
+    expect(relativePath('src/tax.py', '/Users/ben/work/app')).toBe('src/tax.py');
+  });
+
+  it('a Claude Code edit is stored relative to its cwd', () => {
+    expect(normalizeIngestPayload({ tool_name: 'Write', cwd: '/Users/ben/work/app', tool_input: { file_path: '/Users/ben/work/app/invoice.py' } })?.summary)
+      .toBe('invoice.py');
+  });
+
+  it('leaves ordinary text alone', () => {
+    expect(redactSecrets('ran the test suite for invoices')).toBe('ran the test suite for invoices');
   });
 });
 

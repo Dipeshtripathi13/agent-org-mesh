@@ -1573,6 +1573,39 @@ signing up a brand-new account and screenshotting every screen, not by reading c
 Not yet reworded: Admin screens (Overview, Policy matrix, Coverage matrix, Audit log), Preview's
 intro, and OrgSetup.
 
+**Launch ships seven tools, and each has to work end to end (decision 2026-09-14).** GitHub, Jira,
+Linear, Claude Code, Codex, Notion and Google Calendar. Every other connector keeps its code but
+is `status: 'coming-soon'` in `connectorCatalog.ts` until it's verified against real accounts;
+the server refuses to connect them or accept pushes for them (404). An end-to-end test with real
+Claude Code and Codex sessions (2026-09-13) found what this fixes:
+- **Codex recorded nothing.** Codex's PostToolUse hook sends `tool_input.command` with no
+  `description` and edits files with `apply_patch`; both were accepted (202) and discarded.
+  `normalizeIngestPayload` now uses the command's first line (`Ran: …`, credentials masked by
+  `redactSecrets`, 160 chars) and the file names from patch headers. Real payloads are fixtures in
+  `eventIngestion.test.ts`. The app's Codex instructions point at `.codex/hooks.json` and say to
+  git-ignore it (it holds the token; Claude Code's `settings.local.json` is ignored by default).
+- **A push switched on a tool marked "not used for your role"**, and the content reached the
+  manager's answer. The ingest route now refuses to record for an `outOfScope` tool, and a tool
+  paused in Controls (`absent` with earlier events) stays paused.
+- **A failed model call dropped the claim**, so every asker, the subject included, was told
+  "nothing is disclosable". `realClaims.claimText` saves the deterministic sentence instead.
+- **Planted text was saved into a claim** (not obeyed, but repeated to the manager). The
+  claim-writing prompt now excludes instructions and pay/performance/health/personal/leaving.
+- **Full local paths** reached managers; paths are stored relative to the hook's `cwd`.
+- **In local dev, answers read the developer's own Claude Code logs.** That scan now needs
+  `CLAUDE_CODE_LOCAL_TRANSCRIPTS=1` (never in production).
+Also: Google sign-in requests `calendar.readonly` only — Gmail's read scope is Google-restricted
+(verification plus a paid security assessment), so Gmail is off and its answer bridge removed;
+Calendar has its own Connect/Disconnect in the connect panel. The fake "(Simulated)" sub-agent
+replies are gone. `GET /healthz` (database ping, no session) and SIGTERM graceful shutdown
+(release audit OPS-05). Tests: `launch.api.test.ts`, `claimText.test.ts`, additions to
+`eventIngestion.test.ts` and `promptSafety.test.ts`; 12 mutations (each fix removed in turn) all
+fail the suites. **Still to do before calling the seven verified:** a real-account round trip in
+production for GitHub, Jira, Notion, Google Calendar, Claude Code and Codex (the operator has those
+accounts), with Claude and ChatGPT as the org agent. Linear has no real account available — its
+MCP read carries the weakest evidence of the seven. The landing page still lists the non-launch
+tools and mentions Gmail for the private agent; update it to match.
+
 **New signups must verify their email, and anyone can reset a forgotten password by email
 (2026-09-12).** Both use one-time links from `email_tokens` (`aov_`/`aor_` token, SHA-256 hash
 at rest, single-use; issuing a new link of the same kind retires older ones; verification

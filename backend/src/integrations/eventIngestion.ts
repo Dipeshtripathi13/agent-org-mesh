@@ -10,7 +10,7 @@ import type { IngestedEvent } from '../db/repo.js';
  * session-log read (it only works because this demo happens to run both on one machine).
  */
 
-const NARRATIVE_TOOLS = new Set(['Bash', 'Edit', 'Write', 'NotebookEdit']);
+const NARRATIVE_TOOLS = new Set(['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch']);
 
 export interface NormalizedEvent {
   kind: 'action' | 'file';
@@ -51,21 +51,63 @@ function occurredAtFrom(value: unknown, now = new Date()): string {
   return new Date(time).toISOString();
 }
 
+/** Masks the credential shapes most likely to appear in a shell command line. A command is
+ *  only ever used when the tool gave no description (Codex never does), and even then only
+ *  its first line; this catches the obvious leaks, it is not a guarantee. */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|ao[ivr]_[A-Za-z0-9_-]{20,}|lin_api_[A-Za-z0-9]{16,}|ntn_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,})\b/g, '[redacted]')
+    .replace(/(authorization:\s*(?:bearer|basic|token)\s+)[^\s'"]+/gi, '$1[redacted]')
+    .replace(/((?:password|passwd|pwd|token|secret|api[_-]?key)\s*[=:]\s*)[^\s'"]+/gi, '$1[redacted]')
+    .replace(/(-u\s+[^\s:]+:)[^\s'"]+/g, '$1[redacted]')
+    // user:password@ in any URL scheme — postgres://, mongodb+srv://, redis://, https://
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:)[^\s/@]+@/gi, '$1[redacted]@');
+}
+
+/** Paths are reported relative to the project the tool ran in, so a manager never sees the
+ *  person's username or folder layout (end-to-end test, 2026-09-13). A path outside the
+ *  project keeps only its last two segments. */
+export function relativePath(filePath: string, cwd: unknown): string {
+  const root = typeof cwd === 'string' && cwd.startsWith('/') ? cwd.replace(/\/+$/, '') : null;
+  if (root && filePath.startsWith(`${root}/`)) return filePath.slice(root.length + 1);
+  if (filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath)) return filePath.split(/[\\/]/).filter(Boolean).slice(-2).join('/');
+  return filePath;
+}
+
+/** Codex's apply_patch sends the whole patch as `command`; only the file names are kept. */
+function patchedFiles(patch: string): string[] {
+  const files: string[] = [];
+  for (const m of patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) files.push(m[1].trim());
+  return files;
+}
+
 export function normalizeIngestPayload(body: unknown): NormalizedEvent | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
 
+  // Claude Code and Codex both send this PostToolUse hook shape. Codex omits `description`
+  // on shell calls and edits files with `apply_patch`; before 2026-09-14 both were accepted
+  // and silently discarded, so Codex never recorded anything (end-to-end test, 2026-09-13).
   if (typeof b.tool_name === 'string') {
     if (!NARRATIVE_TOOLS.has(b.tool_name)) return null;
-    const input = (b.tool_input as Record<string, unknown>) ?? {};
+    const input = b.tool_input && typeof b.tool_input === 'object' && !Array.isArray(b.tool_input)
+      ? (b.tool_input as Record<string, unknown>) : {};
+    const now = new Date().toISOString();
     if (b.tool_name === 'Bash') {
       const description = typeof input.description === 'string' ? cleanSummary(input.description) : null;
-      if (!description) return null;
-      return { kind: 'action', summary: description, occurredAt: new Date().toISOString() };
+      if (description) return { kind: 'action', summary: description, occurredAt: now };
+      const firstLine = typeof input.command === 'string' ? input.command.split('\n').find((l) => l.trim()) : undefined;
+      const command = firstLine ? cleanSummary(`Ran: ${redactSecrets(firstLine.trim()).slice(0, 160)}`) : null;
+      return command ? { kind: 'action', summary: command, occurredAt: now } : null;
     }
-    const filePath = typeof input.file_path === 'string' ? cleanSummary(input.file_path) : null;
+    if (b.tool_name === 'apply_patch') {
+      const files = typeof input.command === 'string' ? patchedFiles(input.command).map((f) => relativePath(f, b.cwd)) : [];
+      const summary = files.length ? cleanSummary(files.join(', ')) : null;
+      return summary ? { kind: 'file', summary, occurredAt: now } : null;
+    }
+    const filePath = typeof input.file_path === 'string' ? cleanSummary(relativePath(input.file_path, b.cwd)) : null;
     if (!filePath) return null;
-    return { kind: 'file', summary: filePath, occurredAt: new Date().toISOString() };
+    return { kind: 'file', summary: filePath, occurredAt: now };
   }
 
   if ((b.kind === 'action' || b.kind === 'file') && typeof b.summary === 'string') {

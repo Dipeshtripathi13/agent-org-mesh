@@ -36,8 +36,7 @@ import { getMainProvider, getPersonalMainProvider } from './integrations/runtime
 import { isSafeExternalUrl } from './integrations/urlSafety.js';
 import { formatClaudeCodeDigest, getTodaysClaudeCodeActivity, PROJECT_ROOT } from './integrations/claudeCodeActivity.js';
 import { askClaudeCli, claudeCliAvailable } from './integrations/claudeCli.js';
-import { disconnectGmail, getGmailStatus, getValidGmailAccessToken, saveGmailConnection } from './integrations/gmailConnection.js';
-import { formatGmailDigest, getEmailsSince } from './integrations/gmail.js';
+import { disconnectGmail, getGmailStatus, saveGmailConnection } from './integrations/gmailConnection.js';
 import { buildAuthUrl, exchangeCode, googleConfigured } from './integrations/googleOAuth.js';
 import { disconnectGithub, getGithubStatus, saveGithubConnection, disconnectGithubAccount, getGithubAccountStatus, saveGithubAccountConnection } from './integrations/githubConnection.js';
 import { disconnectJira, getJiraStatus, saveJiraConnection, disconnectJiraAccount, getJiraAccountStatus, saveJiraAccountConnection } from './integrations/jiraConnection.js';
@@ -1452,20 +1451,6 @@ app.post('/api/person/:id/surface/cycle', { schema: bodySchema({ surfaceKey: str
    Everything a person registers here is a sub-agent — a personal tool the org's main
    agent can query for a status summary, but structurally never touches org surfaces. */
 
-// Deterministic, clearly-labelled placeholder content for the "query a sub-agent" demo —
-// never persisted, never treated as a claim. See the AskUserQuestion decision this
-// feature shipped under: simulated response, no write to claims/audit.
-// claude-code deliberately has no entry here — the query handler below always returns
-// early for it (real log-based digest, now also a live CLI ask), so a sample here would
-// be dead, unreachable code.
-const TASK_SAMPLES: Record<string, string[]> = {
-  copilot: ['suggested completions across 14 files', 'flagged 2 unused imports in payments-core'],
-  gemini: ['summarised the Q3 planning document', 'drafted release notes for the 4.3 cut'],
-  'llama-local': ['indexed 40 pages in Confluence', 'answered 3 questions about the deploy runbook'],
-  'claude-sonnet': ["answered 5 cross-team questions", 'summarised this week’s escalations'],
-  chatgpt: ['drafted a customer follow-up email', 'outlined next sprint’s tickets'],
-};
-
 app.get('/api/runtimes', async () => ({ catalog: await repo.getRuntimeCatalog() }));
 
 app.get('/api/person/:id/runtimes', async (req, reply) => {
@@ -1784,12 +1769,9 @@ app.get('/api/person/:id/runtimes/:key/query', async (req, reply) => {
 
   const catalog = await repo.getRuntimeCatalog();
   const name = catalog.find((r) => r.key === key)?.name ?? key;
-  const tasks = TASK_SAMPLES[key] ?? [];
-  const today = new Date().toISOString().slice(0, 10);
-  const summary = tasks.length
-    ? `${name} reports for ${today}: ${tasks.join('; ')}.`
-    : `${name} has nothing to report for ${today}.`;
-  return { text: `${summary} (Simulated — ${name} isn't actually connected; this doesn't reflect real activity.)`, real: false };
+  // Never invented activity, not even labelled as simulated (release audit FUN): only Claude
+  // Code has a real activity source behind this query today.
+  return { text: `${name} doesn't send activity reports to this app yet, so there's nothing real to show.`, real: false };
 });
 
 /** A genuinely live question, answered by shelling out to the person's own already-
@@ -1867,27 +1849,27 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
   const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
   reply.type('text/html');
   const page = (message: string) =>
-    `<!doctype html><meta charset="utf-8"><title>Gmail</title><p>${escapeHtml(message)} <a href="${escapeHtml(FRONTEND_URL)}">Return to the app</a>.</p>`;
+    `<!doctype html><meta charset="utf-8"><title>Google Calendar</title><p>${escapeHtml(message)} <a href="${escapeHtml(FRONTEND_URL)}">Return to the app</a>.</p>`;
 
   const stored = req.cookies[OAUTH_STATE_COOKIE];
   reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/api/oauth/gmail' });
 
   if (error || !code || !state) {
     reply.code(400);
-    return page(`Gmail connection failed: ${error ?? 'missing code'}.`);
+    return page(`Google Calendar connection failed: ${error ?? 'missing code'}.`);
   }
   const [storedPersonId, storedNonce] = (stored ?? '').split('.');
   const nonceMatches = !!storedNonce && storedNonce.length === state.length
     && timingSafeEqual(Buffer.from(storedNonce), Buffer.from(state));
   if (!nonceMatches) {
     reply.code(400);
-    return page('Gmail connection failed: this sign-in link expired or was not started from this browser. Start again from "Set up my agent".');
+    return page('Google Calendar connection failed: this sign-in link expired or was not started from this browser. Start again from "Set up my agent".');
   }
   const personId = Number(storedPersonId);
   const self = await requireSelf(req, personId);
   if (!self.ok) {
     reply.code(self.code);
-    return page('Gmail connection failed: log in as the person connecting Gmail, then start again.');
+    return page('Google Calendar connection failed: log in as the person connecting Google Calendar, then start again.');
   }
   try {
     const tokens = await exchangeCode(code);
@@ -1906,12 +1888,12 @@ app.get('/api/oauth/gmail/callback', async (req, reply) => {
       await repo.updatePersonSurface(personId, 'calendar', 'connected');
     }
   } catch (err) {
-    console.error({ err }, 'gmail oauth callback failed');
+    console.error({ err }, 'google calendar oauth callback failed');
     reply.code(502);
-    return page('Gmail connection failed: Google did not accept the sign-in. Start again from "Set up my agent".');
+    return page('Google Calendar connection failed: Google did not accept the sign-in. Start again from "Set up my agent".');
   }
   // A meta refresh, not an inline script — helmet's CSP blocks inline scripts in production.
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=${escapeHtml(FRONTEND_URL)}"><title>Gmail connected</title><p>Gmail connected. Returning to the app&hellip; <a href="${escapeHtml(FRONTEND_URL)}">Continue</a>.</p>`;
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=${escapeHtml(FRONTEND_URL)}"><title>Google Calendar connected</title><p>Google Calendar connected. Returning to the app&hellip; <a href="${escapeHtml(FRONTEND_URL)}">Continue</a>.</p>`;
 });
 
 app.get('/api/person/:id/gmail/status', async (req, reply) => {
@@ -2658,6 +2640,11 @@ app.post('/api/ingest/:source', {
     }
   }
 
+  if (CONNECTOR_CATALOG.find((c) => c.key === source)?.status === 'coming-soon') {
+    reply.code(404);
+    return { error: 'this tool is not available yet' };
+  }
+
   const normalized = normalizeIngestPayload(req.body);
   if (!normalized) {
     reply.code(202);
@@ -2665,13 +2652,25 @@ app.post('/api/ingest/:source', {
   }
 
   if (resolved) {
+    const person = await repo.getPerson(resolved.personId);
+    const state = person.surfaces[source as SurfaceKey];
+    // A tool the organization marked out of scope for this person's role stays out of scope:
+    // pushing activity must never switch it on (end-to-end test, 2026-09-13 — a push made an
+    // out-of-scope tool "connected" and its text reached the manager's answer).
+    if (state === 'outOfScope') {
+      reply.code(202);
+      return { recorded: false, reason: 'this tool is not used for your role in this organization' };
+    }
+    // Paused in Controls: a push must not quietly resume it. "Absent" with earlier events on
+    // record means paused; absent with none is a first connection.
+    if (state === 'absent' && (await repo.getIngestedEventsSince(resolved.personId, source, new Date(0))).length > 0) {
+      reply.code(202);
+      return { recorded: false, reason: 'paused — resume this tool in Controls to record activity again' };
+    }
     await recordEvent(resolved.personId, source, normalized);
     // The first real pushed event IS the self-service act of connecting the surface —
-    // same principle as GitHub's PAT-save flipping its surface, just triggered by real
-    // activity arriving instead of a credential being validated (a token alone doesn't
-    // prove anything is actually being pushed yet; a landed event does).
-    const person = await repo.getPerson(resolved.personId);
-    if (person.surfaces[source as SurfaceKey] !== 'connected') {
+    // triggered by real activity arriving (a token alone proves nothing is being pushed yet).
+    if (state !== 'connected') {
       await repo.updatePersonSurface(resolved.personId, source as SurfaceKey, 'connected');
     }
   } else if (resolvedAccount) {
@@ -2982,41 +2981,8 @@ app.post('/api/agent/ask', {
 
   // The org's one main agent does the synthesizing — the same org whose tools gatherAll()
   // just invoked above. Claude, ChatGPT, or a self-hosted model all resolve identically.
-  // Resolved before the Gmail bridge below (moved earlier than it used to be) since that
-  // bridge needs the same provider for its own relevance check.
   const { provider, runtimeName, configEnvVar } = await getMainProvider(orgId);
   const consultedSources: string[] = surfaces.filter((s) => usedSurfaceKeys.includes(s.key)).map((s) => s.name);
-
-  // Ephemeral, self-ask-only Gmail bridge. Gmail is deliberately NOT a resourceProviders.ts
-  // provider — its content must never become a claims-table row a manager could later see
-  // through cross-person Ask (see that file's module comment). This only ever runs when
-  // the requester is asking about themselves, feeds directly into *this turn's* prompt,
-  // and is never persisted as anything but the label "Gmail" in consultedSources — the
-  // digest itself lives only in this request's memory. Real code, same fail-open shape as
-  // every other integration call site here; UNVERIFIED against a live Gmail account (see
-  // CLAUDE.md) since completing Google's own consent screen needs a real person's action.
-  const isSelfAsk = body.role === 'Self' && requesterId === body.targetId;
-  if (isSelfAsk && provider?.configured()) {
-    try {
-      const gmailToken = await getValidGmailAccessToken(body.targetId);
-      if (gmailToken) {
-        const relevant = await provider.selectRelevantSurfaces(question, [
-          { surfaceKey: 'gmail', reads: 'Your own inbox — sender, subject, snippet, read-only' },
-        ]);
-        if (relevant.has('gmail')) {
-          const gmailSince = new Date();
-          gmailSince.setUTCDate(gmailSince.getUTCDate() - (relevant.get('gmail') ?? DEFAULT_SINCE_DAYS));
-          const digest = formatGmailDigest(await getEmailsSince(gmailToken, gmailSince));
-          if (digest) {
-            sections.push({ source: 'Your Gmail', digest });
-            consultedSources.push('Gmail');
-          }
-        }
-      }
-    } catch (err) {
-      app.log.error({ err }, 'gmail self-ask bridge failed — continuing without it');
-    }
-  }
 
   let answer: string;
   if (sections.length === 0) {
@@ -3548,6 +3514,21 @@ if (isProduction) {
   });
 }
 
+/* ---------- health ---------- */
+
+/** For Railway's health check and uptime monitors (release audit OPS-05): no session, no
+ *  details beyond whether the database answers. */
+app.get('/healthz', async (_req, reply) => {
+  try {
+    const { pool } = await import('./db/pool.js');
+    await pool.query('SELECT 1');
+    return { ok: true };
+  } catch {
+    reply.code(503);
+    return { ok: false };
+  }
+});
+
 /* ---------- go ---------- */
 
 // Exported for the route-level authorization suite (src/authz.api.test.ts), which drives
@@ -3560,4 +3541,21 @@ if (!process.env.VITEST) {
   console.log(`agent-org-mesh api → http://localhost:${port}`);
   // Deletes pushed tool activity older than the privacy policy's retention period.
   startActivityRetention();
+
+  // Graceful shutdown (release audit OPS-05): Railway sends SIGTERM before replacing a
+  // deployment. Stop accepting requests, let in-flight ones finish, then close the database
+  // pool. A hard deadline keeps a stuck request from blocking the restart.
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received — shutting down`);
+    const force = setTimeout(() => process.exit(1), 25_000);
+    force.unref();
+    void app.close()
+      .then(async () => { const { pool } = await import('./db/pool.js'); await pool.end(); })
+      .then(() => process.exit(0), (err) => { console.error('shutdown failed', err); process.exit(1); });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

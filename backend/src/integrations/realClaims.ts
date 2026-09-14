@@ -41,6 +41,24 @@ const startOfToday = () => {
   return d;
 };
 
+/** The org's agent writes the claim sentence when it can. If that call fails (a rejected key,
+ *  an outage), the plain deterministic sentence is saved instead. Before this, the error
+ *  dropped the claim entirely and every asker — even the person asking about themselves — was
+ *  told "nothing is disclosable" (end-to-end test, 2026-09-13). */
+export async function claimText(orgId: number, personName: string, digest: string, fallback: string): Promise<string> {
+  const { provider } = await getMainProvider(orgId);
+  if (!provider?.configured()) return fallback;
+  try {
+    return await provider.writeClaim(personName, digest);
+  } catch (err) {
+    console.error(JSON.stringify({
+      level: 'error', source: 'claim-writer', msg: 'the model could not write this claim; saved the plain summary instead',
+      error: err instanceof Error ? err.message : String(err),
+    }));
+    return fallback;
+  }
+}
+
 function deterministicClaimText(digest: { actions: string[]; filesTouched: string[] }): string {
   const lastAction = digest.actions.at(-1);
   const parts = [
@@ -77,10 +95,7 @@ export async function ingestClaudeCodeClaim(orgId: number, personId: number, sin
   };
   await repo.upsertEvidence(orgId, evidence);
 
-  const { provider } = await getMainProvider(orgId);
-  const text = provider?.configured()
-    ? await provider.writeClaim(person.name, digest)
-    : deterministicClaimText(activity);
+  const text = await claimText(orgId, person.name, digest, deterministicClaimText(activity));
 
   const claim: Claim = {
     id,
@@ -138,10 +153,7 @@ export async function ingestGithubClaim(orgId: number, personId: number, since: 
   };
   await repo.upsertEvidence(orgId, evidence);
 
-  const { provider } = await getMainProvider(orgId);
-  const text = provider?.configured()
-    ? await provider.writeClaim(person.name, digest)
-    : deterministicGithubClaimText(activity);
+  const text = await claimText(orgId, person.name, digest, deterministicGithubClaimText(activity));
 
   const claim: Claim = {
     id,
@@ -196,10 +208,7 @@ export async function ingestJiraClaim(orgId: number, personId: number, since: Da
   };
   await repo.upsertEvidence(orgId, evidence);
 
-  const { provider } = await getMainProvider(orgId);
-  const text = provider?.configured()
-    ? await provider.writeClaim(person.name, digest)
-    : deterministicJiraClaimText(activity);
+  const text = await claimText(orgId, person.name, digest, deterministicJiraClaimText(activity));
 
   const claim: Claim = {
     id,
@@ -249,10 +258,8 @@ async function ingestPushedEventsClaim(source: 'codex' | 'gemini-cli', orgId: nu
   await repo.upsertEvidence(orgId, evidence);
 
   const lastEvent = events[events.length - 1];
-  const { provider } = await getMainProvider(orgId);
-  const text = provider?.configured()
-    ? await provider.writeClaim(person.name, digest)
-    : `${label} activity: ${events.length} event${events.length === 1 ? '' : 's'} logged${lastEvent ? ` — most recently: ${lastEvent.summary}.` : '.'}`;
+  const text = await claimText(orgId, person.name, digest,
+    `${label} activity: ${events.length} event${events.length === 1 ? '' : 's'} logged${lastEvent ? ` — most recently: ${lastEvent.summary}.` : '.'}`);
 
   const claim: Claim = {
     id,
@@ -309,10 +316,7 @@ async function finishIngestion(params: {
   };
   await repo.upsertEvidence(params.orgId, evidence);
 
-  const { provider } = await getMainProvider(params.orgId);
-  const text = provider?.configured()
-    ? await provider.writeClaim(params.personName, params.digest)
-    : params.deterministicText;
+  const text = await claimText(params.orgId, params.personName, params.digest, params.deterministicText);
 
   const claim: Claim = {
     id,
