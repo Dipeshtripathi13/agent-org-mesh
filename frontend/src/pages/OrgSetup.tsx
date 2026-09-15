@@ -118,7 +118,16 @@ function ChartBuilder() {
   const [justAdded, setJustAdded] = useState<{ name: string; invite: InviteLinkT } | null>(null);
   const [resetFor, setResetFor] = useState<{ name: string; email: string | null; tempPassword: string } | null>(null);
 
-  const load = () => api.org(orgId).then((d) => setPeople(d.people));
+  // Emails and sign-in status come from an admin-only endpoint; if it's refused, the chart
+  // still renders without them.
+  const [details, setDetails] = useState<Map<number, Awaited<ReturnType<typeof api.orgPeopleDetails>>['people'][number]>>(new Map());
+  const [openDetails, setOpenDetails] = useState<number | null>(null);
+  const load = () => Promise.all([
+    api.org(orgId).then((d) => setPeople(d.people)),
+    api.orgPeopleDetails(orgId)
+      .then((d) => setDetails(new Map(d.people.map((x) => [x.personId, x]))))
+      .catch(() => setDetails(new Map())),
+  ]);
   useEffect(() => { void load(); setForm(EMPTY_FORM); setError(null); setJustAdded(null); }, [orgId]);
 
   const children = useMemo(() => {
@@ -314,28 +323,94 @@ function ChartBuilder() {
                 ) : (
                   <span className="tree-toggle leaf">&middot;</span>
                 )}
-                <span style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</span>
-                <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{p.title}</span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>{p.team}</span>
-              </div>
-              {canEdit && (
-                <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  {p.accountId != null && (
-                    <button
-                      className="chip"
-                      title={`Issue ${p.name} a new temporary password`}
-                      onClick={() => resetPassword(p.id, p.name)}
-                    >
-                      Reset password
-                    </button>
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <span style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</span>
+                    <span style={{ fontSize: 11, color: 'var(--ink3)' }}>{p.title}</span>
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>{p.team}</span>
+                  </span>
+                  {details.get(p.id)?.email && (
+                    <span style={{ fontSize: 11, color: 'var(--ink3)', overflowWrap: 'anywhere' }}>{details.get(p.id)!.email}</span>
                   )}
-                  <button className="chip" onClick={() => removePerson(p.id)}>Remove</button>
                 </span>
+              </div>
+              <span style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
+                {details.has(p.id) && (
+                  <button
+                    className="chip"
+                    aria-expanded={openDetails === p.id}
+                    aria-controls={`person-details-${p.id}`}
+                    onClick={() => setOpenDetails((cur) => (cur === p.id ? null : p.id))}
+                  >
+                    {openDetails === p.id ? 'Hide details' : 'Details'}
+                  </button>
+                )}
+                {canEdit && p.accountId != null && (
+                  <button
+                    className="chip"
+                    title={`Issue ${p.name} a new temporary password`}
+                    onClick={() => resetPassword(p.id, p.name)}
+                  >
+                    Reset password
+                  </button>
+                )}
+                {canEdit && <button className="chip" onClick={() => removePerson(p.id)}>Remove</button>}
+              </span>
+              {openDetails === p.id && details.get(p.id) && (
+                <PersonDetailsPanel
+                  id={`person-details-${p.id}`}
+                  person={p}
+                  details={details.get(p.id)!}
+                  manager={people.find((m) => m.id === p.managerId) ?? null}
+                  indent={depth * 18}
+                />
               )}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const formatDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
+/** The expanded "Details" block under one person in the chart. */
+function PersonDetailsPanel({ id, person, details, manager, indent }: {
+  id: string;
+  person: Person;
+  details: Awaited<ReturnType<typeof api.orgPeopleDetails>>['people'][number];
+  manager: Person | null;
+  indent: number;
+}) {
+  const signIn =
+    details.status === 'active'
+      ? details.lastSignInAt ? `Has a login · last signed in ${formatDate(details.lastSignInAt)}` : 'Has a login · hasn’t signed in yet'
+    : details.status === 'invited' && details.invitation
+      ? `Invitation ${details.invitation.emailed ? 'emailed' : 'created (link shared by hand)'} ${formatDate(details.invitation.sentAt)} · expires ${formatDate(details.invitation.expiresAt)}`
+    : details.status === 'invite-expired' && details.invitation
+      ? `Invitation expired ${formatDate(details.invitation.expiresAt)} — they can’t sign in until they’re invited again`
+    : 'No login — added without an email, so they can’t sign in yet';
+  const rows: [string, string][] = [
+    ['Email', details.email ?? '—'],
+    ['Sign-in', signIn],
+    ['Title', person.title],
+    ['Team', person.team],
+    ['Reports to', manager ? `${manager.name} · ${manager.title}` : 'No one — top of the chart'],
+    ['Admin role', details.adminRole ? details.adminRole[0].toUpperCase() + details.adminRole.slice(1) : 'Not an admin'],
+    ['Agent', person.agentDeployed ? 'Deployed' : 'Not deployed'],
+    ['Connected tools', details.connectedTools.length ? details.connectedTools.join(', ') : 'None yet'],
+  ];
+  return (
+    <div id={id} style={{ flexBasis: '100%', margin: `8px 0 4px ${indent + 25}px`, padding: '10px 12px', border: '1px solid var(--rule)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+      <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(96px, max-content) 1fr', gap: '6px 16px', margin: 0, fontSize: 12 }}>
+        {rows.map(([label, value]) => (
+          <div key={label} style={{ display: 'contents' }}>
+            <dt style={{ color: 'var(--ink3)' }}>{label}</dt>
+            <dd style={{ margin: 0, color: 'var(--ink)', overflowWrap: 'anywhere' }}>{value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

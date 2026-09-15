@@ -973,6 +973,37 @@ app.get('/api/organizations/:orgId/invitations', async (req, reply) => {
   };
 });
 
+/** More about each person in the chart, for this organization's admins only (viewer and up):
+ *  their email, whether they can sign in yet, their admin role, and the tools they've
+ *  connected. Emails aren't part of the org chart that members see. */
+app.get('/api/organizations/:orgId/people-details', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized to see details about this organization’s people');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const [details, surfaces] = await Promise.all([repo.listPeopleAdminDetails(orgId), repo.getSurfaces()]);
+  const nameOf = new Map(surfaces.map((s) => [s.key as string, s.name]));
+  const now = Date.now();
+  return {
+    people: details.map((d) => ({
+      personId: d.personId,
+      email: d.accountEmail ?? d.invitation?.email ?? null,
+      status: d.accountEmail ? 'active'
+        : d.invitation ? (new Date(d.invitation.expiresAt).getTime() > now ? 'invited' : 'invite-expired')
+        : 'no-login',
+      lastSignInAt: d.lastSignInAt,
+      adminRole: d.adminRole,
+      invitation: d.accountEmail ? null : d.invitation,
+      connectedTools: Object.entries(d.surfaces)
+        .filter(([, state]) => state === 'connected' || state === 'partial' || state === 'stale')
+        .map(([key]) => nameOf.get(key) ?? key)
+        .sort((a, b) => a.localeCompare(b)),
+    })),
+  };
+});
+
 /** Revoking matches who may create: any admin for a chart invitation, only an owner for an
  *  admin-role invitation. */
 app.delete('/api/organizations/:orgId/invitations/:invitationId', {

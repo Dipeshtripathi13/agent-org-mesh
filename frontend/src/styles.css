@@ -590,7 +590,8 @@ tbody tr:hover { background: #faf9f7; }
 .runtime-card.is-blocked { background: repeating-linear-gradient(135deg, #f4f6f7 0 5px, #fbfcfc 5px 10px); }
 
 .tree-row {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  /* wrap: an admin's "Details" panel opens on its own line under the person */
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3);
   padding: 8px var(--sp-3); border-bottom: 1px solid #f1f3f4; border-radius: var(--radius-sm);
   transition: background-color var(--ease);
 }

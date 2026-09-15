@@ -207,6 +207,18 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** What an organization's admins see about one person in its chart (GET people-details). */
+export interface PersonDetails {
+  personId: number;
+  email: string | null;
+  /** active: has a login · invited: invitation pending · invite-expired · no-login: added without an email */
+  status: 'active' | 'invited' | 'invite-expired' | 'no-login';
+  lastSignInAt: string | null;
+  adminRole: OrgRole | null;
+  invitation: { email: string; sentAt: string; expiresAt: string; emailed: boolean } | null;
+  connectedTools: string[];
+}
+
 export const api = {
   authMe: () =>
     req<{ account: Account | null; orgRoles: Record<number, OrgRole>; people: MyIdentity[]; adminElevatedUntil: string | null }>('/auth/me'),
@@ -242,6 +254,8 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ email, name, role }) },
     ),
   orgInvitations: (orgId: number) => req<{ invitations: PendingInvitation[] }>(`/organizations/${orgId}/invitations`),
+  /** Admins only: each person's email, sign-in status, admin role and connected tools. */
+  orgPeopleDetails: (orgId: number) => req<{ people: PersonDetails[] }>(`/organizations/${orgId}/people-details`),
   revokeInvitation: (orgId: number, invitationId: string) =>
     req<{ ok: true }>(`/organizations/${orgId}/invitations/${invitationId}`, { method: 'DELETE' }),
   invitation: (token: string) => req<{ invitation: InvitationInfo }>(`/invitations/${token}`),

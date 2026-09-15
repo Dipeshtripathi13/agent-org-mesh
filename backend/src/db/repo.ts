@@ -541,6 +541,49 @@ export async function listPendingInvitations(orgId: number, now: string): Promis
   return rows.map(toInvitation);
 }
 
+/** What an organization's admins see about each person in its chart: their login email (or
+ *  the email a still-pending invitation went to), whether they've signed in, their admin role
+ *  here, and their raw tool states. Admin-only (server.ts gates the route) — emails are
+ *  personal data the org chart itself never exposed. */
+export interface PersonAdminDetails {
+  personId: number;
+  accountEmail: string | null;
+  lastSignInAt: string | null;
+  adminRole: OrgRole | null;
+  invitation: { email: string; sentAt: string; expiresAt: string; emailed: boolean } | null;
+  surfaces: Record<string, SurfaceState>;
+}
+
+export async function listPeopleAdminDetails(orgId: number): Promise<PersonAdminDetails[]> {
+  const { rows } = await pool.query(
+    `SELECT p.id AS person_id, p.surfaces, a.email AS account_email, oa.role AS admin_role,
+            s.last_sign_in, inv.email AS invite_email, inv.created_at AS invited_at,
+            inv.expires_at AS invite_expires_at, inv.emailed_at AS invite_emailed_at
+       FROM people p
+       LEFT JOIN accounts a ON a.id = p.account_id
+       LEFT JOIN org_admins oa ON oa.org_id = p.org_id AND oa.account_id = p.account_id
+       LEFT JOIN LATERAL (SELECT max(created_at) AS last_sign_in FROM sessions WHERE account_id = p.account_id) s ON true
+       LEFT JOIN LATERAL (
+         SELECT email, created_at, expires_at, emailed_at FROM invitations
+          WHERE person_id = p.id AND kind = 'person' AND accepted_at IS NULL AND revoked_at IS NULL
+          ORDER BY created_at DESC LIMIT 1
+       ) inv ON true
+      WHERE p.org_id = $1
+      ORDER BY p.id`,
+    [orgId],
+  );
+  return rows.map((r) => ({
+    personId: r.person_id,
+    accountEmail: r.account_email ?? null,
+    lastSignInAt: r.last_sign_in ? iso(r.last_sign_in) : null,
+    adminRole: (r.admin_role as OrgRole | null) ?? null,
+    invitation: r.invite_email
+      ? { email: r.invite_email, sentAt: iso(r.invited_at), expiresAt: iso(r.invite_expires_at), emailed: r.invite_emailed_at != null }
+      : null,
+    surfaces: r.surfaces,
+  }));
+}
+
 /** Only a still-pending invitation can be revoked; returns whether one was. */
 export async function revokeInvitation(orgId: number, id: string, now: string): Promise<boolean> {
   const { rowCount } = await pool.query(
