@@ -118,6 +118,50 @@ describe('pushed activity respects scope and pause', () => {
   });
 });
 
+describe('a brand-new organization member can connect Claude Code and Codex', () => {
+  // 2026-09-15: new people defaulted these tools to 'outOfScope', and pushes to out-of-scope
+  // tools are refused, so nobody who joined an organization could connect them at all.
+  it('starts both as not connected, and the first push connects the tool and records the work', async () => {
+    const email = `launch-new-${Date.now()}@example.test`;
+    const signup = await app.inject({ method: 'POST', url: '/api/auth/signup', remoteAddress: '10.8.9.1', payload: { name: 'New Member', email, password: 'new-member-pass-1' } });
+    expect(signup.statusCode, signup.body).toBe(200);
+    await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [email]);
+    const memberCookie = `aom_session=${signup.cookies.find((c) => c.name === 'aom_session')!.value}`;
+    const personId = signup.json().person.id as number;
+
+    const surfaces = (await pool.query('SELECT surfaces FROM people WHERE id = $1', [personId])).rows[0].surfaces;
+    expect(surfaces['claude-code']).toBe('absent');
+    expect(surfaces.codex).toBe('absent');
+
+    const minted = await app.inject({ method: 'POST', url: `/api/person/${personId}/ingest-tokens`, headers: { cookie: memberCookie }, payload: { label: 'laptop' } });
+    expect(minted.statusCode, minted.body).toBe(200);
+    const pushed = await app.inject({
+      method: 'POST', url: '/api/ingest/claude-code', remoteAddress: '10.8.9.2',
+      headers: { authorization: `Bearer ${minted.json().token}` },
+      payload: { tool_name: 'Write', cwd: '/Users/new/app', tool_input: { file_path: '/Users/new/app/invoice.py' } },
+    });
+    expect(pushed.statusCode).toBe(202);
+    const after = (await pool.query("SELECT surfaces->>'claude-code' AS s FROM people WHERE id = $1", [personId])).rows[0].s;
+    expect(after).toBe('connected');
+    const rows = (await pool.query("SELECT summary FROM ingested_events WHERE person_id = $1 AND source = 'claude-code'", [personId])).rows;
+    expect(rows.map((r) => r.summary)).toEqual(['invoice.py']);
+  });
+
+  it('asking about someone with nothing connected says so, instead of implying something was withheld', async () => {
+    const email = `launch-empty-${Date.now()}@example.test`;
+    const signup = await app.inject({ method: 'POST', url: '/api/auth/signup', remoteAddress: '10.8.9.3', payload: { name: 'Solo Owner', email, password: 'solo-owner-pass-1' } });
+    await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [email]);
+    const ownerCookie = `aom_session=${signup.cookies.find((c) => c.name === 'aom_session')!.value}`;
+    const personId = signup.json().person.id as number;
+    const res = await app.inject({
+      method: 'POST', url: '/api/agent/ask', headers: { cookie: ownerCookie },
+      payload: { targetId: personId, role: 'Self', question: 'What have I been working on?', persist: false },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().synthesizedAnswer ?? res.json().answer).toMatch(/hasn't connected any tools your organization's agent can read yet/);
+  });
+});
+
 describe('Google sign-in asks for Calendar only', () => {
   it('the consent request never includes the Gmail read scope', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/oauth/gmail/start?personId=11', headers: { cookie } });

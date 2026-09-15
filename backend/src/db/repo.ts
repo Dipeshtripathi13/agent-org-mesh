@@ -817,8 +817,11 @@ const EMPTY_SURFACES: Record<SurfaceKey, SurfaceState> = {
   trello: 'absent', airtable: 'absent', monday: 'absent', figma: 'absent', discord: 'absent',
   microsoft365: 'absent', zoom: 'absent', dropbox: 'absent',
   airflow: 'absent', dbt: 'absent', snowflake: 'absent', databricks: 'absent',
-  // Out of scope by default — most people don't have a real sub-agent/token registered.
-  'claude-code': 'outOfScope', codex: 'outOfScope', 'gemini-cli': 'outOfScope',
+  // Not connected yet, like every other tool. These used to default to 'outOfScope', which
+  // means "doesn't apply to this role" — but nothing ever set it deliberately, so once pushes
+  // to out-of-scope tools were refused (2026-09-14) nobody in an organization could connect
+  // Claude Code or Codex at all (found 2026-09-15; migration 0005 fixes existing people).
+  'claude-code': 'absent', codex: 'absent', 'gemini-cli': 'absent',
 };
 
 export async function createPerson(orgId: number, input: {

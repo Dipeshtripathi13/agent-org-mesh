@@ -2986,7 +2986,12 @@ app.post('/api/agent/ask', {
 
   let answer: string;
   if (sections.length === 0) {
-    answer = `Nothing about ${target.name} is disclosable to you right now.`;
+    // Say which it is: nothing connected is not the same as something withheld (2026-09-15 —
+    // a manager asking about a new employee was told "nothing is disclosable" when the real
+    // reason was that no tool had ever been connected on the organization side).
+    answer = snapshot.coverage.readSurfaces.length === 0
+      ? `${target.name} hasn't connected any tools your organization's agent can read yet, so there's nothing to report.`
+      : `Nothing about ${target.name} is disclosable to you right now.`;
   } else if (provider?.configured()) {
     try {
       answer = await provider.synthesize(target.name, question, sections, priorTurns);
@@ -3128,7 +3133,9 @@ app.post('/api/agent/ask-multi', {
 
     let answer: string;
     if (sections.length === 0) {
-      answer = `Nothing about ${target.name} is disclosable to you right now.`;
+      answer = snapshot.coverage.readSurfaces.length === 0
+        ? `${target.name} hasn't connected any tools your organization's agent can read yet, so there's nothing to report.`
+        : `Nothing about ${target.name} is disclosable to you right now.`;
     } else if (provider?.configured()) {
       try {
         answer = await provider.synthesize(target.name, question, sections);

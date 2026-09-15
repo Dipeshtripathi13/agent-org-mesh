@@ -1586,7 +1586,18 @@ Claude Code and Codex sessions (2026-09-13) found what this fixes:
   git-ignore it (it holds the token; Claude Code's `settings.local.json` is ignored by default).
 - **A push switched on a tool marked "not used for your role"**, and the content reached the
   manager's answer. The ingest route now refuses to record for an `outOfScope` tool, and a tool
-  paused in Controls (`absent` with earlier events) stays paused.
+  paused in Controls (`absent` with earlier events) stays paused. **Correction (2026-09-15):**
+  that finding's premise was wrong for these tools. Nothing ever set `outOfScope`
+  deliberately — `repo.ts`'s `EMPTY_SURFACES` simply defaulted Claude Code, Codex and Gemini CLI
+  to it (in production, every `outOfScope` value was one of those defaults), so the refusal
+  meant nobody in an organization could connect Claude Code or Codex. They now default to
+  `absent`, migration 0005 fixed existing people, and the refusal only applies if a role is ever
+  genuinely excluded. Found when a real owner asked about an employee who had connected Claude
+  Code — which exposed a second problem: they'd connected it to their *private* agent, which the
+  organization's agent can't read. The two look-alike tool panels on "Set up my agent" are now
+  labelled by whose agent reads them, private tokens say the organization won't see the
+  activity, and an ask about someone with nothing connected says so instead of "nothing is
+  disclosable".
 - **A failed model call dropped the claim**, so every asker, the subject included, was told
   "nothing is disclosable". `realClaims.claimText` saves the deterministic sentence instead.
 - **Planted text was saved into a claim** (not obeyed, but repeated to the manager). The

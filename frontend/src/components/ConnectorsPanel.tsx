@@ -361,12 +361,20 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
   return (
     <div className="panel" style={{ marginTop: 18 }}>
       <header>
-        <span className="label">Connected tools</span>
+        <span className="label">{owner.kind === 'account' ? 'Tools your private agent reads' : 'Tools your organization’s agent reads'}</span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
           {totalConnectedCount} connected
         </span>
       </header>
       <div className="inner">
+        {/* Two panels that look alike on one page: say whose agent reads each (2026-09-15 — an
+            employee connected Claude Code here, privately, and their manager's questions found
+            nothing, because the organization's agent can't read private tools). */}
+        <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '0 0 12px' }}>
+          {owner.kind === 'account'
+            ? 'Only your private agent reads these, and only you can ask it. Your organization can’t see them — to include your work when people in your organization ask about you, connect tools under “Your organization’s agent” below.'
+            : 'People in your organization who ask about you get answers from these tools, limited to what their relationship to you allows.'}
+        </p>
         {totalConnectedCount === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--ink3)', margin: 0 }}>Nothing connected yet.</p>
         ) : (
@@ -639,6 +647,11 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
                       Shown once — copy it now, it isn't stored anywhere you can retrieve again
                     </span>
+                    <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '8px 0 0' }}>
+                      {owner.kind === 'account'
+                        ? 'This token reports to your private agent only. Your organization won’t see this activity.'
+                        : 'This token reports to your organization’s agent, so people who ask about you can get answers from this activity.'}
+                    </p>
                     <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
                       {justCreated.token}
                     </p>
@@ -798,6 +811,11 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--hold)' }}>
                       Shown once — copy it now, it isn't stored anywhere you can retrieve again
                     </span>
+                    <p style={{ fontSize: 12, color: 'var(--ink2)', margin: '8px 0 0' }}>
+                      {owner.kind === 'account'
+                        ? 'This token reports to your private agent only. Your organization won’t see this activity.'
+                        : 'This token reports to your organization’s agent, so people who ask about you can get answers from this activity.'}
+                    </p>
                     <p style={{ fontFamily: 'var(--mono)', fontSize: 12, margin: '8px 0', wordBreak: 'break-all', background: 'var(--panel-bg, #f4f4f2)', padding: '7px 9px', borderRadius: 2 }}>
                       {justCreated.token}
                     </p>
