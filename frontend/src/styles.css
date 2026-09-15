@@ -618,3 +618,150 @@ tbody tr:hover { background: #faf9f7; }
   .panel, .card { box-shadow: none !important; break-inside: avoid; }
   a { color: var(--ink); text-decoration: none; }
 }
+
+/* ---------- Sign in / create account / reset password ----------
+   Split layout: the product at work on the left (components/AuthScene.tsx), the form on the
+   right. Stacks to one column on phones; the scene holds still under reduced motion. */
+.auth {
+  flex: 1; width: 100%;
+  display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  /* Exactly one screen tall on desktop, so the scene always fits the window it's shown in. */
+  height: calc(100vh - 58px); height: calc(100dvh - 58px); min-height: 560px;
+}
+.auth-scene {
+  position: relative; overflow: hidden; isolation: isolate; min-height: 0;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--sp-5);
+  padding: clamp(28px, 4vw, 56px);
+  color: #f5ecf1; background: #1a0d15;
+}
+.auth-scene::before {
+  content: ''; position: absolute; inset: -20%; z-index: -1;
+  background:
+    radial-gradient(38% 34% at 28% 22%, rgba(214, 102, 158, 0.34), transparent 70%),
+    radial-gradient(46% 42% at 82% 86%, rgba(122, 46, 84, 0.6), transparent 72%),
+    radial-gradient(30% 28% at 92% 8%, rgba(126, 96, 196, 0.16), transparent 70%);
+  transform: translate3d(calc(var(--px, 0) * -22px), calc(var(--py, 0) * -22px), 0);
+  transition: transform 700ms var(--ease-out);
+}
+.auth-scene::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; opacity: 0.4; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: radial-gradient(70% 70% at 50% 48%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(70% 70% at 50% 48%, #000 35%, transparent 100%);
+}
+.auth-kicker {
+  margin: 0; font-family: var(--mono); font-size: var(--text-2xs); letter-spacing: 0.16em;
+  text-transform: uppercase; color: rgba(245, 236, 241, 0.62);
+}
+.auth-headline {
+  margin: 12px 0 0; max-width: 19ch; text-wrap: balance;
+  font-size: clamp(24px, 2.7vw, 38px); line-height: 1.14; letter-spacing: -0.022em; font-weight: 600; color: #fff;
+}
+.auth-lede { margin: 14px 0 0; max-width: 44ch; font-size: var(--text-base); color: rgba(245, 236, 241, 0.72); }
+.auth-stage { min-height: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+/* Fills whatever height is left between the headline and the steps; the viewBox scales to fit. */
+.auth-svg {
+  width: 100%; height: 100%; max-width: 560px; overflow: visible; font-family: var(--sans);
+  transform: translate3d(calc(var(--px, 0) * 12px), calc(var(--py, 0) * 12px), 0);
+  transition: transform 500ms var(--ease-out);
+}
+.auth-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: var(--text-xs); color: rgba(245, 236, 241, 0.42); }
+.auth-steps li { display: inline-flex; align-items: center; gap: 8px; transition: color 240ms ease; }
+.auth-steps li::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; transition: background-color 240ms ease, box-shadow 240ms ease; }
+.auth-steps li.is-active { color: #fff; }
+.auth-steps li.is-active::before { background: #f09ac3; box-shadow: 0 0 0 4px rgba(240, 154, 195, 0.2); }
+
+/* scene pieces */
+.sc-card { fill: rgba(255, 255, 255, 0.055); stroke: rgba(255, 255, 255, 0.16); stroke-width: 1; transition: fill 350ms ease, stroke 350ms ease; }
+.sc-card.is-active { fill: rgba(240, 154, 195, 0.12); stroke: rgba(240, 154, 195, 0.62); }
+.sc-avatar { fill: rgba(240, 154, 195, 0.22); }
+.sc-initial { fill: #fff; font-size: 11px; font-weight: 600; }
+.sc-name { fill: #fff; font-size: 12.5px; font-weight: 600; }
+.sc-meta { fill: rgba(245, 236, 241, 0.58); font-size: 10.5px; }
+.sc-text { fill: #f7eef3; font-size: 12px; }
+.sc-edge { fill: none; stroke: rgba(255, 255, 255, 0.16); stroke-width: 1.5; transition: stroke 300ms ease; }
+.sc-edge.is-lit { stroke: rgba(240, 154, 195, 0.75); stroke-dasharray: 4 6; animation: sc-flow 900ms linear infinite; }
+@keyframes sc-flow { to { stroke-dashoffset: -20; } }
+.sc-wire { fill: none; stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
+.sc-packet { fill: #ffc2de; filter: url(#sc-glow); }
+.sc-check { fill: #58b893; }
+.sc-tick { fill: none; stroke: #0e2b20; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sc-chip rect { fill: rgba(255, 255, 255, 0.035); stroke: rgba(255, 255, 255, 0.12); transition: fill 320ms ease, stroke 320ms ease; }
+.sc-chip text { fill: rgba(245, 236, 241, 0.48); font-size: 10.5px; transition: fill 320ms ease; }
+.sc-chip.is-lit rect { fill: rgba(240, 154, 195, 0.18); stroke: rgba(240, 154, 195, 0.8); }
+.sc-chip.is-lit text { fill: #fff; }
+.sc-chip.is-withheld rect { fill: rgba(232, 178, 86, 0.14); stroke: rgba(232, 178, 86, 0.75); }
+.sc-chip.is-withheld text { fill: #f4d9a8; }
+.sc-fade { transition: opacity 450ms ease; }
+.sc-hidden { opacity: 0; }
+.sc-pulse { fill: none; stroke: rgba(240, 154, 195, 0.55); transform-box: fill-box; transform-origin: center; animation: sc-pulse 1.5s ease-out infinite; }
+@keyframes sc-pulse { from { opacity: 0.9; transform: scale(1); } to { opacity: 0; transform: scale(1.16); } }
+
+/* form side */
+.auth-main {
+  display: flex; align-items: center; justify-content: center; overflow-y: auto; min-height: 0;
+  padding-block: clamp(32px, 6vw, 72px); padding-inline: clamp(16px, 5vw, 64px);
+  background: var(--bg);
+}
+.auth-card { width: 100%; max-width: 400px; animation: fade-rise var(--dur-base) var(--ease-out) both; }
+.auth-title { margin: 0; font-size: clamp(26px, 2.4vw, var(--text-2xl)); line-height: 1.15; letter-spacing: -0.022em; text-wrap: balance; }
+.auth-sub { margin: 8px 0 0; color: var(--ink2); font-size: var(--text-base); }
+.auth-form { display: grid; gap: var(--sp-4); margin-top: var(--sp-6); }
+.auth-field { display: grid; gap: 6px; }
+.auth-field > span { font-size: var(--text-sm); font-weight: 500; color: var(--ink2); }
+.auth-field-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.auth-field-link { font-size: var(--text-sm); font-weight: 400; }
+.auth-input {
+  width: 100%; height: 46px; padding: 0 14px;
+  font-size: var(--text-base); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--rule2); border-radius: var(--radius-sm);
+}
+.auth-hint { margin: -8px 0 0; font-size: var(--text-xs); color: var(--ink3); }
+.auth-submit { width: 100%; height: 46px; font-size: var(--text-base); }
+.auth-error {
+  margin: 0; padding: 11px 13px; font-size: var(--text-sm); line-height: 1.45;
+  color: #7c1f2c; background: #fbeef0; border: 1px solid #efc6cd; border-radius: var(--radius-sm);
+}
+.auth-error-actions { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; }
+.auth-error .linkbtn { color: #7c1f2c; font-weight: 500; }
+.auth-success {
+  margin: var(--sp-5) 0 0; padding: 12px 14px; font-size: var(--text-sm);
+  color: #0f5a44; background: #e8f5ef; border: 1px solid #bfe2d2; border-radius: var(--radius-sm);
+}
+.auth-alt { margin: var(--sp-5) 0 0; font-size: var(--text-sm); color: var(--ink2); }
+.auth-fine { margin: var(--sp-4) 0 0; font-size: var(--text-xs); color: var(--ink3); }
+.auth-fine a { color: var(--ink3); }
+.auth-fine a:hover { color: var(--accent); }
+.linkbtn {
+  padding: 0; border: 0; background: none; font: inherit; cursor: pointer;
+  color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+.linkbtn:hover { color: var(--accent-hover); }
+.auth-embedded { display: flex; justify-content: center; padding-block: var(--sp-4); }
+
+@media (max-width: 1080px) {
+  .auth { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .auth-lede { display: none; }
+}
+@media (max-width: 860px) {
+  .auth-steps { display: none; }
+}
+@media (max-width: 720px) {
+  /* Phones: one column, the page scrolls normally, the scene becomes a short band on top. */
+  .auth { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .auth-scene { grid-template-rows: auto auto; padding: 20px 16px 12px; gap: 8px; }
+  .auth-headline { font-size: 21px; max-width: none; }
+  .auth-stage { height: auto; }
+  .auth-svg { height: auto; max-height: 190px; }
+  .auth-main { overflow: visible; align-items: flex-start; padding-block: 24px 44px; padding-inline: 16px; }
+}
+@media (max-height: 720px) and (min-width: 721px) {
+  .auth-lede, .auth-steps { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-scene::before, .auth-svg { transform: none !important; }
+  .sc-edge.is-lit, .sc-pulse, .auth-card { animation: none !important; }
+}

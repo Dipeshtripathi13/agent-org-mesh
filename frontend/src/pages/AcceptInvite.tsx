@@ -97,9 +97,9 @@ export function AcceptInvite({ token }: { token: string }) {
         {summary}
         <p className="glossary" style={{ marginTop: 10 }}>Sign in, or create an account, with {info.email} to accept.</p>
       </>)}
-      {/* A plain block, so Login's full-page `flex: 1` centring doesn't open a gap below the card. */}
+      {/* Just the form: the invitation card above is this page's frame, not the split sign-in scene. */}
       <div style={{ width: '100%' }}>
-        <Login initialEmail={info.email} />
+        <Login initialEmail={info.email} embedded />
       </div>
     </>);
   }

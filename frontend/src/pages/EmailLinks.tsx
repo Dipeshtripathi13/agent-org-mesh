@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 
@@ -147,48 +147,53 @@ export function ForgotPassword({ onBack, initialEmail = '' }: { onBack: () => vo
   const [sentMessage, setSentMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
-    if (!email.trim()) return;
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!email.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
       setSentMessage((await api.requestPasswordReset(email.trim())).message);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not send a reset link');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not send a reset link');
     } finally {
       setBusy(false);
     }
   };
 
+  // Rendered inside Login's layout (the scene stays on the left; only this form swaps in).
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
-      <div className="panel" style={{ width: '100%', maxWidth: 360, marginTop: 0 }}>
-        <header><span className="label">Reset your password</span></header>
-        <div className="inner">
-          {sentMessage ? (
-            <p className="sub" style={{ marginTop: 0 }}>{sentMessage} It expires in 30 minutes.</p>
-          ) : (
-            <>
-              <p className="sub" style={{ marginTop: 0, marginBottom: 16 }}>Enter your email and we&rsquo;ll send you a link to choose a new password.</p>
-              <div style={{ display: 'grid', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={labelText}>Email</span>
-                  <input id="forgot-email" type="email" autoComplete="username" value={email}
-                    onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }} style={inputStyle} />
-                </label>
-                <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => void submit()} disabled={busy || !email.trim()}>
-                  {busy ? 'Sending…' : 'Send reset link'}
-                </button>
-              </div>
-              {error && <p style={errorNote}>{error}</p>}
-            </>
-          )}
-          <p className="glossary" style={{ marginTop: 16 }}>
-            <button onClick={onBack} style={linkButton}>Back to sign in</button>
-          </p>
-        </div>
-      </div>
-    </div>
+    <>
+      <h1 className="auth-title">Reset your password</h1>
+      {sentMessage ? (
+        <>
+          <p className="auth-sub">Check your inbox.</p>
+          <p className="auth-success" role="status">{sentMessage} It expires in 30 minutes.</p>
+          <button type="button" className="btn btn-secondary auth-submit" style={{ marginTop: 'var(--sp-5)' }}
+            onClick={() => { setSentMessage(null); }}>
+            Send another link
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="auth-sub">Enter your email and we’ll send you a link to choose a new password.</p>
+          <form className="auth-form" onSubmit={submit} noValidate>
+            <label className="auth-field" htmlFor="forgot-email">
+              <span>Email</span>
+              <input id="forgot-email" className="auth-input" type="email" autoComplete="username" inputMode="email"
+                value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+            </label>
+            {error && <p className="auth-error" role="alert">{error}</p>}
+            <button type="submit" className="btn btn-primary auth-submit" disabled={busy || !email.trim()}>
+              {busy ? 'Sending…' : 'Send reset link'}
+            </button>
+          </form>
+        </>
+      )}
+      <p className="auth-alt">
+        <button type="button" className="linkbtn" onClick={onBack}>← Back to sign in</button>
+      </p>
+    </>
   );
 }
 

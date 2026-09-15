@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useAuth } from '../lib/AuthContext';
+import { AuthLayout } from '../components/AuthScene';
 import { SignUp } from './SignUp';
 import { ForgotPassword } from './EmailLinks';
 
@@ -9,114 +10,89 @@ import { ForgotPassword } from './EmailLinks';
 // initializer inside the component would run too late and always see it already gone.
 const wantsSignupOnLoad = new URLSearchParams(window.location.search).get('signup') === '1';
 
-export function Login({ initialEmail = '' }: { initialEmail?: string } = {}) {
-  const { login } = useAuth();
-  // A marketing-site "Try it for free" link can land straight on org creation via
-  // ?signup=1, instead of forcing an extra manual click past the login form first.
-  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(wantsSignupOnLoad ? 'signup' : 'login');
+type Mode = 'login' | 'signup' | 'forgot';
+
+/** Sign in, create an account, or reset a password — one layout, the form swaps, the scene
+ *  keeps playing. `embedded` renders just the form (the invitation page has its own frame). */
+export function Login({ initialEmail = '', embedded = false }: { initialEmail?: string; embedded?: boolean } = {}) {
+  // A marketing-site "Try it for free" link can land straight on signup via ?signup=1.
+  const [mode, setMode] = useState<Mode>(wantsSignupOnLoad ? 'signup' : 'login');
   const [email, setEmail] = useState(initialEmail);
+
+  const go = (next: Mode, withEmail?: string) => {
+    if (withEmail != null) setEmail(withEmail);
+    setMode(next);
+  };
+
+  const form = mode === 'signup'
+    ? <SignUp initialEmail={email} onLogin={(e) => go('login', e)} onForgot={(e) => go('forgot', e)} />
+    : mode === 'forgot'
+      ? <ForgotPassword initialEmail={email} onBack={() => go('login')} />
+      : <SignInForm email={email} setEmail={setEmail} onSignup={() => go('signup')} onForgot={() => go('forgot')} />;
+
+  const card = <div key={mode} className="auth-card">{form}</div>;
+  return embedded ? <div className="auth-embedded">{card}</div> : <AuthLayout>{card}</AuthLayout>;
+}
+
+function SignInForm({ email, setEmail, onSignup, onForgot }: {
+  email: string; setEmail: (v: string) => void; onSignup: () => void; onForgot: () => void;
+}) {
+  const { login } = useAuth();
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
-    if (!email.trim() || !password) return;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password || busy) return;
     setBusy(true);
     setError(null);
     try {
       await login(email.trim(), password);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not log in');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not sign in');
     } finally {
       setBusy(false);
     }
   };
 
-  if (mode === 'signup') return <SignUp onBack={() => setMode('login')} initialEmail={initialEmail} />;
-  if (mode === 'forgot') return <ForgotPassword onBack={() => setMode('login')} initialEmail={email} />;
-
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
-      <div className="panel" style={{ width: '100%', maxWidth: 360, marginTop: 0 }}>
-        <header><span className="label">Sign in</span></header>
-        <div className="inner">
-          <p className="sub" style={{ marginTop: 0, marginBottom: 16 }}>
-            Ask your team&rsquo;s agents for an update. Every answer follows your
-            organization&rsquo;s disclosure policy, and anything withheld is shown, not hidden.
-          </p>
-          <div style={{ display: 'grid', gap: 10 }}>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)' }}>
-                Email
-              </span>
-              <input
-                aria-label="Email"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-                style={{ height: 34, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
-              />
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)' }}>
-                Password
-              </span>
-              <input
-                aria-label="Password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-                style={{ height: 34, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
-              />
-            </label>
-            <button
-              className="btn btn-primary"
-              onClick={submit}
-              disabled={busy || !email.trim() || !password}
-              style={{ width: '100%', marginTop: 4 }}
-            >
-              {busy ? 'Signing in…' : 'Sign in'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('forgot')}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: 12, color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer', justifySelf: 'start' }}
-            >
-              Forgot your password?
-            </button>
-          </div>
-          {error && (
-            <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px', marginTop: 12 }}>
-              {error}
-            </p>
-          )}
-          <p className="glossary" style={{ marginTop: 16 }}>
-            New here?{' '}
-            <button
-              onClick={() => setMode('signup')}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Create your account
-            </button>{' '}
-            — you'll land in your own workspace immediately, no company name needed.
-          </p>
-          <p className="glossary" style={{ marginTop: 8 }}>
-            <a href="/legal/privacy">Privacy</a> &middot; <a href="/legal/terms">Terms</a> &middot;{' '}
-            <a href="/legal/subprocessors">Subprocessors</a>
-          </p>
-          {import.meta.env.DEV && (
-            <p className="glossary" style={{ marginTop: 8 }}>
-              Local dev only: <code>jordan@</code>, <code>marta@</code>, <code>hana@</code> or{' '}
-              <code>diego@agentorgmesh.local</code> / <code>admin-dev-only</code> after{' '}
-              <code>npm run db:seed</code>. Never shown in a production build.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
+    <>
+      <h1 className="auth-title">Welcome back</h1>
+      <p className="auth-sub">Sign in to ask your team’s agents for an update.</p>
+
+      <form className="auth-form" onSubmit={submit} noValidate>
+        <label className="auth-field" htmlFor="login-email">
+          <span>Email</span>
+          <input id="login-email" className="auth-input" type="email" autoComplete="username" inputMode="email"
+            value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={!email} />
+        </label>
+        <label className="auth-field" htmlFor="login-password">
+          <span className="auth-field-row">
+            Password
+            <button type="button" className="linkbtn auth-field-link" onClick={onForgot}>Forgot password?</button>
+          </span>
+          <input id="login-password" className="auth-input" type="password" autoComplete="current-password"
+            value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!!email} />
+        </label>
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        <button type="submit" className="btn btn-primary auth-submit" disabled={busy || !email.trim() || !password}>
+          {busy ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+
+      <p className="auth-alt">
+        New here? <button type="button" className="linkbtn" onClick={onSignup}>Create an account</button>
+      </p>
+      <p className="auth-fine">
+        <a href="/legal/privacy">Privacy</a> · <a href="/legal/terms">Terms</a> · <a href="/legal/subprocessors">Subprocessors</a>
+      </p>
+      {import.meta.env.DEV && (
+        <p className="auth-fine">
+          Local dev only: <code>jordan@</code>, <code>marta@</code>, <code>hana@</code> or <code>diego@agentorgmesh.local</code> /{' '}
+          <code>admin-dev-only</code> after <code>npm run db:seed</code>. Never shown in a production build.
+        </p>
+      )}
+    </>
   );
 }
