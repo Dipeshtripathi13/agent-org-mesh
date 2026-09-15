@@ -390,6 +390,9 @@ export const api = {
     req<{ ok: true }>('/notifications/seen', { method: 'POST', body: JSON.stringify({ through }) }),
   /** Every chat you've had about other people in this organization, newest first. */
   myConversations: (orgId: number) => req<{ conversations: PersonConversation[] }>(`/agent/conversations/mine?orgId=${orgId}`),
+  /** Hides one of your Ask chats from your own lists; the record itself is permanent. */
+  hideConversation: (orgId: number, conversationId: string) =>
+    req<{ ok: true }>(`/agent/conversations/${conversationId}?orgId=${orgId}`, { method: 'DELETE' }),
   listConversations: (targetId: number) => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
   }>(`/agent/conversations?targetId=${targetId}`),

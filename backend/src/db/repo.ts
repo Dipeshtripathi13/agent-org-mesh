@@ -1234,9 +1234,10 @@ export interface ConversationSummary {
  *  already aggregate elsewhere in this codebase. */
 export async function listConversationsForPair(requesterId: number, targetId: number): Promise<ConversationSummary[]> {
   const { rows } = await pool.query(
-    `SELECT conversation_id, question, created_at FROM audit_log
+    `SELECT conversation_id, question, created_at FROM audit_log a
      WHERE requester_id = $1 AND target_person_id = $2
        AND conversation_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM hidden_conversations h WHERE h.person_id = a.requester_id AND h.conversation_id = a.conversation_id)
      ORDER BY created_at`,
     [requesterId, targetId],
   );
@@ -1272,6 +1273,7 @@ export async function listConversationsForRequester(requesterId: number, orgId: 
       WHERE a.requester_id = $1 AND a.org_id = $2
         AND a.target_person_id <> a.requester_id
         AND a.conversation_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM hidden_conversations h WHERE h.person_id = a.requester_id AND h.conversation_id = a.conversation_id)
       ORDER BY a.created_at`,
     [requesterId, orgId],
   );
@@ -1290,6 +1292,24 @@ export async function listConversationsForRequester(requesterId: number, orgId: 
     }
   }
   return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** "Remove from my list" for an Ask chat. Audit rows are append-only and can't be deleted
+ *  (CLAUDE.md rule 2) — they're what the person asked about sees in "Who asked about me" — so
+ *  this only hides the chat from the asker's own lists. Only the person who asked can hide it,
+ *  and only a chat about someone else. Returns false if there's no such chat of theirs. */
+export async function hideConversation(requesterId: number, conversationId: string, now: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM audit_log WHERE requester_id = $1 AND conversation_id = $2 AND target_person_id <> requester_id LIMIT 1`,
+    [requesterId, conversationId],
+  );
+  if (rows.length === 0) return false;
+  await pool.query(
+    `INSERT INTO hidden_conversations (person_id, conversation_id, hidden_at) VALUES ($1, $2, $3)
+     ON CONFLICT (person_id, conversation_id) DO NOTHING`,
+    [requesterId, conversationId, now],
+  );
+  return true;
 }
 
 /** Most recent real asks for one specific (requester, target) pair, newest first — the

@@ -147,6 +147,23 @@ export function Ask() {
     setQuestion('');
   };
 
+  // Asks are part of the permanent record (the person asked about sees them in "Who asked
+  // about me"), so a chat can't be deleted — only removed from your own list.
+  const removeConversation = async (c: PersonConversation) => {
+    const ok = window.confirm(
+      `Remove this chat with ${c.targetName} from your list?\n\n` +
+      `This only tidies your list. The questions stay in the permanent record: ${c.targetName} can still see that you asked in “Who asked about me”, and your organization’s admins can see them in the audit log.`,
+    );
+    if (!ok) return;
+    try {
+      await api.hideConversation(meOrgId, c.id);
+      if (c.id === activeConversationId) newChat();
+      await Promise.all([loadAllConversations(), target ? loadHistory(meId, target) : Promise.resolve([])]);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'could not remove that chat');
+    }
+  };
+
   const openConversation = (c: PersonConversation) => {
     if (c.targetId === target) { setActiveConversationId(c.id); return; }
     openAfterLoad.current = c.id;
@@ -248,17 +265,26 @@ export function Ask() {
             <div className="chat-list">
               {allConversations.length === 0 && <p className="chat-list-empty">No chats yet</p>}
               {allConversations.map((c) => (
-                <button
-                  key={c.id}
-                  className={`chat-list-item has-person${c.id === activeConversationId ? ' active' : ''}`}
-                  onClick={() => openConversation(c)}
-                  title={`${c.title} — with ${c.targetName}`}
-                  aria-label={`Chat with ${c.targetName}: ${c.title}`}
-                >
-                  <span className="chat-list-person">{c.targetName}</span>
-                  <span className="chat-list-title">{c.title}</span>
-                  <span className="chat-list-meta">{relativeTime(c.updatedAt)} &middot; {c.turnCount}</span>
-                </button>
+                <div key={c.id} className={`chat-list-item${c.id === activeConversationId ? ' active' : ''}`}>
+                  <button
+                    className="chat-list-item-select"
+                    onClick={() => openConversation(c)}
+                    title={`${c.title} — with ${c.targetName}`}
+                    aria-label={`Chat with ${c.targetName}: ${c.title}`}
+                  >
+                    <span className="chat-list-person">{c.targetName}</span>
+                    <span className="chat-list-title">{c.title}</span>
+                    <span className="chat-list-meta">{relativeTime(c.updatedAt)} &middot; {c.turnCount}</span>
+                  </button>
+                  <button
+                    className="chat-list-delete"
+                    aria-label={`Remove chat with ${c.targetName} from your list`}
+                    title="Remove from my list"
+                    onClick={() => void removeConversation(c)}
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           </div>

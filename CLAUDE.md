@@ -1603,6 +1603,18 @@ Claude Code and Codex sessions (2026-09-13) found what this fixes:
   and the frontend's history reconstruction (`lib/conversations.ts`) matches. The fallback
   answers no longer say "No ANTHROPIC_API_KEY configured…": they say the organization's AI has no
   key (or none is chosen) and that an admin can fix it in Admin → Organizations.
+
+**Ask chats can be removed from your own list, never deleted (2026-09-15).** Asked for as "delete
+the conversation". A chat is a grouping of `audit_log` rows, which are append-only (rule 2) and
+are exactly what the person asked about sees in "Who asked about me" — deleting them would let a
+manager erase that they asked. So the × on the Ask page's chat list (which now shows every chat
+with anyone, labelled by person — `GET /api/agent/conversations/mine`) calls
+`DELETE /api/agent/conversations/:id`, which only records the choice in `hidden_conversations`
+(migration 0006, SELECT/INSERT only) for the person who asked. Both chat-list queries skip hidden
+chats; the audit rows, "Who asked about me" and the admin audit log are untouched, and the
+confirmation says so. Only the asker can hide their own chat about someone else (`repo.
+hideConversation` checks); self-chats on My agent are unaffected. Tests:
+`hideConversation.api.test.ts`, `conversationsMine.api.test.ts`.
 - **A failed model call dropped the claim**, so every asker, the subject included, was told
   "nothing is disclosable". `realClaims.claimText` saves the deterministic sentence instead.
 - **Planted text was saved into a claim** (not obeyed, but repeated to the manager). The

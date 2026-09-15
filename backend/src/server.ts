@@ -3324,6 +3324,29 @@ app.get('/api/agent/conversations/mine', async (req, reply) => {
   return { conversations: await repo.listConversationsForRequester(session.personId, orgId) };
 });
 
+/** "Remove from my list" — hides one of your Ask chats from your own lists. Nothing is deleted:
+ *  the asks stay in the audit log and in the other person's "Who asked about me". */
+app.delete('/api/agent/conversations/:conversationId', {
+  schema: { params: { type: 'object', required: ['conversationId'], properties: { conversationId: UUID } } },
+}, async (req, reply) => {
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const orgId = orgIdFromQuery(req);
+  const session = await requireSessionPerson(req, orgId);
+  if (!session.ok) {
+    reply.code(session.code);
+    return { error: session.error };
+  }
+  const { conversationId } = req.params as { conversationId: string };
+  if (!(await repo.hideConversation(session.personId, conversationId, new Date().toISOString()))) {
+    reply.code(404);
+    return { error: 'no chat of yours with that id' };
+  }
+  return { ok: true };
+});
+
 app.get('/api/agent/conversations', async (req, reply) => {
   const { targetId } = req.query as { targetId?: string };
   if ((await currentAccountId(req)) == null) {
