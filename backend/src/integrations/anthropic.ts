@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { originalFetch } from './outboundHttp.js';
 import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, safePromptName, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
+import { buildCombinePrompt, formatPriorTurns, PLAIN_TEXT_RULE, safePromptName, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 
 // The platform-wide default client (env-var key), cached like before. An org with its own
 // credentials (ProviderCredentials.apiKey) gets a fresh, uncached client instead — client
@@ -141,6 +141,7 @@ export async function answerFromActivity(personName: string, question: string, s
     'Answer only from what is in the sections below — never invent or infer anything not supported by them.',
     'If the data below does not contain enough to answer, say so plainly rather than guessing.',
     'Be concise and direct.',
+    PLAIN_TEXT_RULE,
     '',
     formatPriorTurns(priorTurns),
     wrapUntrustedData('question', question),
@@ -167,10 +168,15 @@ export async function converseFreely(personName: string, question: string, prior
 }
 
 /** Anthropic's ModelProvider implementation — a thin wrapper, no logic duplicated. */
+export async function combineAnswers(askerName: string, question: string, answers: ActivitySection[], credentials?: ProviderCredentials): Promise<string> {
+  return callClaude(buildCombinePrompt(askerName, question, answers), credentials);
+}
+
 export const anthropicProvider: ModelProvider = {
   configured: anthropicConfigured,
   selectRelevantSurfaces,
   synthesize: answerFromActivity,
   writeClaim: writeActivityClaim,
   converse: converseFreely,
+  combineAnswers,
 };

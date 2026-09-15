@@ -56,6 +56,35 @@ export interface ModelProvider {
    *  without that method's hard "answer only from this" constraint, since a personal chat
    *  with nothing connected — or nothing relevant this turn — should still just answer. */
   converse(personName: string, question: string, priorTurns?: ConversationTurn[], credentials?: ProviderCredentials, sections?: ActivitySection[]): Promise<string>;
+  /** Ask several people: merges each person's own, already-authorized answer into one update
+   *  for the asker. A separate method from `synthesize` because that prompt is "you are X's
+   *  agent answering about X" — reused for the rollup, it was told it was the *asker's* agent,
+   *  so it answered "no data for <asker>" (found 2026-09-15). Prompt: buildCombinePrompt. */
+  combineAnswers(askerName: string, question: string, answers: ActivitySection[], credentials?: ProviderCredentials): Promise<string>;
+}
+
+/** One line every answer prompt ends with: the app renders answers as plain text, so markdown
+ *  showed up as literal asterisks. */
+export const PLAIN_TEXT_RULE = 'Write plain text only — no markdown, headings, bullets with asterisks, or bold.';
+
+/** The prompt both adapters send for combineAnswers. `answers` are each person's own answer
+ *  (or why they weren't asked); they're data, never instructions. */
+export function buildCombinePrompt(askerName: string, question: string, answers: ActivitySection[]): string {
+  const asker = safePromptName(askerName);
+  const body = answers.map((a) => `## ${safePromptName(a.source)}\n${a.digest}`).join('\n\n');
+  return [
+    `You are combining separate answers into one short update for ${asker}, who asked each of the people below the same question.`,
+    `Each section is one person's answer from their own agent, already limited to what ${asker} is allowed to see. A section that says "Not asked" explains why that person wasn't asked.`,
+    `In the question, "you" and "your" mean each person who was asked — never ${asker}.`,
+    'Go person by person, by name, using only what each section says. Never invent anything, and never attribute one person\'s work to someone else.',
+    'If someone had nothing to report, say that in one short line for them.',
+    'Be concise: one or two sentences per person.',
+    PLAIN_TEXT_RULE,
+    '',
+    wrapUntrustedData('question', question),
+    '',
+    wrapUntrustedData('authorized-data', body),
+  ].join('\n');
 }
 
 export interface ActivitySection {

@@ -92,6 +92,7 @@ function bindCredentials(provider: ModelProvider, credentials: ProviderCredentia
     synthesize: (personName, question, sections, priorTurns) => provider.synthesize(personName, question, sections, priorTurns, credentials),
     writeClaim: (personName, digest) => provider.writeClaim(personName, digest, credentials),
     converse: (personName, question, priorTurns, _credentials, sections) => provider.converse(personName, question, priorTurns, credentials, sections),
+    combineAnswers: (askerName, question, answers) => provider.combineAnswers(askerName, question, answers, credentials),
   };
 }
 

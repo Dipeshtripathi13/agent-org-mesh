@@ -1,5 +1,5 @@
 import { DEFAULT_SINCE_DAYS, parseRelevantSurfaces } from './orchestrator.js';
-import { formatPriorTurns, safePromptName, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
+import { buildCombinePrompt, formatPriorTurns, PLAIN_TEXT_RULE, safePromptName, wrapUntrustedData, type ActivitySection, type ConversationTurn, type ModelProvider, type ProviderCredentials, type SurfaceDescriptor } from './modelProvider.js';
 import { isSafeExternalUrl } from './urlSafety.js';
 import { deadline } from './outboundHttp.js';
 
@@ -114,6 +114,7 @@ async function synthesize(personName: string, question: string, sections: Activi
     'Answer only from what is in the sections below — never invent or infer anything not supported by them.',
     'If the data below does not contain enough to answer, say so plainly rather than guessing.',
     'Be concise and direct.',
+    PLAIN_TEXT_RULE,
     '',
     formatPriorTurns(priorTurns),
     wrapUntrustedData('question', question),
@@ -152,10 +153,15 @@ async function converse(personName: string, question: string, priorTurns?: Conve
   ].join('\n'), credentials);
 }
 
+async function combineAnswers(askerName: string, question: string, answers: ActivitySection[], credentials?: ProviderCredentials): Promise<string> {
+  return callOpenAI(buildCombinePrompt(askerName, question, answers), credentials);
+}
+
 export const openaiCompatibleProvider: ModelProvider = {
   configured: openaiConfigured,
   selectRelevantSurfaces,
   synthesize,
   writeClaim,
   converse,
+  combineAnswers,
 };

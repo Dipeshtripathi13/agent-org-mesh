@@ -3220,7 +3220,7 @@ app.post('/api/agent/ask-multi', {
     combinedAnswer = `None of the selected people could be asked as "${role}": ${rejected.map((p) => p.reason).join('; ')}`;
   } else if (provider?.configured()) {
     try {
-      combinedAnswer = await provider.synthesize(`${requesterName}'s selected people`, question, rollupSections);
+      combinedAnswer = await provider.combineAnswers(requesterName, question, rollupSections);
     } catch (err) {
       app.log.error({ err }, 'model provider rollup synthesis failed for a multi-ask — falling back to a plain list');
       combinedAnswer = rawActivityDigest(rollupSections);
