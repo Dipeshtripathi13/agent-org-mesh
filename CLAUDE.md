@@ -1597,7 +1597,12 @@ Claude Code and Codex sessions (2026-09-13) found what this fixes:
   organization's agent can't read. The two look-alike tool panels on "Set up my agent" are now
   labelled by whose agent reads them, private tokens say the organization won't see the
   activity, and an ask about someone with nothing connected says so instead of "nothing is
-  disclosable".
+  disclosable". The same real test showed every answer saying "1 item withheld": `allowedTextOnly`
+  counted the standard never-collected (CANT) notice as withheld, which conflated the two (rule
+  4). It now returns `withheldCount` (policy-withheld only) and `neverCollectedCount` separately,
+  and the frontend's history reconstruction (`lib/conversations.ts`) matches. The fallback
+  answers no longer say "No ANTHROPIC_API_KEY configured…": they say the organization's AI has no
+  key (or none is chosen) and that an admin can fix it in Admin → Organizations.
 - **A failed model call dropped the claim**, so every asker, the subject included, was told
   "nothing is disclosable". `realClaims.claimText` saves the deterministic sentence instead.
 - **Planted text was saved into a claim** (not obeyed, but repeated to the manager). The

@@ -9,9 +9,14 @@ import type { ResponseItem } from '../domain/types.js';
  * generic already, but excluded here too for the same reason: don't hand structural
  * refusal text to a generative step at all, just count it.
  */
-export function allowedTextOnly(items: ResponseItem[]): { allowed: ResponseItem[]; withheldCount: number } {
+/** Splits an answer's items into what may be shown, what the sharing rules withheld, and what
+ *  was never collected. The last two stay separate (CLAUDE.md rule 4): "never collected" is on
+ *  every answer, so counting it as withheld told askers something was held back when nothing
+ *  was (2026-09-15). */
+export function allowedTextOnly(items: ResponseItem[]): { allowed: ResponseItem[]; withheldCount: number; neverCollectedCount: number } {
   const allowed = items.filter((i) => i.policyRef === null && i.tier !== 'CANT');
-  return { allowed, withheldCount: items.length - allowed.length };
+  const neverCollectedCount = items.filter((i) => i.tier === 'CANT').length;
+  return { allowed, withheldCount: items.length - allowed.length - neverCollectedCount, neverCollectedCount };
 }
 
 /** The router's own default "how far back" when a question doesn't imply a time frame at

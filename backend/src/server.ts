@@ -3004,13 +3004,13 @@ app.post('/api/agent/ask', {
       // already does, not throw: an ask must never hard-fail (and skip its own audit
       // entry) just because the model happened to be unreachable this one time.
       app.log.error({ err }, 'model provider synthesis failed — falling back to raw authorized data');
-      answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+      answer = `${runtimeName ?? 'Your organization’s AI'} couldn’t be reached just now, so it couldn’t write an answer. Here’s the information it would have used for “${question}”:\n\n${rawActivityDigest(sections)}`;
     }
   } else {
     const whoMissing = runtimeName && configEnvVar
-      ? `No ${configEnvVar} configured for ${target.name}'s main agent (${runtimeName})`
-      : `No main agent is configured for ${target.name}`;
-    answer = `${whoMissing}, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+      ? `${runtimeName} has no API key yet, so it couldn’t write an answer. An admin can add one in Admin → Organizations`
+      : `This organization hasn’t chosen an AI yet, so nothing could write an answer. An admin can choose one in Admin → Organizations`;
+    answer = `${whoMissing}. Here’s the information it would have used for “${question}”:\n\n${rawActivityDigest(sections)}`;
   }
 
   const fullSnapshot = { ...snapshot, synthesizedAnswer: answer, consultedSources };
@@ -3141,13 +3141,13 @@ app.post('/api/agent/ask-multi', {
         answer = await provider.synthesize(target.name, question, sections);
       } catch (err) {
         app.log.error({ err }, 'model provider synthesis failed for a multi-ask target — falling back to raw authorized data');
-        answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+        answer = `${runtimeName ?? 'Your organization’s AI'} couldn’t be reached just now, so it couldn’t write an answer. Here’s the information it would have used for “${question}”:\n\n${rawActivityDigest(sections)}`;
       }
     } else {
       const whoMissing = runtimeName && configEnvVar
-        ? `No ${configEnvVar} configured for ${target.name}'s main agent (${runtimeName})`
-        : `No main agent is configured for ${target.name}`;
-      answer = `${whoMissing}, so this is the raw authorized data rather than a direct answer to "${question}":\n\n${rawActivityDigest(sections)}`;
+        ? `${runtimeName} has no API key yet, so it couldn’t write an answer. An admin can add one in Admin → Organizations`
+        : `This organization hasn’t chosen an AI yet, so nothing could write an answer. An admin can choose one in Admin → Organizations`;
+      answer = `${whoMissing}. Here’s the information it would have used for “${question}”:\n\n${rawActivityDigest(sections)}`;
     }
 
     if (body.persist) {
@@ -3445,13 +3445,13 @@ app.post('/api/agent/ask-personal', {
       answer = await provider.converse(account!.name, question, priorTurns, undefined, sections);
     } catch (err) {
       app.log.error({ err }, 'personal ask synthesis failed');
-      answer = `${runtimeName ?? 'The configured model'} could not be reached to answer this — try again in a moment.`;
+      answer = `${runtimeName ?? 'Your private agent'} couldn’t be reached just now — try again in a moment.`;
     }
   } else {
     const whoMissing = runtimeName && configEnvVar
-      ? `No ${configEnvVar} configured for your personal main agent (${runtimeName})`
-      : 'No personal main agent is set yet';
-    answer = `${whoMissing} — connect one in "Set up my agent," then ask again.`;
+      ? `Your private agent (${runtimeName}) has no API key yet`
+      : 'Your private agent isn’t set up yet';
+    answer = `${whoMissing}. Choose an AI and add a key in Set up my agent, then ask again.`;
   }
 
   const conversationId = body.conversationId ?? randomUUID();

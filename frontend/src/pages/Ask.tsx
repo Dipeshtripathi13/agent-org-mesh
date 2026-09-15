@@ -275,20 +275,20 @@ export function Ask() {
                       <>
                         <div className="runtime-card" style={{ background: '#f8f9fa' }}>
                           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                            ANSWER &middot; {turn.result.withheldCount > 0 ? `${turn.result.withheldCount} item(s) withheld, not included below` : 'nothing withheld for this role'}
+                            ANSWER{turn.result.withheldCount > 0 ? ` · ${turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld by your organization’s sharing rules` : ''}
                           </span>
                           <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
                         </div>
                         {turn.result.consultedSources.length > 0 && (
                           <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                            CONSULTED &middot; {targetPerson ? `${targetPerson.name}'s` : 'Their'} own agent called: {turn.result.consultedSources.join(', ')}
+                            CHECKED &middot; {turn.result.consultedSources.join(', ')}
                           </p>
                         )}
                         <button
                           onClick={() => toggleDetail(turn.id)}
                           style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
                         >
-                          {expandedIds.has(turn.id) ? 'Hide' : 'Show'} how this was derived — the full, unmodified disclosure
+                          {expandedIds.has(turn.id) ? 'Hide' : 'Show'} where this answer came from
                         </button>
                         {expandedIds.has(turn.id) && (
                           <div style={{ marginTop: 8 }}>
@@ -441,7 +441,7 @@ export function Ask() {
                             <>
                               <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 12 }}>{p.answer}</p>
                               <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                                {p.withheldCount > 0 ? `${p.withheldCount} item(s) withheld` : 'nothing withheld'}
+                                {p.withheldCount > 0 ? `${p.withheldCount === 1 ? '1 item' : `${p.withheldCount} items`} withheld` : 'nothing withheld'}
                                 {p.consultedSources.length > 0 && ` · consulted: ${p.consultedSources.join(', ')}`}
                               </p>
                             </>

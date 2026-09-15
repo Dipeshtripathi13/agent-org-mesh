@@ -55,8 +55,9 @@ describe('turnFromAuditEntry', () => {
         synthesizedAnswer: 'answer',
       },
     }));
-    // 1 allowed (policyRef null, tier !== CANT), 2 withheld (the WONT and the CANT).
-    expect(turn.result?.withheldCount).toBe(2);
+    // 1 allowed, 1 withheld by the sharing rules (the WONT). The CANT is "never collected",
+    // not withheld — deliberately changed 2026-09-15 (rule 4).
+    expect(turn.result?.withheldCount).toBe(1);
   });
 
   it('falls back to joining allowed item text when synthesizedAnswer is missing (a pre-feature row)', () => {

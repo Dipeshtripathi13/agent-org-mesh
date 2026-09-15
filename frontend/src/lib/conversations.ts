@@ -44,7 +44,9 @@ export type RawEntry = Awaited<ReturnType<typeof api.auditForSubject>>['entries'
  *  same way allowedTextOnly() does on the backend. */
 export function turnFromAuditEntry(entry: RawEntry): ThreadTurn {
   const items = entry.snapshot.items;
-  const withheldCount = items.filter((i) => i.tier === 'CANT' || i.policyRef !== null).length;
+  // Withheld by the sharing rules only — "never collected" (CANT) is on every answer and is not
+  // something held back from this asker (rule 4; matches allowedTextOnly since 2026-09-15).
+  const withheldCount = items.filter((i) => i.policyRef !== null && i.tier !== 'CANT').length;
   return {
     id: entry.id,
     question: entry.question,

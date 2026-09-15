@@ -33,11 +33,15 @@ describe('allowedTextOnly', () => {
     expect(allowedTextOnly(items).allowed).toEqual([]);
   });
 
-  it('excludes CANT items even though they are already fully generic', () => {
+  // Deliberately changed 2026-09-15: a CANT item used to count as withheld, so every answer
+  // said "1 item withheld" because of the standard never-collected notice. Rule 4: withheld and
+  // never collected are different things and are counted separately.
+  it('excludes CANT items from the synthesis input, and counts them as never collected, not withheld', () => {
     const items = [structuralCant('Compensation, performance... are not ingested by any agent.')];
-    const { allowed, withheldCount } = allowedTextOnly(items);
+    const { allowed, withheldCount, neverCollectedCount } = allowedTextOnly(items);
     expect(allowed).toEqual([]);
-    expect(withheldCount).toBe(1);
+    expect(withheldCount).toBe(0);
+    expect(neverCollectedCount).toBe(1);
   });
 
   it('a realistic mixed response: only the genuinely allowed items reach the synthesis input', () => {
@@ -47,20 +51,22 @@ describe('allowedTextOnly', () => {
       structuralCant('Compensation, performance, ... are not ingested by any agent.'),
       allow('Diego attended the payments sync.'),
     ];
-    const { allowed, withheldCount } = allowedTextOnly(items);
+    const { allowed, withheldCount, neverCollectedCount } = allowedTextOnly(items);
     expect(allowed).toEqual([items[0], items[3]]);
-    expect(withheldCount).toBe(2);
+    expect(withheldCount).toBe(1);
+    expect(neverCollectedCount).toBe(1);
   });
 
   it('empty input produces empty output with zero withheld', () => {
-    expect(allowedTextOnly([])).toEqual({ allowed: [], withheldCount: 0 });
+    expect(allowedTextOnly([])).toEqual({ allowed: [], withheldCount: 0, neverCollectedCount: 0 });
   });
 
-  it('all-withheld input produces empty allowed with withheldCount equal to the full length', () => {
+  it('nothing allowed: withheld and never-collected together account for every item', () => {
     const items = [redact('a'), structuralCant('b'), refuse('c')];
-    const { allowed, withheldCount } = allowedTextOnly(items);
+    const { allowed, withheldCount, neverCollectedCount } = allowedTextOnly(items);
     expect(allowed).toEqual([]);
-    expect(withheldCount).toBe(3);
+    expect(withheldCount).toBe(2);
+    expect(neverCollectedCount).toBe(1);
   });
 
   it('never mutates the input array', () => {
