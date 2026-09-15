@@ -1254,6 +1254,44 @@ export async function listConversationsForPair(requesterId: number, targetId: nu
   return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/** Every chat one person has had about *other* people in their organization, newest first,
+ *  each labelled with who it's about — so someone asking several people can see and switch
+ *  between all of those chats in one list (2026-09-15). Same grouping as
+ *  listConversationsForPair; self-chats stay on "My agent". */
+export interface PersonConversationSummary extends ConversationSummary {
+  targetId: number;
+  targetName: string;
+  targetTitle: string;
+}
+
+export async function listConversationsForRequester(requesterId: number, orgId: number): Promise<PersonConversationSummary[]> {
+  const { rows } = await pool.query(
+    `SELECT a.conversation_id, a.question, a.created_at, a.target_person_id, p.name AS target_name, p.title AS target_title
+       FROM audit_log a
+       JOIN people p ON p.id = a.target_person_id
+      WHERE a.requester_id = $1 AND a.org_id = $2
+        AND a.target_person_id <> a.requester_id
+        AND a.conversation_id IS NOT NULL
+      ORDER BY a.created_at`,
+    [requesterId, orgId],
+  );
+  const byId = new Map<string, PersonConversationSummary>();
+  for (const row of rows) {
+    const id = row.conversation_id as string;
+    const existing = byId.get(id);
+    if (existing) {
+      existing.updatedAt = iso(row.created_at);
+      existing.turnCount += 1;
+    } else {
+      byId.set(id, {
+        id, title: row.question, updatedAt: iso(row.created_at), turnCount: 1,
+        targetId: row.target_person_id, targetName: row.target_name, targetTitle: row.target_title,
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
 /** Most recent real asks for one specific (requester, target) pair, newest first — the
  *  input ESC-REPEAT-WITHHOLD checks. */
 export async function getRecentAuditForPair(requesterId: number, targetPersonId: number, limit: number): Promise<AuditEntry[]> {

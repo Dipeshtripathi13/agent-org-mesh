@@ -3308,6 +3308,22 @@ app.post('/api/notifications/seen', {
 /** Chats for one (requester, target) pair — My agent → Ask yourself (requesterId ===
  *  targetId) or a real cross-person Ask thread — derived from that pair's own real audit
  *  rows (listConversationsForPair groups them; nothing new is stored). */
+/** All of the signed-in person's chats about other people in this organization, labelled by
+ *  person — the Ask page's chat list. Identity comes from the session (rule 7). */
+app.get('/api/agent/conversations/mine', async (req, reply) => {
+  if ((await currentAccountId(req)) == null) {
+    reply.code(401);
+    return { error: 'log in first' };
+  }
+  const orgId = orgIdFromQuery(req);
+  const session = await requireSessionPerson(req, orgId);
+  if (!session.ok) {
+    reply.code(session.code);
+    return { error: session.error };
+  }
+  return { conversations: await repo.listConversationsForRequester(session.personId, orgId) };
+});
+
 app.get('/api/agent/conversations', async (req, reply) => {
   const { targetId } = req.query as { targetId?: string };
   if ((await currentAccountId(req)) == null) {

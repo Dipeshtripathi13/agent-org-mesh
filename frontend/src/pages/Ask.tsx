@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type Person } from '../lib/api';
+import { api, type Person, type PersonConversation } from '../lib/api';
 import { relativeTime, turnFromAuditEntry, type RawEntry, type ThreadTurn, type ConversationSummary } from '../lib/conversations';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
 import { useMe } from '../lib/MeContext';
@@ -20,7 +20,11 @@ export function Ask() {
   const [target, setTarget] = useState(0);
   const [question, setQuestion] = useState('');
   const [entries, setEntries] = useState<RawEntry[]>([]);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [, setConversations] = useState<ConversationSummary[]>([]);
+  // Every chat with anyone, labelled by person — a manager asking several reports needs to
+  // see who each chat is with, and switch between them (2026-09-15).
+  const [allConversations, setAllConversations] = useState<PersonConversation[]>([]);
+  const openAfterLoad = useRef<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [pending, setPending] = useState<ThreadTurn | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -81,6 +85,10 @@ export function Ask() {
   const targetPerson = people.find((p) => p.id === target);
   const allowedRoles = deriveAllowedRoles(meId, target, people);
 
+  const loadAllConversations = () =>
+    api.myConversations(meOrgId).then((d) => setAllConversations(d.conversations)).catch(() => setAllConversations([]));
+  useEffect(() => { void loadAllConversations(); }, [meOrgId, meId]);
+
   // Keep the selected role truthful as identity or target changes — never leave a
   // stale, no-longer-valid role selected (it would just be rejected on Ask anyway).
   useEffect(() => {
@@ -111,7 +119,11 @@ export function Ask() {
     // skip the request instead of asking the backend about a person that doesn't exist.
     if (!target) { setEntries([]); setConversations([]); setActiveConversationId(null); setHistoryLoaded(true); return; }
     loadHistory(meId, target).then((convos) => {
-      setActiveConversationId(convos[0]?.id ?? null);
+      // Opening someone else's chat from the list switches `target` first; land on that
+      // exact chat once their history loads, not on their most recent one.
+      const wanted = openAfterLoad.current;
+      openAfterLoad.current = null;
+      setActiveConversationId(wanted && convos.some((c) => c.id === wanted) ? wanted : (convos[0]?.id ?? null));
       setHistoryLoaded(true);
     });
   }, [meId, target]);
@@ -135,6 +147,12 @@ export function Ask() {
     setQuestion('');
   };
 
+  const openConversation = (c: PersonConversation) => {
+    if (c.targetId === target) { setActiveConversationId(c.id); return; }
+    openAfterLoad.current = c.id;
+    setTarget(c.targetId);
+  };
+
   const ask = async (q: string) => {
     if (!q.trim() || busy) return;
     const localId = `local-${++localTurnId}`;
@@ -148,6 +166,7 @@ export function Ask() {
       // chat) mints a fresh one server-side.
       const r = await api.agentAsk(target, role, q.trim(), true, activeConversationId ?? undefined);
       await loadHistory(meId, target);
+      void loadAllConversations();
       if (r.conversationId) setActiveConversationId(r.conversationId);
       setPending(null);
     } catch (e) {
@@ -227,14 +246,16 @@ export function Ask() {
           <div className="chat-rail">
             <button className="chat-new-btn" onClick={newChat}>+ New chat</button>
             <div className="chat-list">
-              {conversations.length === 0 && <p className="chat-list-empty">No chats yet</p>}
-              {conversations.map((c) => (
+              {allConversations.length === 0 && <p className="chat-list-empty">No chats yet</p>}
+              {allConversations.map((c) => (
                 <button
                   key={c.id}
-                  className={`chat-list-item${c.id === activeConversationId ? ' active' : ''}`}
-                  onClick={() => setActiveConversationId(c.id)}
-                  title={c.title}
+                  className={`chat-list-item has-person${c.id === activeConversationId ? ' active' : ''}`}
+                  onClick={() => openConversation(c)}
+                  title={`${c.title} — with ${c.targetName}`}
+                  aria-label={`Chat with ${c.targetName}: ${c.title}`}
                 >
+                  <span className="chat-list-person">{c.targetName}</span>
                   <span className="chat-list-title">{c.title}</span>
                   <span className="chat-list-meta">{relativeTime(c.updatedAt)} &middot; {c.turnCount}</span>
                 </button>
@@ -243,6 +264,15 @@ export function Ask() {
           </div>
 
           <div className="chat-main">
+            {targetPerson && (
+              <div className="chat-with">
+                <span className="chat-with-avatar" aria-hidden="true">{targetPerson.name.charAt(0).toUpperCase()}</span>
+                <span className="chat-with-text">
+                  <strong>{activeConversationId ? 'Chat with' : 'New chat with'} {targetPerson.name}</strong>
+                  <span className="chat-with-meta">{targetPerson.title} &middot; asking as {role.toLowerCase()}</span>
+                </span>
+              </div>
+            )}
             {displayedThread.length === 0 ? (
               <p className="glossary" style={{ margin: '0 0 12px' }}>
                 Every turn is its own real, audited ask, written into{' '}
@@ -332,7 +362,7 @@ export function Ask() {
           </p>
           <p className="glossary" style={{ marginTop: 8 }}>
             The answer is written only from what you&rsquo;re allowed to see &mdash; never from
-            anything withheld. &ldquo;Show how this was derived&rdquo; lists every item, including
+            anything withheld. &ldquo;Show where this answer came from&rdquo; lists every item, including
             what was withheld and why.
           </p>
         </div>

@@ -219,6 +219,12 @@ export interface PersonDetails {
   connectedTools: string[];
 }
 
+/** One of the signed-in person's chats about someone else, labelled with who it's about. */
+export interface PersonConversation {
+  id: string; title: string; updatedAt: string; turnCount: number;
+  targetId: number; targetName: string; targetTitle: string;
+}
+
 export const api = {
   authMe: () =>
     req<{ account: Account | null; orgRoles: Record<number, OrgRole>; people: MyIdentity[]; adminElevatedUntil: string | null }>('/auth/me'),
@@ -382,6 +388,8 @@ export const api = {
    *  lands while the list is open still counts as unread). */
   markNotificationsSeen: (through: string) =>
     req<{ ok: true }>('/notifications/seen', { method: 'POST', body: JSON.stringify({ through }) }),
+  /** Every chat you've had about other people in this organization, newest first. */
+  myConversations: (orgId: number) => req<{ conversations: PersonConversation[] }>(`/agent/conversations/mine?orgId=${orgId}`),
   listConversations: (targetId: number) => req<{
     conversations: { id: string; title: string; updatedAt: string; turnCount: number }[];
   }>(`/agent/conversations?targetId=${targetId}`),
