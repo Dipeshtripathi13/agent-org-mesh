@@ -1,30 +1,96 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PRODUCT_NAME } from '../lib/brand';
 
 /**
- * The left half of sign in / create account / reset password: the product working, as a
- * looping scene. A manager asks a question, it travels down the org chart, each agent lights
- * up only the tools that matter, the sharing rules mark one item withheld, and one answer
- * travels back up. Pauses when the tab is hidden or the scene is off screen, follows the mouse
- * slightly, and shows a still final frame under prefers-reduced-motion.
+ * The left half of sign in / create account / reset password: the product at work, as a
+ * looping scene. The whole organization is a dim constellation; one question lights a
+ * path through it. Each hop is checked against the org chart, each agent wakes only the
+ * tools that matter, the sharing rules visibly withhold one item, one answer assembles
+ * on the asker's screen, and the person asked about is told who asked.
+ *
+ * Three parallax depths follow the mouse (constellation, chart, cards). Pauses when the
+ * tab is hidden or the scene is off screen; holds a still final frame under
+ * prefers-reduced-motion. Everything is time-driven from one clock, so the story stays in
+ * sync no matter how the frame rate behaves.
  */
 
-const LOOP = 10.4;
-const STILL_FRAME = 8.6;
+const LOOP = 14.6;
+const STILL_FRAME = 11.9;
+const QUESTION = 'What’s the status of the billing migration?';
 
 const STEPS: { at: number; label: string }[] = [
   { at: 0, label: 'Someone asks' },
-  { at: 1.2, label: 'It travels the org chart' },
-  { at: 3.2, label: 'Agents read only the tools that matter' },
-  { at: 5.2, label: 'Sharing rules decide what’s shown' },
-  { at: 6.0, label: 'One answer comes back' },
+  { at: 1.8, label: 'Checked against the org chart' },
+  { at: 4.2, label: 'Agents read only what matters' },
+  { at: 6.4, label: 'Sharing rules decide' },
+  { at: 7.9, label: 'One answer, on the record' },
+  { at: 11.0, label: 'They see who asked' },
 ];
 
-const EDGE_BEN = 'M260 174 C 260 252, 140 244, 140 318';
-const EDGE_CHEN = 'M260 174 C 260 252, 380 244, 380 318';
+// Chart geometry (viewBox 560 × 540).
+const ASKER = { x: 205, y: 136, w: 150, name: 'Asha Rao', role: 'VP Engineering' };
+const MANAGER = { x: 205, y: 232, w: 150, name: 'Maya Okafor', role: 'Engineering Manager' };
+const BEN = { x: 40, y: 330, w: 140, name: 'Ben Carter', role: 'Engineer' };
+const CHEN = { x: 380, y: 330, w: 140, name: 'Chen Li', role: 'Engineer' };
+const E1 = 'M280 186 L280 232';
+const E2 = 'M280 282 C280 322, 110 294, 110 330';
+const E3 = 'M280 282 C280 322, 450 294, 450 330';
+
+interface Tool { x: number; y: number; w: number; label: string; litAt: number | null; owner: 'ben' | 'chen' }
+const TOOLS: Tool[] = [
+  { x: 44, y: 396, w: 64, label: 'GitHub', litAt: 4.4, owner: 'ben' },
+  { x: 114, y: 396, w: 52, label: 'Jira', litAt: 4.9, owner: 'ben' },
+  { x: 44, y: 428, w: 128, label: 'Notion · not needed', litAt: null, owner: 'ben' },
+  { x: 382, y: 396, w: 92, label: 'Claude Code', litAt: 5.3, owner: 'chen' },
+  { x: 480, y: 396, w: 72, label: 'Calendar', litAt: 5.8, owner: 'chen' },
+  { x: 382, y: 428, w: 118, label: 'Slack · not needed', litAt: null, owner: 'chen' },
+];
+
+const GATE_ROWS: { label: string; at: number; withheld?: boolean }[] = [
+  { label: 'Billing PR status', at: 6.7 },
+  { label: 'Jira tickets closed', at: 6.95 },
+  { label: 'Tax module shipped', at: 7.2 },
+  { label: 'Review notes', at: 7.45, withheld: true },
+];
 
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const between = (t: number, a: number, b: number) => t >= a && t < b;
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+/** The rest of the organization: small clusters of dim people, laid out once with a
+ *  seeded generator so the picture is the same on every visit. */
+function useConstellation() {
+  return useMemo(() => {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    const clusters = [
+      { cx: 58, cy: 72, n: 6, r: 44 },
+      { cx: 70, cy: 208, n: 6, r: 46 },
+      { cx: 332, cy: 482, n: 7, r: 50 },
+      { cx: 508, cy: 58, n: 5, r: 40 },
+    ];
+    const nodes: { x: number; y: number; hub: boolean; delay: number }[] = [];
+    const edges: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    for (const c of clusters) {
+      nodes.push({ x: c.cx, y: c.cy, hub: true, delay: rnd() * 6 });
+      for (let i = 0; i < c.n; i++) {
+        const a = rnd() * Math.PI * 2;
+        const d = c.r * (0.45 + rnd() * 0.55);
+        const x = c.cx + Math.cos(a) * d;
+        const y = c.cy + Math.sin(a) * d * 0.8;
+        nodes.push({ x, y, hub: false, delay: rnd() * 6 });
+        edges.push({ x1: c.cx, y1: c.cy, x2: x, y2: y });
+      }
+    }
+    // Faint threads that tie the clusters to the chart, so it reads as one org.
+    edges.push({ x1: 58, y1: 72, x2: 205, y2: 150 });
+    edges.push({ x1: 70, y1: 208, x2: 205, y2: 250 });
+    edges.push({ x1: 508, y1: 58, x2: 355, y2: 150 });
+    edges.push({ x1: 332, y1: 482, x2: 176, y2: 440 });
+    edges.push({ x1: 332, y1: 482, x2: 382, y2: 440 });
+    return { nodes, edges };
+  }, []);
+}
 
 function useReducedMotion(): boolean {
   const query = typeof window !== 'undefined' ? window.matchMedia?.('(prefers-reduced-motion: reduce)') : undefined;
@@ -38,24 +104,25 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-function Chip({ x, y, w, label, state }: { x: number; y: number; w: number; label: string; state: 'idle' | 'lit' | 'withheld' }) {
+function Person({ p, active, thinking }: { p: typeof ASKER; active: boolean; thinking: boolean }) {
   return (
-    <g className={`sc-chip${state === 'lit' ? ' is-lit' : state === 'withheld' ? ' is-withheld' : ''}`}>
-      <rect x={x} y={y} width={w} height={26} rx={13} />
-      <text x={x + w / 2} y={y + 17} textAnchor="middle">{label}</text>
+    <g>
+      {thinking && <rect className="sc-pulse" x={p.x} y={p.y} width={p.w} height={50} rx={14} />}
+      <rect className={`sc-card${active ? ' is-active' : ''}`} x={p.x} y={p.y} width={p.w} height={50} rx={14} />
+      <circle cx={p.x + 24} cy={p.y + 25} r={11} className={`sc-avatar${active ? ' is-active' : ''}`} />
+      <text x={p.x + 24} y={p.y + 29} textAnchor="middle" className="sc-initial">{p.name[0]}</text>
+      <text x={p.x + 44} y={p.y + 22} className="sc-name">{p.name}</text>
+      <text x={p.x + 44} y={p.y + 37} className="sc-meta">{p.role}</text>
     </g>
   );
 }
 
-function Person({ x, y, name, role, active, checking }: { x: number; y: number; name: string; role: string; active: boolean; checking: boolean }) {
+function Pill({ x, y, label, shown }: { x: number; y: number; label: string; shown: boolean }) {
+  const w = label.length * 6.2 + 18;
   return (
-    <g>
-      {checking && <rect className="sc-pulse" x={x} y={y} width={140} height={50} rx={14} />}
-      <rect className={`sc-card${active ? ' is-active' : ''}`} x={x} y={y} width={140} height={50} rx={14} />
-      <circle cx={x + 24} cy={y + 25} r={11} className="sc-avatar" />
-      <text x={x + 24} y={y + 29} textAnchor="middle" className="sc-initial">{name[0]}</text>
-      <text x={x + 44} y={y + 22} className="sc-name">{name}</text>
-      <text x={x + 44} y={y + 37} className="sc-meta">{role}</text>
+    <g className={`sc-pill${shown ? ' is-shown' : ''}`} style={{ transformOrigin: `${x + w / 2}px ${y + 9}px` }}>
+      <rect x={x} y={y} width={w} height={18} rx={9} />
+      <text x={x + w / 2} y={y + 12.5} textAnchor="middle">{label}</text>
     </g>
   );
 }
@@ -64,14 +131,13 @@ export function AuthScene() {
   const reduced = useReducedMotion();
   const [t, setT] = useState(reduced ? STILL_FRAME : 0);
   const rootRef = useRef<HTMLDivElement>(null);
-  const benRef = useRef<SVGPathElement>(null);
-  const chenRef = useRef<SVGPathElement>(null);
-  const [gates, setGates] = useState<{ ben: DOMPoint; chen: DOMPoint } | null>(null);
+  const e1 = useRef<SVGPathElement>(null);
+  const e2 = useRef<SVGPathElement>(null);
+  const e3 = useRef<SVGPathElement>(null);
+  const [ready, setReady] = useState(false);
+  const stars = useConstellation();
 
-  useLayoutEffect(() => {
-    const b = benRef.current, c = chenRef.current;
-    if (b && c) setGates({ ben: b.getPointAtLength(b.getTotalLength() * 0.78), chen: c.getPointAtLength(c.getTotalLength() * 0.78) });
-  }, []);
+  useLayoutEffect(() => { setReady(true); }, []);
 
   // The clock: runs only while the tab is visible and the scene is on screen.
   useEffect(() => {
@@ -117,24 +183,48 @@ export function AuthScene() {
     return () => { cancelAnimationFrame(raf); window.removeEventListener('pointermove', onMove); el.removeEventListener('pointerleave', onLeave); };
   }, [reduced]);
 
-  const resetting = t >= 9.9;
-  const packet = (ref: React.RefObject<SVGPathElement | null>): ReactNode => {
+  const resetting = t >= LOOP - 0.8;
+  const still = reduced;
+
+  // --- beats ------------------------------------------------------------------------
+  const typedChars = still ? QUESTION.length : Math.round(QUESTION.length * clamp01(t / 1.6));
+  const caretOn = !still && t < 2.0 && Math.floor(t * 2) % 2 === 0;
+  const questionShown = !still && t < 9.5;
+  const managerActive = t >= 2.6;
+  const engineersActive = t >= 3.8;
+  const thinking = !still && between(t, 3.8, 5.2);
+  const wiresLit = t >= 4.2;
+  const gateShown = t >= 6.4;
+  const askerActive = t >= 9.4;
+  const answerShown = t >= 9.5;
+  const toastShown = t >= 11.0;
+  const activeStep = STEPS.reduce((i, s, idx) => (t >= s.at ? idx : i), 0);
+
+  const packetOn = (ref: React.RefObject<SVGPathElement | null>, down: [number, number], up: [number, number]): ReactNode => {
     const path = ref.current;
-    if (!path || reduced) return null;
+    if (!path || still || !ready) return null;
     let p: number | null = null;
-    if (between(t, 1.2, 2.6)) p = ease((t - 1.2) / 1.4);
-    else if (between(t, 6.0, 7.4)) p = 1 - ease((t - 6.0) / 1.4);
+    if (between(t, down[0], down[1])) p = ease((t - down[0]) / (down[1] - down[0]));
+    else if (between(t, up[0], up[1])) p = 1 - ease((t - up[0]) / (up[1] - up[0]));
     if (p == null) return null;
     const pt = path.getPointAtLength(path.getTotalLength() * p);
-    return <circle className="sc-packet" cx={pt.x} cy={pt.y} r={5.5} />;
+    return (
+      <g>
+        <circle className="sc-packet-halo" cx={pt.x} cy={pt.y} r={11} />
+        <circle className="sc-packet" cx={pt.x} cy={pt.y} r={4.5} />
+      </g>
+    );
   };
 
-  const edgesLit = between(t, 1.2, 2.6) || between(t, 6.0, 7.4);
-  const lit = (at: number) => (t >= at && !resetting ? 'lit' : 'idle');
-  const checking = between(t, 2.6, 5.2);
-  const agentsActive = between(t, 2.6, 9.9);
-  const gated = between(t, 5.2, 9.9);
-  const activeStep = STEPS.reduce((i, s, idx) => (t >= s.at ? idx : i), 0);
+  // A spark leaving each lit tool for its person, right after the tool wakes.
+  const sparks = TOOLS.filter((tool) => tool.litAt != null).map((tool) => {
+    const from = { x: tool.x + tool.w / 2, y: tool.y };
+    const to = tool.owner === 'ben' ? { x: 110, y: 380 } : { x: 450, y: 380 };
+    const t0 = tool.litAt! + 0.25;
+    if (still || !between(t, t0, t0 + 0.55)) return null;
+    const p = ease((t - t0) / 0.55);
+    return <circle key={tool.label} className="sc-spark" cx={from.x + (to.x - from.x) * p} cy={from.y + (to.y - from.y) * p} r={2.6} />;
+  });
 
   return (
     <div className="auth-scene" ref={rootRef}>
@@ -148,7 +238,7 @@ export function AuthScene() {
       </div>
 
       <div className="auth-stage" aria-hidden="true">
-        <svg className="auth-svg" viewBox="0 0 520 480" role="presentation">
+        <svg className="auth-svg" viewBox="0 0 560 540" role="presentation">
           <defs>
             <filter id="sc-glow" x="-200%" y="-200%" width="500%" height="500%">
               <feGaussianBlur stdDeviation="3.5" result="b" />
@@ -156,48 +246,113 @@ export function AuthScene() {
             </filter>
           </defs>
 
+          {/* depth 1: the rest of the organization */}
+          <g className="auth-layer auth-layer-back">
+            {stars.edges.map((e, i) => <line key={i} className="sc-bg-edge" x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} />)}
+            {stars.nodes.map((n, i) => (
+              <circle key={i} className={`sc-bg-node${n.hub ? ' is-hub' : ''}`} cx={n.x} cy={n.y} r={n.hub ? 4 : 2.6}
+                style={{ animationDelay: `${-n.delay}s` }} />
+            ))}
+          </g>
+
           <g className={`sc-fade${resetting ? ' sc-hidden' : ''}`}>
-            {/* question → answer */}
-            <g className={`sc-fade${between(t, 0.2, 7.2) ? '' : ' sc-hidden'}`}>
-              <rect className="sc-card" x={100} y={24} width={320} height={64} rx={14} />
-              <text x={122} y={49} className="sc-meta">Asha · VP Engineering</text>
-              <text x={122} y={70} className="sc-text">What’s the status of the billing migration?</text>
+            {/* depth 2: the chart the question travels */}
+            <g className="auth-layer auth-layer-mid">
+              <path ref={e1} d={E1} className={`sc-edge${t >= 1.8 && t < 9.4 ? ' is-lit' : ''}`} />
+              <path ref={e2} d={E2} className={`sc-edge${t >= 2.9 && t < 8.7 ? ' is-lit' : ''}`} />
+              <path ref={e3} d={E3} className={`sc-edge${t >= 2.9 && t < 8.7 ? ' is-lit' : ''}`} />
+
+              <Person p={ASKER} active={askerActive} thinking={false} />
+              <Person p={MANAGER} active={managerActive} thinking={false} />
+              <Person p={BEN} active={engineersActive} thinking={thinking} />
+              <Person p={CHEN} active={engineersActive} thinking={thinking} />
+
+              <Pill x={158} y={200} label="Direct manager ✓" shown={t >= 2.6} />
+              <Pill x={128} y={282} label="Skip-level ✓" shown={t >= 3.8} />
+              <Pill x={346} y={282} label="Skip-level ✓" shown={t >= 3.8} />
+
+              {/* tools under each engineer */}
+              <path d="M110 380 V 388 H 76 V 396 M110 388 H 140 V 396" className={`sc-wire${wiresLit ? ' is-lit' : ''}`} />
+              <path d="M450 380 V 388 H 428 V 396 M450 388 H 516 V 396" className={`sc-wire${wiresLit ? ' is-lit' : ''}`} />
+              {TOOLS.map((tool) => {
+                const lit = tool.litAt != null && t >= tool.litAt;
+                const idle = tool.litAt == null;
+                return (
+                  <g key={tool.label} className={`sc-chip${lit ? ' is-lit' : ''}${idle ? ' is-idle' : ''}`}>
+                    <rect x={tool.x} y={tool.y} width={tool.w} height={24} rx={12} />
+                    <text x={tool.x + tool.w / 2} y={tool.y + 16} textAnchor="middle">{tool.label}</text>
+                  </g>
+                );
+              })}
+              {sparks}
+
+              {packetOn(e1, [1.8, 2.6], [8.8, 9.4])}
+              {packetOn(e2, [2.9, 3.8], [7.9, 8.7])}
+              {packetOn(e3, [2.9, 3.8], [7.9, 8.7])}
             </g>
-            <g className={`sc-fade${t >= 7.4 ? '' : ' sc-hidden'}`}>
-              <rect className="sc-card is-active" x={62} y={8} width={396} height={104} rx={14} />
-              <text x={84} y={32} className="sc-meta">Answer for Asha</text>
-              <text x={84} y={53} className="sc-text">Ben: billing PR is in review, 2 Jira tickets closed.</text>
-              <text x={84} y={72} className="sc-text">Chen: finished the tax module with Claude Code.</text>
-              <text x={84} y={96} className="sc-meta">Checked 4 tools · 1 item withheld</text>
+
+            {/* depth 3: what people actually see */}
+            <g className="auth-layer auth-layer-front">
+              {/* the question, typed */}
+              <g className={`sc-fade${questionShown ? '' : ' sc-hidden'}`}>
+                <rect className="sc-card" x={110} y={22} width={340} height={62} rx={14} />
+                <text x={132} y={46} className="sc-meta">Asha · VP Engineering</text>
+                <text x={132} y={67} className="sc-text">
+                  {QUESTION.slice(0, typedChars)}
+                  {caretOn && <tspan className="sc-caret">|</tspan>}
+                </text>
+              </g>
+
+              {/* the answer, assembling */}
+              <g className={`sc-fade${answerShown ? '' : ' sc-hidden'}`}>
+                <rect className="sc-card is-active" x={90} y={8} width={380} height={112} rx={14} />
+                <text x={112} y={32} className="sc-meta">Answer for Asha · checked as skip-level</text>
+                <text x={112} y={55} className={`sc-text sc-line${t >= 9.6 || still ? ' is-in' : ''}`}>Ben: billing PR is in review, 2 Jira tickets closed.</text>
+                <text x={112} y={75} className={`sc-text sc-line${t >= 9.95 || still ? ' is-in' : ''}`}>Chen: tax module finished, tested with Claude Code.</text>
+                <g className={`sc-line${t >= 10.7 || still ? ' is-in' : ''}`}>
+                  <text x={112} y={102} className="sc-meta">Checked GitHub, Jira, Claude Code, Calendar</text>
+                  <rect x={352} y={90} width={98} height={17} rx={8.5} className="sc-withheld-tag" />
+                  <text x={401} y={102} textAnchor="middle" className="sc-withheld-text">1 item withheld</text>
+                </g>
+              </g>
+
+              {/* the sharing rules gate */}
+              <g className={`sc-gate${gateShown ? ' is-shown' : ''}`}>
+                <rect x={392} y={126} width={160} height={104} rx={12} className="sc-gate-bg" />
+                <text x={406} y={146} className="sc-gate-head">Sharing rules</text>
+                <text x={538} y={146} textAnchor="end" className="sc-gate-rev">rev 12</text>
+                <line x1={392} y1={154} x2={552} y2={154} className="sc-gate-rule" />
+                {GATE_ROWS.map((row, i) => {
+                  const y = 170 + i * 17;
+                  const on = t >= row.at || still;
+                  return (
+                    <g key={row.label} className={`sc-gate-row${on ? ' is-on' : ''}${row.withheld ? ' is-withheld' : ''}`}>
+                      <text x={406} y={y} className="sc-gate-label">{row.label}</text>
+                      {row.withheld ? (
+                        <>
+                          <rect x={490} y={y - 11} width={58} height={14} rx={7} className="sc-gate-tag" />
+                          <text x={519} y={y} textAnchor="middle" className="sc-gate-tag-text">Withheld</text>
+                        </>
+                      ) : (
+                        <>
+                          <circle cx={540} cy={y - 4} r={6} className="sc-check" />
+                          <path d={`M${537} ${y - 4} l2 2 l4 -4.5`} className="sc-tick" />
+                        </>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+
+              {/* the other side */}
+              <g className={`sc-toast${toastShown ? ' is-shown' : ''}`}>
+                <rect x={30} y={470} width={252} height={50} rx={12} className="sc-toast-bg" />
+                <circle cx={54} cy={495} r={12} className="sc-toast-avatar" />
+                <text x={54} y={499} textAnchor="middle" className="sc-toast-initial">A</text>
+                <text x={74} y={491} className="sc-toast-title">Asha Rao asked about you</text>
+                <text x={74} y={507} className="sc-toast-meta">as a skip-level manager · just now</text>
+              </g>
             </g>
-
-            <Person x={190} y={124} name="Asha Rao" role="VP Engineering" active={t >= 7.4} checking={false} />
-
-            <path ref={benRef} d={EDGE_BEN} className={`sc-edge${edgesLit ? ' is-lit' : ''}`} />
-            <path ref={chenRef} d={EDGE_CHEN} className={`sc-edge${edgesLit ? ' is-lit' : ''}`} />
-            {packet(benRef)}
-            {packet(chenRef)}
-
-            {gates && gated && (
-              <>
-                <circle cx={gates.ben.x} cy={gates.ben.y} r={8} className="sc-check" />
-                <path d={`M${gates.ben.x - 3.5} ${gates.ben.y} l2.5 2.5 l4.5 -5`} className="sc-tick" />
-                <circle cx={gates.chen.x} cy={gates.chen.y} r={8} className="sc-check" />
-                <path d={`M${gates.chen.x - 3.5} ${gates.chen.y} l2.5 2.5 l4.5 -5`} className="sc-tick" />
-              </>
-            )}
-
-            <Person x={70} y={318} name="Ben Carter" role="Engineer" active={agentsActive} checking={checking} />
-            <Person x={310} y={318} name="Chen Li" role="Engineer" active={agentsActive} checking={checking} />
-
-            <path d="M140 368 V 384 H 98 V 400 M140 384 H 176 V 400" className="sc-wire" />
-            <path d="M380 368 V 384 H 342 V 400 M380 384 H 434 V 400" className="sc-wire" />
-            <Chip x={62} y={400} w={72} label="GitHub" state={lit(3.3)} />
-            <Chip x={146} y={400} w={60} label="Jira" state={lit(3.8)} />
-            <Chip x={296} y={400} w={92} label="Claude Code" state={lit(4.3)} />
-            <Chip x={396} y={400} w={76} label="Calendar" state={lit(4.8)} />
-            <Chip x={70} y={436} w={140} label="Notion · not needed" state="idle" />
-            <Chip x={316} y={436} w={128} label="1 item withheld" state={t >= 5.5 && !resetting ? 'withheld' : 'idle'} />
           </g>
         </svg>
       </div>
