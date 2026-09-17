@@ -1,4 +1,14 @@
-# Agent Org Mesh — working notes for Claude Code
+# Eternity Nest — working notes for Claude Code
+
+**The product's name lives in one place per package: `frontend/src/lib/brand.ts` and
+`backend/src/brand.ts` (`PRODUCT_NAME`, plus `PRODUCT_SLUG` for machine-readable ids).** Renamed
+from "Agent Org Mesh" to "Eternity Nest" on 2026-09-17 — the company and the product are the same
+name. Every screen, the browser tab (set from the constant in `main.tsx`), the legal pages and the
+invitation/verification/reset emails read it from there. Deliberately not renamed: the applied
+baseline migration's comment (migrations are checksum-verified; never edit one), the docker-compose
+volume name (renaming it orphans local database data), and the seeded dev logins
+(`…@agentorgmesh.local`, referenced across the API test suites). The marketing site keeps its own
+copy in its own repo.
 
 ## What this is
 A coordination layer. Every organization has one aggregator agent — set once, org-wide, by

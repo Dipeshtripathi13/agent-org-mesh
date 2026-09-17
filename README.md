@@ -1,4 +1,4 @@
-# Agent Org Mesh
+# Eternity Nest
 
 Every person gets one aggregator agent that knows their working context. Agents answer
 questions across and up the org chart, so the coordination overhead humans carry —

@@ -15,6 +15,7 @@
  *  remote server happens to expose — the read-only guarantee and the deterministic-
  *  disclosure boundary (CLAUDE.md rule 1) both depend on that staying true. */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { PRODUCT_SLUG } from '../brand.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { withTimeout } from './outboundHttp.js';
 
@@ -69,7 +70,7 @@ export async function withMcpSession<T>(
   bearerToken: string,
   fn: (callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>) => Promise<T>,
 ): Promise<T> {
-  const client = new Client({ name: 'agent-org-mesh', version: '1.0.0' }, { capabilities: {} });
+  const client = new Client({ name: PRODUCT_SLUG, version: '1.0.0' }, { capabilities: {} });
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
     requestInit: { headers: { Authorization: `Bearer ${bearerToken}` } },
   });

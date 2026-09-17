@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { PRODUCT_NAME } from '../lib/brand';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 
@@ -35,7 +36,7 @@ function StandalonePage({ children }: { children: ReactNode }) {
   return (
     <div className="app">
       <header className="topbar">
-        <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>Agent Org Mesh</a>
+        <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>{PRODUCT_NAME}</a>
         <span className="spacer" />
       </header>
       <div className="body" style={{ flexDirection: 'column', alignItems: 'center' }}>{children}</div>
@@ -65,7 +66,7 @@ function VerifyEmail({ token }: { token: string }) {
     return (
       <Card label="Email verified">
         <p className="sub" style={{ marginTop: 0 }}>Your email address is confirmed.</p>
-        <a className="btn btn-primary" href="/" style={{ display: 'flex', width: '100%', marginTop: 8, textDecoration: 'none', justifyContent: 'center' }}>Continue to Agent Org Mesh</a>
+        <a className="btn btn-primary" href="/" style={{ display: 'flex', width: '100%', marginTop: 8, textDecoration: 'none', justifyContent: 'center' }}>Continue to {PRODUCT_NAME}</a>
       </Card>
     );
   }
@@ -73,7 +74,7 @@ function VerifyEmail({ token }: { token: string }) {
     <Card label="Verify email">
       <p className="sub" style={{ marginTop: 0 }}>We couldn&rsquo;t verify your email: {error}.</p>
       <p className="glossary">Sign in and choose &ldquo;Send a new link&rdquo; to get a fresh one.</p>
-      <p className="glossary"><a href="/">Go to Agent Org Mesh</a></p>
+      <p className="glossary"><a href="/">Go to {PRODUCT_NAME}</a></p>
     </Card>
   );
 }

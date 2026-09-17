@@ -1,6 +1,6 @@
 {
-  "name": "agent-org-mesh",
+  "name": "eternity-nest",
   "private": true,
   "version": "1.0.0",
-  "description": "Root marker so Railway/Railpack detects this as a Node project and provisions Node + npm before running railway.json's build/start commands. backend/ and frontend/ remain their own separate npm packages — this file has no dependencies or scripts of its own."
+  "description": "Root marker so Railway/Railpack detects this as a Node project and provisions Node + npm before running railway.json's build/start commands. backend/ and frontend/ remain their own separate npm packages \u2014 this file has no dependencies or scripts of its own."
 }

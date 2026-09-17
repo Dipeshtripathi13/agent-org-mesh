@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PRODUCT_NAME } from '../lib/brand';
 import { api, type InvitationInfo } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { Login } from './Login';
@@ -48,7 +49,7 @@ export function AcceptInvite({ token }: { token: string }) {
   const shell = (children: React.ReactNode) => (
     <div className="app">
       <header className="topbar">
-        <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>Agent Org Mesh</a>
+        <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>{PRODUCT_NAME}</a>
         <span className="spacer" />
       </header>
       <div className="body" style={{ flexDirection: 'column', alignItems: 'center' }}>{children}</div>
@@ -69,7 +70,7 @@ export function AcceptInvite({ token }: { token: string }) {
   if (loadError) {
     return shell(card(<>
       <p className="sub" style={{ marginTop: 0 }}>This invitation link isn&rsquo;t valid. Check you copied the whole link, or ask for a new one.</p>
-      <p className="glossary"><a href="/">Go to Agent Org Mesh</a></p>
+      <p className="glossary"><a href="/">Go to {PRODUCT_NAME}</a></p>
     </>));
   }
   if (!info || loading) return shell(card(<p className="sub" style={{ margin: 0 }}>Loading&hellip;</p>));
@@ -78,7 +79,7 @@ export function AcceptInvite({ token }: { token: string }) {
     const why = { accepted: 'has already been used', expired: 'has expired', revoked: 'was withdrawn' }[info.status];
     return shell(card(<>
       <p className="sub" style={{ marginTop: 0 }}>This invitation to {info.orgName} {why}. Ask whoever invited you for a new link.</p>
-      <p className="glossary"><a href="/">Go to Agent Org Mesh</a></p>
+      <p className="glossary"><a href="/">Go to {PRODUCT_NAME}</a></p>
     </>));
   }
 

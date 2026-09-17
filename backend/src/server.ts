@@ -25,6 +25,7 @@ import { assertCredentialKeyUsable } from './domain/credentials.js';
 import { installOutboundTimeout, mapWithConcurrency, settleWithConcurrency } from './integrations/outboundHttp.js';
 import { initErrorReporting, reportBrowserError, reportServerError, type BrowserErrorReport } from './integrations/errorReporting.js';
 import { startActivityRetention } from './db/retention.js';
+import { PRODUCT_SLUG } from './brand.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
 import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
@@ -3615,7 +3616,7 @@ export { app };
 if (!process.env.VITEST) {
   const port = Number(process.env.PORT ?? 3001);
   await app.listen({ port, host: '0.0.0.0' });
-  console.log(`agent-org-mesh api → http://localhost:${port}`);
+  console.log(`${PRODUCT_SLUG} api → http://localhost:${port}`);
   // Deletes pushed tool activity older than the privacy policy's retention period.
   startActivityRetention();
 

@@ -25,6 +25,7 @@ import { SetUpMyAgent } from './pages/SetUpMyAgent';
 import { WhatItKnows } from './pages/WhatItKnows';
 import { WhoAsked } from './pages/WhoAsked';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { PRODUCT_NAME } from './lib/brand';
 import { NotificationBell } from './components/NotificationBell';
 
 const ADMIN = [
@@ -186,7 +187,7 @@ function Topbar({
 
   return (
     <header className="topbar">
-      <span className="brand">Agent Org Mesh</span>
+      <span className="brand">{PRODUCT_NAME}</span>
       {panel === 'admin' && account && <OrgSwitcher />}
       {showMeSwitcher && <MeSwitcher />}
       <span className="spacer" />

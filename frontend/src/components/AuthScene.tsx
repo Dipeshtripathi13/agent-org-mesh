@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { PRODUCT_NAME } from '../lib/brand';
 
 /**
  * The left half of sign in / create account / reset password: the product working, as a
@@ -138,7 +139,7 @@ export function AuthScene() {
   return (
     <div className="auth-scene" ref={rootRef}>
       <div>
-        <p className="auth-kicker">Agent Org Mesh</p>
+        <p className="auth-kicker">{PRODUCT_NAME}</p>
         <h2 className="auth-headline">Know what your team is working on, without asking them.</h2>
         <p className="auth-lede">
           Each answer shows only what the asker is allowed to see, and the person asked about can

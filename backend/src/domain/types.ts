@@ -1,5 +1,5 @@
 /**
- * Agent Org Mesh — domain types.
+ * Eternity Nest — domain types.
  *
  * Read-only system: nothing here describes a write to any connected surface.
  */

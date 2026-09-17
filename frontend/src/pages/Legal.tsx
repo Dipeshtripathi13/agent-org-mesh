@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { PRODUCT_NAME } from '../lib/brand';
 
 /**
  * Privacy policy, terms and subprocessor list (release audit UX-08). Public — rendered by
@@ -47,14 +48,14 @@ function Privacy() {
     <>
       <Section title="Who we are">
         <p>
-          Agent Org Mesh is operated by {LEGAL.companyName}, {LEGAL.postalAddress}. Questions about this policy or your
+          {PRODUCT_NAME} is operated by {LEGAL.companyName}, {LEGAL.postalAddress}. Questions about this policy or your
           data: {LEGAL.contactEmail}.
         </p>
       </Section>
 
       <Section title="What the service does">
         <p>
-          Agent Org Mesh answers questions about work across an organization by reading from tools people choose to
+          {PRODUCT_NAME} answers questions about work across an organization by reading from tools people choose to
           connect. It is read-only: it never creates, edits or deletes anything in a connected tool. What an answer may
           include is decided by your organization&rsquo;s disclosure policy, and anything withheld is shown as withheld.
         </p>
@@ -169,7 +170,7 @@ function Terms() {
 
       <Section title="The service">
         <p>
-          Agent Org Mesh reads from tools you connect and answers questions within your organization&rsquo;s disclosure
+          {PRODUCT_NAME} reads from tools you connect and answers questions within your organization&rsquo;s disclosure
           policy. It does not write to connected tools. Features may change while the service is in beta.
         </p>
       </Section>
@@ -296,7 +297,7 @@ export function Legal({ page }: { page: LegalPageKey }) {
     <div style={{ minHeight: '100vh', background: 'var(--bg, #fff)' }}>
       <div style={{ maxWidth: 820, margin: '0 auto', paddingBlock: '32px 72px', paddingInline: 20 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px', alignItems: 'baseline', justifyContent: 'space-between' }}>
-          <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>Agent Org Mesh</a>
+          <a href="/" className="brand" style={{ color: 'var(--ink)', textDecoration: 'none' }}>{PRODUCT_NAME}</a>
           <nav aria-label="Legal" style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 13 }}>
             {PAGES.map((p) => (
               <a key={p.key} href={`/legal/${p.key}`} aria-current={p.key === page ? 'page' : undefined}
@@ -323,7 +324,7 @@ export function Legal({ page }: { page: LegalPageKey }) {
         {page === 'subprocessors' && <Subprocessors />}
 
         <p className="glossary" style={{ marginTop: 40 }}>
-          <a href="/">Back to Agent Org Mesh</a>
+          <a href="/">Back to {PRODUCT_NAME}</a>
         </p>
       </div>
     </div>

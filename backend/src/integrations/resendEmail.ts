@@ -12,6 +12,7 @@
  *  EMAIL_TRANSPORT=memory (the API test suite) records messages in `outbox` instead of sending,
  *  so tests can follow real links end to end. It is ignored under NODE_ENV=production. */
 
+import { PRODUCT_NAME } from '../brand.js';
 import { deadline } from './outboundHttp.js';
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
@@ -36,7 +37,7 @@ async function deliver(message: { to: string; subject: string; text: string; htm
     return true;
   }
   if (!process.env.RESEND_API_KEY) return false;
-  const from = process.env.EMAIL_FROM || 'Agent Org Mesh <onboarding@resend.dev>';
+  const from = process.env.EMAIL_FROM || `${PRODUCT_NAME} <onboarding@resend.dev>`;
   try {
     const res = await fetch(RESEND_API_URL, {
       method: 'POST',
@@ -69,7 +70,7 @@ export async function sendInvitationEmail(input: InvitationEmailInput): Promise<
   const expires = new Date(input.expiresAt).toUTCString();
   return deliver({
     to: input.to,
-    subject: `${input.invitedByName} invited you to ${input.orgName} on Agent Org Mesh`,
+    subject: `${input.invitedByName} invited you to ${input.orgName} on ${PRODUCT_NAME}`,
     text: [
       `${input.invitedByName} invited you to join ${input.orgName} as ${input.roleDescription}.`,
       ``,
@@ -89,17 +90,17 @@ export async function sendInvitationEmail(input: InvitationEmailInput): Promise<
 export async function sendVerificationEmail(input: { to: string; name: string; verifyUrl: string }): Promise<boolean> {
   return deliver({
     to: input.to,
-    subject: 'Verify your email for Agent Org Mesh',
+    subject: `Verify your email for ${PRODUCT_NAME}`,
     text: [
       `Hi ${input.name},`,
       ``,
-      `Confirm this is your email address to finish setting up Agent Org Mesh: ${input.verifyUrl}`,
+      `Confirm this is your email address to finish setting up ${PRODUCT_NAME}: ${input.verifyUrl}`,
       ``,
       `The link works once and expires in 24 hours. If you didn't create an account, ignore this email.`,
     ].join('\n'),
     html: `
       <p>Hi ${escapeHtml(input.name)},</p>
-      <p>Confirm this is your email address to finish setting up Agent Org Mesh.</p>
+      <p>Confirm this is your email address to finish setting up ${escapeHtml(PRODUCT_NAME)}.</p>
       <p><a href="${escapeHtml(input.verifyUrl)}">Verify my email</a></p>
       <p>The link works once and expires in 24 hours. If you didn't create an account, ignore this email.</p>`.trim(),
   });
@@ -108,7 +109,7 @@ export async function sendVerificationEmail(input: { to: string; name: string; v
 export async function sendPasswordResetEmail(input: { to: string; name: string; resetUrl: string }): Promise<boolean> {
   return deliver({
     to: input.to,
-    subject: 'Reset your Agent Org Mesh password',
+    subject: `Reset your ${PRODUCT_NAME} password`,
     text: [
       `Hi ${input.name},`,
       ``,
