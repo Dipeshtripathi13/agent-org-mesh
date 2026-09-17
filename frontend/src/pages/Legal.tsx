@@ -162,8 +162,7 @@ function Terms() {
     <>
       <Section title="Agreement">
         <p>
-          These terms are an agreement between you and {LEGAL.companyName}. By creating an account or using Agent Org
-          Mesh you agree to them. If you use it on behalf of an organization, you confirm you are authorized to accept
+          These terms are an agreement between you and {LEGAL.companyName}. By creating an account or using {PRODUCT_NAME} you agree to them. If you use it on behalf of an organization, you confirm you are authorized to accept
           them for that organization.
         </p>
       </Section>
