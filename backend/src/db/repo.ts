@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { MAX_ORGS_PER_ACCOUNT, seatLimit, type OrgPlan } from '../plans.js';
 import { hashEntry, verifyChain } from '../domain/audit.js';
 import { computeEscalationAge } from '../domain/escalations.js';
 import { decryptCredential, encryptCredential } from '../domain/credentials.js';
@@ -57,10 +58,9 @@ export interface OrgAdmin {
 // plan is a plain column, starting everyone on 'starter' at signup. Until Stripe lands,
 // moving an org to 'business'/'enterprise' is a manual operational step (an admin runs
 // an UPDATE after collecting payment outside the app), not something any endpoint here
-// does automatically. PLAN_LIMITS is what actually gets enforced regardless of how the
-// column got set.
-export type OrgPlan = 'starter' | 'business' | 'enterprise';
-export const PLAN_LIMITS: Record<OrgPlan, number> = { starter: 10, business: 200, enterprise: Infinity };
+// does automatically. plans.ts holds what each plan allows (PLAN_SEATS, MAX_ORGS_PER_ACCOUNT)
+// and is what the server enforces, regardless of how the column got set.
+export type { OrgPlan } from '../plans.js';
 
 export interface Organization {
   id: number;
@@ -69,6 +69,8 @@ export interface Organization {
   createdAt: string;
   plan: OrgPlan;
   peopleCount: number;
+  /** People this plan allows; null means unlimited. Derived from plans.ts, never stored. */
+  seatLimit: number | null;
 }
 
 /* ---------- row → domain mappers ---------- */
@@ -213,6 +215,7 @@ function toOrganization(row: any): Organization {
     createdAt: iso(row.created_at),
     plan: row.plan as OrgPlan,
     peopleCount: Number(row.people_count ?? 0),
+    seatLimit: seatLimit(row.plan as OrgPlan),
   };
 }
 
@@ -225,7 +228,7 @@ function toOrgAdmin(row: any): OrgAdmin {
    belong to several orgs — createOrganization makes its creator that org's 'owner';
    everything else about who can see/do what for a given org is resolved through
    org_admins, not a single ownership column. The same account can also be linked from
-   one or more `people` rows (getPeopleForAccount, near createPerson above) — "admin" and
+   one or more `people` rows (getPeopleForAccount below) — "admin" and
    "org-chart identity" are independent facts about one account, not different account
    types. */
 
@@ -255,7 +258,7 @@ export async function getAccountByEmail(email: string): Promise<(Account & { pas
 }
 
 /** Creates the account row itself — putting it to work as an org admin (addOrgAdmin) or
- *  linking it to an org-chart entry (createPerson's accountId) are separate steps, since
+ *  linking it to an org-chart entry (createPersonWithinSeatLimit's accountId) are separate steps, since
  *  the same account might end up doing either or both, in more than one org.
  *  `mustChangePassword` is true for every invite/reset-issued temp password and false for
  *  a self-serve signup, whose password its owner actually chose. */
@@ -867,23 +870,68 @@ const EMPTY_SURFACES: Record<SurfaceKey, SurfaceState> = {
   'claude-code': 'absent', codex: 'absent', 'gemini-cli': 'absent',
 };
 
-export async function createPerson(orgId: number, input: {
+/** Adds a person only if the organization's plan still has a seat free. The count and the
+ *  insert run in one transaction behind a lock on this organization, so simultaneous requests
+ *  can't each see "9 of 10" and both add (2026-09-17: the old check counted first and inserted
+ *  after, with nothing in between).
+ *
+ *  The lock is a transaction-scoped advisory lock, not `SELECT ... FOR UPDATE` on the
+ *  organization: locking that row needs an UPDATE grant, and `mesh_app` deliberately has only
+ *  SELECT and INSERT on `organizations` (0001_baseline) — widening that to serialise seat
+ *  checks would also hand the runtime role the ability to rewrite an org's plan and name.
+ *  An advisory lock needs no table privilege and is released by COMMIT or ROLLBACK. */
+export async function createPersonWithinSeatLimit(orgId: number, input: NewPersonInput): Promise<
+  { ok: true; person: Person } | { ok: false; plan: OrgPlan; limit: number; used: number }
+> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // hashtext('org-seats') namespaces the key, so this can never collide with another
+    // advisory lock taken elsewhere on the same org id.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('org-seats'), $1)", [orgId]);
+    const { rows: orgRows } = await client.query('SELECT plan FROM organizations WHERE id = $1', [orgId]);
+    if (orgRows.length === 0) throw new Error(`No organization ${orgId}`);
+    const plan = orgRows[0].plan as OrgPlan;
+    const { rows: countRows } = await client.query('SELECT count(*)::int AS n FROM people WHERE org_id = $1', [orgId]);
+    const used = countRows[0].n as number;
+    const limit = seatLimit(plan);
+    if (limit != null && used >= limit) {
+      await client.query('ROLLBACK');
+      return { ok: false, plan, limit, used };
+    }
+    const { rows } = await client.query(
+      `INSERT INTO people (org_id, name, title, team, manager_id, agent_deployed, surfaces, account_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [orgId, input.name, input.title, input.team, input.managerId, input.agentDeployed, JSON.stringify(EMPTY_SURFACES), input.accountId ?? null],
+    );
+    await client.query('COMMIT');
+    return { ok: true, person: toPerson(rows[0]) };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** How many organizations this account owns — what MAX_ORGS_PER_ACCOUNT is checked against. */
+export async function countOrganizationsOwnedBy(accountId: number): Promise<number> {
+  const { rows } = await pool.query(
+    "SELECT count(*)::int AS n FROM org_admins WHERE account_id = $1 AND role = 'owner'",
+    [accountId],
+  );
+  return rows[0].n as number;
+}
+
+export const MAX_ORGS = MAX_ORGS_PER_ACCOUNT;
+
+interface NewPersonInput {
   name: string;
   title: string;
   team: string;
   managerId: number | null;
   agentDeployed: boolean;
-  /** Real login for this org-chart entry, when one's being linked — the account itself
-   *  is resolved-or-created by the caller (server.ts, same "temp password shown once"
-   *  orchestration as inviting an org admin), not here; this just stores the FK. */
   accountId?: number | null;
-}): Promise<Person> {
-  const { rows } = await pool.query(
-    `INSERT INTO people (org_id, name, title, team, manager_id, agent_deployed, surfaces, account_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [orgId, input.name, input.title, input.team, input.managerId, input.agentDeployed, JSON.stringify(EMPTY_SURFACES), input.accountId ?? null],
-  );
-  return toPerson(rows[0]);
 }
 
 /** Every org-chart identity linked to one account — what "log in as yourself" resolves

@@ -26,6 +26,7 @@ import { installOutboundTimeout, mapWithConcurrency, settleWithConcurrency } fro
 import { initErrorReporting, reportBrowserError, reportServerError, type BrowserErrorReport } from './integrations/errorReporting.js';
 import { startActivityRetention } from './db/retention.js';
 import { PRODUCT_SLUG } from './brand.js';
+import { MAX_ORGS_PER_ACCOUNT } from './plans.js';
 import { DEFAULT_GRID, deriveAllowedRoles, nextDisposition, respond } from './domain/policy.js';
 import { CONFIGURABLE_CLASSES, ROLES } from './domain/types.js';
 import type { AccountMainAgent, ConfigurableClass, OrgMainAgent, RequesterRole, RuntimeScope, SurfaceKey } from './domain/types.js';
@@ -644,6 +645,14 @@ app.post('/api/organizations', { schema: bodySchema({ name: str(120, 1) }, ['nam
     reply.code(400);
     return { error: 'name is required' };
   }
+  // Without a cap, the seat limit is trivially sidestepped by splitting a company across
+  // several free organizations (2026-09-17).
+  const owned = await repo.countOrganizationsOwnedBy(check.accountId);
+  if (owned >= MAX_ORGS_PER_ACCOUNT) {
+    reply.code(402);
+    return { error: `You can create up to ${MAX_ORGS_PER_ACCOUNT} organizations, and already have ${owned}. Remove one you no longer need, or talk to us about a larger plan.` };
+  }
+
   const creator = await repo.getAccount(check.accountId);
   // The creator becomes this org's first person too (Owner, top of the chart), not just
   // its admin — otherwise a brand-new individual (accounts and orgs are fully decoupled
@@ -1064,21 +1073,13 @@ app.post('/api/organizations/:orgId/people', {
     return { error: 'the manager must be someone already in this organization' };
   }
 
-  // Enforced here, not just claimed on the pricing page — an org already at its plan's
-  // seat limit can't add another person until it upgrades. No self-serve upgrade path
-  // exists yet (see repo.ts's OrgPlan comment), so today that means talking to us.
-  const org = await repo.getOrganization(orgId);
-  const limit = repo.PLAN_LIMITS[org.plan];
-  if (org.peopleCount >= limit) {
-    reply.code(402);
-    return { error: `This organization is on the ${org.plan} plan (${limit} people max) and is already at that limit. Upgrade to add more.` };
-  }
-
   // An email never links or creates an account here (release audit SEC-08): anyone could have
   // signed up early with a future employee's address. It issues a one-time invitation that
   // only a logged-in account with that exact email, holding the link, can accept.
   const email = body.email?.trim().toLowerCase() || null;
-  const person = await repo.createPerson(orgId, {
+  // Seats are enforced here, not just claimed on the pricing page. The count and the insert
+  // happen in one locked transaction, so parallel requests can't slip past the limit.
+  const created = await repo.createPersonWithinSeatLimit(orgId, {
     name: body.name.trim(),
     title: body.title.trim(),
     team: body.team.trim(),
@@ -1086,10 +1087,17 @@ app.post('/api/organizations/:orgId/people', {
     agentDeployed: body.agentDeployed,
     accountId: null,
   });
+  if (!created.ok) {
+    reply.code(402);
+    return { error: `This organization is on the ${created.plan} plan (${created.limit} people max) and is already at that limit. Upgrade to add more.` };
+  }
+  const person = created.person;
+  // Only needed for the invitation's wording; the seat check above reads the plan itself.
+  const orgName = email ? (await repo.getOrganization(orgId)).name : '';
   const invite = email
     ? await issueInvitation({
       orgId, email, kind: 'person', personId: person.id, adminRole: null, invitedBy: check.accountId,
-      roleDescription: `${person.title} in ${org.name}'s org chart`,
+      roleDescription: `${person.title} in ${orgName}'s org chart`,
     })
     : null;
   return { person, invite };

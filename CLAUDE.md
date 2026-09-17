@@ -1536,6 +1536,44 @@ the prompt the OpenAI-compatible adapter actually sends), `eventIngestion.test.t
 covered by a test: the Anthropic adapter's own `safePromptName` calls (same change, applied by the
 same script as the tested adapter).
 
+**Plan limits live in one file, and are enforced in one transaction (2026-09-17).**
+`backend/src/plans.ts` is the single place to change them: `PLAN_SEATS` (starter 10, business
+200, enterprise `null` for unlimited — `null`, never `Infinity`, which JSON turns into `null`
+anyway) and `MAX_ORGS_PER_ACCOUNT` (5). Nothing else in either package hardcodes a number;
+`GET /api/organizations` reports each org's own `seatLimit` so the UI renders "7 of 10 people"
+and disables Add from real state rather than a copy of the rule. Verified as a single edit:
+changing starter to 4 in `plans.ts` alone kept every test green, because the tests derive their
+expectations from the constant too.
+
+Enforcement is `repo.createPersonWithinSeatLimit` — count and insert in one transaction, behind
+`pg_advisory_xact_lock(hashtext('org-seats'), orgId)` — and a 402 with a plain message naming
+the plan and its limit. The lock is advisory rather than `SELECT ... FOR UPDATE` on the
+organization row on purpose: row-locking needs an UPDATE grant, and `mesh_app` deliberately has
+only SELECT and INSERT on `organizations` (0001_baseline), so taking that lock would have meant
+granting the runtime role the ability to rewrite any org's plan and name. The first version
+checked then inserted with nothing in between; proved on a warmed pool that 12 simultaneous
+adds put **21 people in a 10-seat org**, and that the lock reduces it to exactly one. A second
+sidestep is closed alongside it: without a cap on organizations per account, a company just
+splits itself across free orgs — `POST /api/organizations` now refuses past
+`MAX_ORGS_PER_ACCOUNT` (signup's automatic first org counts, and the cap counts owner rows
+only, so being invited as an admin elsewhere never consumes it).
+
+Guarded by `planLimits.api.test.ts` (5); mutations — dropping the lock, the seat check, and the
+org cap — each fail it. **The concurrency test needed two corrections before it guarded
+anything, both worth knowing for the next one.** Connections are opened lazily, and a cold
+handshake takes far longer than an add's few round trips, so "parallel" requests each finished
+before the next connection was ready and every one of them read an up-to-date count: with the
+lock removed, the suite stayed green. Warming the pool first fixed that, but through
+`app.inject` the route's own session and role lookups still stagger callers by milliseconds, so
+the mutation only raced sometimes — a flaky guard is not a guard. It now calls
+`createPersonWithinSeatLimit` directly on a warmed pool, which is deterministic: three runs with
+the lock and three without, same result every time. Also removed: `repo.createPerson`, which had
+no callers left after this change and was an unguarded second way into the same table.
+Production was checked before deploying the caps — no org was near 10 people and no account
+owned more than 2 orgs, so neither cap locks an existing org out. Not built: self-serve upgrade
+(plans still change only by a manual database update), and no grandfathering for an org that
+somehow ends up over its limit — it simply can't add until it's back under.
+
 **A bell in the top bar says when someone asked about you (2026-09-13).** Notifications aren't
 stored: they're the `audit_log` rows where someone *else* asked about one of this account's own
 people, across every org it belongs to (`repo.listAskedAboutYou`) — the same rows "Who asked

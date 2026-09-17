@@ -155,6 +155,8 @@ export type MyIdentity = Person & { orgId: number; orgName: string };
 export type OrgPlan = 'starter' | 'business' | 'enterprise';
 export interface Organization {
   id: number; slug: string; name: string; createdAt: string; plan: OrgPlan; peopleCount: number;
+  /** People this organization's plan allows; null means unlimited. */
+  seatLimit: number | null;
 }
 export interface NewPerson {
   name: string; title: string; team: string; managerId: number | null; agentDeployed: boolean;

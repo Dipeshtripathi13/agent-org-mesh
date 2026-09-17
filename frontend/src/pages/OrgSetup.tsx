@@ -207,11 +207,17 @@ function ChartBuilder() {
     );
   }
 
+  // The server is what actually enforces seats (backend plans.ts, one transaction with the
+  // insert); this only keeps the UI honest about a click it would refuse.
+  const seatsFull = org.seatLimit != null && people.length >= org.seatLimit;
+
   return (
     <div className="panel" style={{ marginTop: 0 }}>
       <header>
         <span className="label">{org.name} &middot; org chart</span>
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>{people.length} people</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
+          {org.seatLimit == null ? `${people.length} people` : `${people.length} of ${org.seatLimit} people`}
+        </span>
       </header>
 
       <div className="inner" style={{ borderBottom: '1px solid var(--rule)' }}>
@@ -262,14 +268,21 @@ function ChartBuilder() {
             agent deployed
           </label>
           <button
-            disabled={busy || !canEdit}
+            disabled={busy || !canEdit || seatsFull}
             onClick={addPerson}
-            title={canEdit ? undefined : 'Viewers can see the org chart but not edit it'}
+            title={!canEdit ? 'Viewers can see the org chart but not edit it'
+              : seatsFull ? `This organization's plan covers ${org.seatLimit} people` : undefined}
             className="btn btn-primary btn-sm"
           >
             + Add person
           </button>
         </div>
+        {seatsFull && (
+          <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 8 }}>
+            This organization is on the {org.plan} plan, which covers {org.seatLimit} people.
+            Remove someone to free a place, or get in touch about more.
+          </p>
+        )}
         {error && <p style={{ fontSize: 11, color: 'var(--hold)', marginTop: 8 }}>{error}</p>}
         {justAdded && <InviteLinkNote who={justAdded.name} invite={justAdded.invite} />}
         {resetFor && (
