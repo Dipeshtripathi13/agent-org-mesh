@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { PRODUCT_NAME } from '../lib/brand';
 import { api, type InvitationInfo } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
+import { LoadingState } from '../components/EmptyState';
 import { Login } from './Login';
 
 export function inviteTokenFromPath(pathname: string): string | null {
@@ -73,7 +74,7 @@ export function AcceptInvite({ token }: { token: string }) {
       <p className="glossary"><a href="/">Go to {PRODUCT_NAME}</a></p>
     </>));
   }
-  if (!info || loading) return shell(card(<p className="sub" style={{ margin: 0 }}>Loading&hellip;</p>));
+  if (!info || loading) return shell(card(<LoadingState />));
 
   if (info.status !== 'pending') {
     const why = { accepted: 'has already been used', expired: 'has expired', revoked: 'was withdrawn' }[info.status];

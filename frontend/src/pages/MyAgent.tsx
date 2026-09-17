@@ -5,6 +5,8 @@ import {
   type RawEntry, type RawPersonalEntry, type ThreadTurn, type ConversationSummary,
 } from '../lib/conversations';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
+import { EmptyState, LoadingState } from '../components/EmptyState';
+import { IconChat, IconSend } from '../components/icons';
 import { GettingStarted } from '../components/GettingStarted';
 import { navigate } from '../lib/navigate';
 import { useAuth } from '../lib/AuthContext';
@@ -218,7 +220,7 @@ export function MyAgent() {
 
         <div className="chat-main">
           {displayedThread.length === 0 ? (
-            <p className="glossary" style={{ margin: '0 0 12px' }}>
+            <p className="chat-intro">
               {showPersonalChat ? (
                 <>
                   Answered by your private agent, which only you can use &mdash; choose which AI
@@ -242,42 +244,34 @@ export function MyAgent() {
                     <p className="ask-turn-q">{turn.question}</p>
 
                     {turn.busy && (
-                      <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>Asking&hellip;</span>
-                      </div>
+                      <div className="answer-card is-busy"><LoadingState label="Checking your tools" /></div>
                     )}
 
-                    {turn.error && (
-                      <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px' }}>
-                        {turn.error}
-                      </p>
-                    )}
+                    {turn.error && <div className="answer-card is-error">{turn.error}</div>}
 
                     {turn.result && (
                       <>
-                        <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                          {!showPersonalChat && (
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                              ANSWER{turn.result.withheldCount > 0 ? ` · ${turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld` : ''}
-                            </span>
+                        <div className="answer-card">
+                          {!showPersonalChat && turn.result.withheldCount > 0 && (
+                            <div className="answer-kicker">
+                              <span className="withheld">{turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld</span>
+                            </div>
                           )}
-                          <p style={{ margin: showPersonalChat ? 0 : '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
+                          <p>{turn.result.answer}</p>
                         </div>
                         {turn.result.consultedSources.length > 0 && (
-                          <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                            CHECKED &middot; {turn.result.consultedSources.join(', ')}
-                          </p>
+                          <div className="answer-tools">
+                            <span className="answer-tools-label">Checked</span>
+                            {turn.result.consultedSources.map((src) => <span key={src} className="answer-tool">{src}</span>)}
+                          </div>
                         )}
                         {hasDerivation && (
                           <>
-                            <button
-                              onClick={() => toggleDetail(turn.id)}
-                              style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
-                            >
+                            <button className="answer-detail-toggle" onClick={() => toggleDetail(turn.id)}>
                               {expandedIds.has(turn.id) ? 'Hide' : 'Show'} where this answer came from
                             </button>
                             {expandedIds.has(turn.id) && (
-                              <div style={{ marginTop: 8 }}>
+                              <div className="answer-detail">
                                 {turn.result.items.map((item, i) => <ClaimItem key={i} item={item} />)}
                                 <div className="coverage-note">{turn.result.coverage.text}</div>
                                 <RefusalGlossary />
@@ -294,23 +288,24 @@ export function MyAgent() {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, marginTop: displayedThread.length ? 12 : 0 }}>
+          <div className="composer">
             <input
               aria-label="Ask yourself a question"
-              placeholder={activeConversationId ? 'Ask a follow-up…' : 'What have I been working on?'}
+              placeholder={activeConversationId ? 'Ask a follow-up…' : 'What have I been working on this week?'}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') askSelf(draft); }}
               onFocus={() => setAskFocused(true)}
               onBlur={() => setAskFocused(false)}
-              style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
             />
             <button
+              type="button"
+              className="composer-send"
+              aria-label={busy ? 'Asking' : 'Ask'}
               onClick={() => askSelf(draft)}
               disabled={busy || !draft.trim()}
-              style={{ height: 32, padding: '0 14px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
             >
-              {busy ? 'Asking…' : 'Ask'}
+              <IconSend />
             </button>
           </div>
         </div>
@@ -333,7 +328,7 @@ export function MyAgent() {
     );
   }
 
-  if (!me) return <p className="sub">Loading&hellip;</p>;
+  if (!me) return <LoadingState />;
 
   const connected = surfaces.filter((s) => me.surfaces[s.key] === 'connected' || me.surfaces[s.key] === 'partial' || me.surfaces[s.key] === 'stale');
   const unconnectedCount = me.coverage.inScopeCount - me.coverage.connectedCount;
@@ -382,11 +377,13 @@ export function MyAgent() {
               </header>
               <div className="inner">
                 {connected.length === 0 ? (
-                  <p style={{ fontSize: 13, color: 'var(--ink2)', margin: 0 }}>
-                    None yet. Connect the tools you work in from{' '}
-                    <button type="button" className="linklike" onClick={() => navigate('/me/setup')}>Set up my agent</button>
-                    {' '}&mdash; your agent only ever reads them.
-                  </p>
+                  <EmptyState
+                    icon={<IconChat />}
+                    title="Nothing connected yet"
+                    action={<button type="button" className="btn btn-secondary btn-sm" onClick={() => navigate('/me/setup')}>Connect a tool</button>}
+                  >
+                    Connect the tools you work in and your agent will read them, and only them.
+                  </EmptyState>
                 ) : (
                   <ul className="tool-list">
                     {connected.map((s) => (

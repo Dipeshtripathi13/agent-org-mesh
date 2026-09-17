@@ -63,7 +63,7 @@ export function ChangePasswordModal({ forced, onClose }: { forced: boolean; onCl
   if (done && forced) return null;
 
   const label = (text: string) => (
-    <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)' }}>
+    <span className="field-label">
       {text}
     </span>
   );
@@ -74,7 +74,7 @@ export function ChangePasswordModal({ forced, onClose }: { forced: boolean; onCl
     autoComplete: string,
     autoFocus = false,
   ) => (
-    <label style={{ display: 'grid', gap: 4 }}>
+    <label className="field">
       {label(text)}
       <input
         aria-label={text}
@@ -84,7 +84,7 @@ export function ChangePasswordModal({ forced, onClose }: { forced: boolean; onCl
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape' && !forced) onClose?.(); }}
-        style={{ height: 34, border: '1px solid var(--rule2)', borderRadius: 'var(--radius-sm)', padding: '0 9px', fontSize: 13 }}
+        className="input"
       />
     </label>
   );
@@ -122,11 +122,11 @@ export function ChangePasswordModal({ forced, onClose }: { forced: boolean; onCl
               <button className="btn btn-primary" onClick={submit} disabled={!canSubmit} style={{ flex: 1 }}>
                 {busy ? 'Saving…' : forced ? 'Set my password' : 'Change password'}
               </button>
-              {!forced && <button className="chip" disabled={busy} onClick={onClose}>Cancel</button>}
+              {!forced && <button className="btn btn-secondary" disabled={busy} onClick={onClose}>Cancel</button>}
             </div>
           </div>
           {error && (
-            <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 'var(--radius-sm)', padding: '7px 11px', marginTop: 12 }}>
+            <p className="auth-error" style={{ marginTop: 12 }}>
               {error}
             </p>
           )}

@@ -162,7 +162,7 @@ export function CredentialsFields({
               value={formApiKey}
               onChange={(e) => setFormApiKey(e.target.value)}
               placeholder={hasCustomApiKey ? '•••• already set — leave blank to keep it' : 'sk-...'}
-              style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+              className="input" style={{ minWidth: 220 }}
             />
           </label>
           {supportsBaseUrl && (
@@ -173,7 +173,7 @@ export function CredentialsFields({
                 value={formBaseUrl}
                 onChange={(e) => setFormBaseUrl(e.target.value)}
                 placeholder="https://api.openai.com/v1"
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 220 }}
+                className="input" style={{ minWidth: 220 }}
               />
             </label>
           )}
@@ -184,7 +184,7 @@ export function CredentialsFields({
               value={formModel}
               onChange={(e) => setFormModel(e.target.value)}
               placeholder={supportsBaseUrl ? 'gpt-4o-mini' : 'claude-sonnet-5'}
-              style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 160 }}
+              className="input" style={{ minWidth: 160 }}
             />
           </label>
         </div>

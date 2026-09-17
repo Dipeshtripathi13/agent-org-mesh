@@ -54,38 +54,29 @@ function OrganizationList() {
             key={o.id}
             onClick={() => setOrgId(o.id)}
             aria-pressed={o.id === orgId}
-            style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-              textAlign: 'left', padding: '10px 12px', marginBottom: 8, borderRadius: 2,
-              border: o.id === orgId ? '1px solid var(--ink)' : '1px solid var(--rule2)',
-              background: o.id === orgId ? '#f1f3f4' : '#fff', cursor: 'pointer',
-            }}
+            className="org-pick"
           >
             <span>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{o.name}</div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink4)' }}>
-                {o.slug} &middot; created {o.createdAt.slice(0, 10)}
-              </div>
+              <span className="org-pick-name">{o.name}</span>
+              <span className="org-pick-meta">{o.slug} &middot; created {o.createdAt.slice(0, 10)}</span>
             </span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-              {o.peopleCount} {o.peopleCount === 1 ? 'person' : 'people'}
-            </span>
+            <span className="org-pick-count">{o.peopleCount} {o.peopleCount === 1 ? 'person' : 'people'}</span>
           </button>
         ))}
 
-        <div style={{ display: 'flex', gap: 7, marginTop: 12, borderTop: '1px solid var(--rule)', paddingTop: 12 }}>
+        <div className="form-row" style={{ marginTop: 12, borderTop: '1px solid var(--rule)', paddingTop: 12 }}>
           <input
             aria-label="New organization name"
             placeholder="New organization name&hellip;"
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && create()}
-            style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            className="input" style={{ flex: 1 }}
           />
           <button
             disabled={busy || !name.trim()}
             onClick={create}
-            style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+            className="btn btn-primary btn-sm"
           >
             + Create
           </button>
@@ -250,7 +241,7 @@ function ChartBuilder() {
             aria-label="Manager"
             value={form.managerId}
             onChange={(e) => setForm((f) => ({ ...f, managerId: e.target.value === '' ? '' : Number(e.target.value) }))}
-            style={{ flex: '1 1 180px', minWidth: 0, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 6px', fontSize: 12 }}
+            className="input" style={{ flex: '1 1 180px', minWidth: 0 }}
           >
             <option value="">No manager — top of chart</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>)}
@@ -260,7 +251,7 @@ function ChartBuilder() {
             placeholder="Email (optional invite)"
             value={form.email}
             onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            style={{ flex: '1 1 160px', minWidth: 0, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+            className="input" style={{ flex: '1 1 160px', minWidth: 0 }}
           />
           <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, whiteSpace: 'nowrap' }}>
             <input
@@ -274,7 +265,7 @@ function ChartBuilder() {
             disabled={busy || !canEdit}
             onClick={addPerson}
             title={canEdit ? undefined : 'Viewers can see the org chart but not edit it'}
-            style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap', opacity: canEdit ? 1 : 0.5 }}
+            className="btn btn-primary btn-sm"
           >
             + Add person
           </button>
@@ -553,7 +544,7 @@ function OrgAdmins() {
                 placeholder="name@company.com"
                 value={invite.email}
                 onChange={(e) => setInvite((f) => ({ ...f, email: e.target.value }))}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+                className="input"
               />
             </label>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 140 }}>
@@ -563,7 +554,7 @@ function OrgAdmins() {
                 placeholder="Name"
                 value={invite.name}
                 onChange={(e) => setInvite((f) => ({ ...f, name: e.target.value }))}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+                className="input"
               />
             </label>
             <label style={{ display: 'grid', gap: 4 }}>
@@ -572,7 +563,7 @@ function OrgAdmins() {
                 aria-label="Invite role"
                 value={invite.role}
                 onChange={(e) => setInvite((f) => ({ ...f, role: e.target.value as OrgRole }))}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, fontSize: 12, padding: '0 6px' }}
+                className="input"
               >
                 {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
               </select>
@@ -580,7 +571,7 @@ function OrgAdmins() {
             <button
               disabled={busy || !invite.email.trim()}
               onClick={inviteAdmin}
-              style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
+              className="btn btn-primary btn-sm"
             >
               + Invite
             </button>
@@ -762,7 +753,7 @@ function OrgMainAgentPanel() {
                   aria-label="Main agent runtime"
                   value={effectiveRuntime}
                   onChange={(e) => setFormRuntime(e.target.value)}
-                  style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                  className="input" style={{ minWidth: 200 }}
                 >
                   {mainOptions.map((o) => (
                     <option key={o.key} value={o.key}>{o.name} — {o.vendor}</option>
@@ -810,7 +801,7 @@ function OrgMainAgentPanel() {
               <button
                 disabled={busy || !effectiveRuntime}
                 onClick={submit}
-                style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                className="btn btn-primary btn-sm"
               >
                 {main ? 'Save changes' : 'Set main agent'}
               </button>

@@ -116,7 +116,7 @@ function PersonalMainAgentPanel() {
 
   return (
     <>
-      <h2 className="label" style={{ marginTop: 0 }}>Your private agent</h2>
+      <h2 className="section-title" style={{ marginTop: 18 }}>Your private agent</h2>
       <p className="sub">
         Just for you &mdash; separate from your organization&rsquo;s agent. No one else can use
         it, see your chats, or read the tools you connect here.
@@ -140,7 +140,7 @@ function PersonalMainAgentPanel() {
                   aria-label="Main agent runtime"
                   value={effectiveRuntime}
                   onChange={(e) => setFormRuntime(e.target.value)}
-                  style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                  className="input" style={{ minWidth: 200 }}
                 >
                   {mainOptions.map((o) => (
                     <option key={o.key} value={o.key}>{o.name} — {o.vendor}</option>
@@ -170,7 +170,7 @@ function PersonalMainAgentPanel() {
                 <button
                   disabled={busy || !effectiveRuntime}
                   onClick={submit}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                  className="btn btn-primary btn-sm"
                 >
                   {main ? 'Save changes' : 'Use this AI'}
                 </button>
@@ -251,7 +251,7 @@ function OrgSetUpMyAgent() {
 
   return (
     <>
-      <h2 className="label" style={{ marginTop: 32 }}>Your organization's agent</h2>
+      <h2 className="section-title">Your organization&rsquo;s agent</h2>
       <p className="sub">
         This is the agent that answers when people in your organization ask about each other,
         including about you. One is chosen for the whole organization by its admins. The tools you

@@ -76,7 +76,7 @@ export function OrgGraph() {
             placeholder="Search name, title, team&hellip;"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
+            className="input" style={{ minWidth: 220 }}
           />
           <button className="chip" onClick={() => setCollapsed(Object.fromEntries(people.filter((p) => (children.get(p.id) ?? []).length).map((p) => [p.id, true])))}>
             Collapse all

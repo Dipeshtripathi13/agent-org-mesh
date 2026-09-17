@@ -469,12 +469,12 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                           value={liveQuestion}
                           onChange={(e) => setLiveQuestion(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && askLive()}
-                          style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12 }}
+                          className="input" style={{ flex: 1 }}
                         />
                         <button
                           disabled={liveBusy || !liveQuestion.trim()}
                           onClick={askLive}
-                          style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
+                          className="btn btn-primary btn-sm"
                         >
                           {liveBusy ? 'Investigating…' : 'Ask live'}
                         </button>
@@ -518,7 +518,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
               aria-label="Connect a tool"
               value=""
               onChange={(e) => { if (e.target.value) openConnect(e.target.value); }}
-              style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12 }}
+              className="input"
             >
               <option value="">Choose a tool…</option>
               {[...byCategory.entries()].map(([cat, tools]) => (
@@ -565,11 +565,10 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                   <p style={{ fontSize: 12, color: 'var(--ink2)', marginTop: 0 }}>{openDef.helpText}</p>
                   <div style={{ display: 'flex', gap: 7 }}>
                     <a
-                      className="chip"
                       href={api.gmailConnectUrl(owner.personId)}
                       target="_blank"
                       rel="noreferrer"
-                      style={{ height: 32, display: 'inline-flex', alignItems: 'center', padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, textDecoration: 'none' }}
+                      className="btn btn-primary btn-sm"
                     >
                       Connect Google Calendar
                     </a>
@@ -618,13 +617,13 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     placeholder="e.g. laptop — payments-core"
                     value={newTokenLabel}
                     onChange={(e) => setNewTokenLabel(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
+                    className="input" style={{ minWidth: 220 }}
                   />
                 </label>
                 <button
                   disabled={tokenBusy || !newTokenLabel.trim()}
                   onClick={() => createToken(openDef.key as IngestSource)}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
+                  className="btn btn-primary btn-sm"
                 >
                   {tokenBusy ? 'Generating…' : 'Generate token'}
                 </button>
@@ -693,7 +692,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 <button
                   disabled={busy || openRuntime.blocked}
                   onClick={() => registerRuntime(openRuntime)}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                  className="btn btn-primary btn-sm"
                 >
                   {busy ? 'Connecting…' : !openRuntime.approved ? 'Request approval' : 'Connect'}
                 </button>
@@ -722,7 +721,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     placeholder="e.g. Finance Agent"
                     value={newAgentName}
                     onChange={(e) => setNewAgentName(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                    className="input" style={{ minWidth: 200 }}
                   />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: 'var(--ink3)' }}>
@@ -732,7 +731,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     placeholder="e.g. Tracks AP/AR status and monthly close"
                     value={newAgentPurpose}
                     onChange={(e) => setNewAgentPurpose(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 260 }}
+                    className="input" style={{ minWidth: 260 }}
                   />
                 </label>
               </div>
@@ -740,7 +739,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 <button
                   disabled={agentBusy || !newAgentName.trim() || !newAgentPurpose.trim()}
                   onClick={registerCustomAgent}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                  className="btn btn-primary btn-sm"
                 >
                   {agentBusy ? 'Registering…' : 'Register agent'}
                 </button>
@@ -789,13 +788,13 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                     placeholder="e.g. laptop — finance bot"
                     value={newTokenLabel}
                     onChange={(e) => setNewTokenLabel(e.target.value)}
-                    style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 12, minWidth: 220 }}
+                    className="input" style={{ minWidth: 220 }}
                   />
                 </label>
                 <button
                   disabled={tokenBusy || !newTokenLabel.trim()}
                   onClick={() => createToken(openCustomAgent.sourceKey)}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2, whiteSpace: 'nowrap' }}
+                  className="btn btn-primary btn-sm"
                 >
                   {tokenBusy ? 'Generating…' : 'Generate token'}
                 </button>
@@ -875,7 +874,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                         placeholder={f.placeholder}
                         value={formValues[f.key] ?? ''}
                         onChange={(e) => setFormValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                        style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 8px', fontSize: 12, minWidth: 200 }}
+                        className="input" style={{ minWidth: 200 }}
                       />
                     )}
                   </label>
@@ -885,7 +884,7 @@ export function ConnectorsPanel({ owner }: { owner: ConnectorsOwner }) {
                 <button
                   disabled={busy}
                   onClick={() => submitConnect(openDef)}
-                  style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                  className="btn btn-primary btn-sm"
                 >
                   {busy ? 'Connecting…' : `Connect ${openDef.name}`}
                 </button>

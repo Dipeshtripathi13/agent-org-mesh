@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { useOrg } from '../lib/OrgContext';
+import { LoadingState } from '../components/EmptyState';
 import { AnimatedNumber, CoverageKey, swatchStyle } from '../components/primitives';
 
 type Data = Awaited<ReturnType<typeof api.overview>>;
@@ -29,7 +30,7 @@ export function Overview() {
   }, [orgId]);
 
   if (error) return <p className="sub">Couldn&rsquo;t load the overview. Is the API running?</p>;
-  if (!data) return <p className="sub">Loading&hellip;</p>;
+  if (!data) return <LoadingState />;
 
   const { bands } = data.coverage;
   const total = bands.connected + bands.partial + bands.stale + bands.absent || 1;

@@ -27,26 +27,34 @@ import { WhoAsked } from './pages/WhoAsked';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PRODUCT_NAME } from './lib/brand';
 import { NotificationBell } from './components/NotificationBell';
+import {
+  IconAgent, IconBell, IconBuilding, IconChat, IconEye, IconFlag, IconGauge, IconGrid, IconLedger,
+  IconMask, IconNest, IconPlug, IconShield, IconSliders, IconTree, IconWrench,
+} from './components/icons';
 
-const ADMIN = [
-  { key: 'overview', label: 'Overview', el: <Overview /> },
-  { key: 'organizations', label: 'Organizations', el: <OrgSetup /> },
-  { key: 'org', label: 'Org graph', el: <OrgGraph /> },
-  { key: 'matrix', label: 'Coverage matrix', el: <CoverageMatrix /> },
-  { key: 'connections', label: 'Connections', el: <Connections /> },
-  { key: 'policy', label: 'Policy matrix', el: <PolicyMatrix /> },
-  { key: 'audit', label: 'Audit log', el: <AuditLog /> },
-  { key: 'escalations', label: 'Escalations', el: <Escalations /> },
+interface NavItem { key: string; label: string; group: string; icon: JSX.Element; el: JSX.Element; }
+
+// Sidebar entries, grouped so eight flat links read as three short lists. The group
+// label is a heading in the sidebar; keys are the URL segments (see parsePath).
+const ADMIN: NavItem[] = [
+  { key: 'overview', label: 'Overview', group: 'Organization', icon: <IconGauge />, el: <Overview /> },
+  { key: 'organizations', label: 'Organizations', group: 'Organization', icon: <IconBuilding />, el: <OrgSetup /> },
+  { key: 'org', label: 'Org graph', group: 'Visibility', icon: <IconTree />, el: <OrgGraph /> },
+  { key: 'matrix', label: 'Coverage matrix', group: 'Visibility', icon: <IconGrid />, el: <CoverageMatrix /> },
+  { key: 'connections', label: 'Connections', group: 'Visibility', icon: <IconPlug />, el: <Connections /> },
+  { key: 'policy', label: 'Policy matrix', group: 'Rules and record', icon: <IconShield />, el: <PolicyMatrix /> },
+  { key: 'audit', label: 'Audit log', group: 'Rules and record', icon: <IconLedger />, el: <AuditLog /> },
+  { key: 'escalations', label: 'Escalations', group: 'Rules and record', icon: <IconFlag />, el: <Escalations /> },
 ];
-const MINE = [
-  { key: 'mine', label: 'My agent', el: <MyAgent /> },
-  { key: 'setup', label: 'Set up my agent', el: <SetUpMyAgent /> },
-  { key: 'knows', label: 'What it knows', el: <WhatItKnows /> },
-  { key: 'preview', label: 'Preview', el: <Preview /> },
-  { key: 'ask', label: 'Ask', el: <Ask /> },
-  { key: 'whoasked', label: 'Who asked about me', el: <WhoAsked /> },
-  { key: 'orgme', label: 'Org structure', el: <OrgStructure /> },
-  { key: 'controls', label: 'Controls', el: <Controls /> },
+const MINE: NavItem[] = [
+  { key: 'mine', label: 'My agent', group: 'Ask', icon: <IconAgent />, el: <MyAgent /> },
+  { key: 'ask', label: 'Ask about someone', group: 'Ask', icon: <IconChat />, el: <Ask /> },
+  { key: 'whoasked', label: 'Who asked about me', group: 'About you', icon: <IconBell />, el: <WhoAsked /> },
+  { key: 'knows', label: 'What it knows', group: 'About you', icon: <IconEye />, el: <WhatItKnows /> },
+  { key: 'preview', label: 'Preview as a role', group: 'About you', icon: <IconMask />, el: <Preview /> },
+  { key: 'setup', label: 'Set up my agent', group: 'Settings', icon: <IconWrench />, el: <SetUpMyAgent /> },
+  { key: 'controls', label: 'Controls', group: 'Settings', icon: <IconSliders />, el: <Controls /> },
+  { key: 'orgme', label: 'Org structure', group: 'Settings', icon: <IconTree />, el: <OrgStructure /> },
 ];
 
 function OrgSwitcher() {
@@ -187,7 +195,7 @@ function Topbar({
 
   return (
     <header className="topbar">
-      <span className="brand">{PRODUCT_NAME}</span>
+      <span className="brand"><IconNest className="brand-mark" />{PRODUCT_NAME}</span>
       {panel === 'admin' && account && <OrgSwitcher />}
       {showMeSwitcher && <MeSwitcher />}
       <span className="spacer" />
@@ -349,20 +357,26 @@ function Shell() {
         </div>
       ) : (
         <div className="body">
-          <nav className="sidebar">
+          <nav className="sidebar" aria-label={panel === 'admin' ? 'Admin' : 'My agent'}>
             <h2>{panel === 'admin' ? 'Admin' : 'My agent'}</h2>
-            <div className="navlist">
-              {nav.map((n) => (
-                <button
-                  key={n.key}
-                  className="navitem"
-                  aria-current={active.key === n.key ? 'page' : undefined}
-                  onClick={() => setScreen(n.key)}
-                >
-                  {n.label}
-                </button>
-              ))}
-            </div>
+            {[...new Set(nav.map((n) => n.group))].map((group) => (
+              <div key={group} className="navgroup">
+                <p className="navgroup-label">{group}</p>
+                <div className="navlist">
+                  {nav.filter((n) => n.group === group).map((n) => (
+                    <button
+                      key={n.key}
+                      className="navitem"
+                      aria-current={active.key === n.key ? 'page' : undefined}
+                      onClick={() => setScreen(n.key)}
+                    >
+                      <span className="navitem-icon">{n.icon}</span>
+                      <span className="navitem-label">{n.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
             <p className="navfoot">
               {panel === 'admin'
                 ? 'Anything you look up about a person shows in their “Who asked about me”, with your name.'

@@ -97,8 +97,8 @@ export function StepUpProvider({ children }: { children: ReactNode }) {
                 This action needs a fresh password check &mdash; re-enter it to continue.
               </p>
               <div style={{ display: 'grid', gap: 10 }}>
-                <label style={{ display: 'grid', gap: 4 }}>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)' }}>
+                <label className="field">
+                  <span>
                     Password
                   </span>
                   <input
@@ -109,7 +109,7 @@ export function StepUpProvider({ children }: { children: ReactNode }) {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') cancel(); }}
-                    style={{ height: 34, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
+                    className="input"
                   />
                 </label>
                 <div style={{ display: 'flex', gap: 7 }}>
@@ -125,7 +125,7 @@ export function StepUpProvider({ children }: { children: ReactNode }) {
                 </div>
               </div>
               {error && (
-                <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px', marginTop: 12 }}>
+                <p className="auth-error" style={{ marginTop: 12 }}>
                   {error}
                 </p>
               )}

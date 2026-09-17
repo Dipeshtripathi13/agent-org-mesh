@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type Person, type PersonConversation } from '../lib/api';
 import { relativeTime, turnFromAuditEntry, type RawEntry, type ThreadTurn, type ConversationSummary } from '../lib/conversations';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
+import { LoadingState } from '../components/EmptyState';
+import { IconSend } from '../components/icons';
 import { useMe } from '../lib/MeContext';
 import { deriveAllowedRoles } from '../lib/roles';
 
@@ -213,9 +215,7 @@ export function Ask() {
         <div className="inner">
           <div style={{ display: 'grid', gap: 10 }}>
             <div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
-                Asking as
-              </div>
+              <div className="field-label" style={{ marginBottom: 5 }}>Asking as</div>
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                 {ROLES.map((r) => {
                   const truthful = allowedRoles.includes(r);
@@ -241,14 +241,12 @@ export function Ask() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)' }}>
-                  About
-                </span>
+              <label className="field" style={{ flex: 1, minWidth: 180, maxWidth: 420 }}>
+                <span>About</span>
                 <select
                   value={target}
                   onChange={(e) => setTarget(Number(e.target.value))}
-                  style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, fontSize: 12, padding: '0 6px' }}
+                  className="input"
                 >
                   {others.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} &middot; {p.title}</option>
@@ -300,7 +298,7 @@ export function Ask() {
               </div>
             )}
             {displayedThread.length === 0 ? (
-              <p className="glossary" style={{ margin: '0 0 12px' }}>
+              <p className="chat-intro">
                 Every turn is its own real, audited ask, written into{' '}
                 {targetPerson?.name ?? 'the target'}&rsquo;s own &ldquo;Who asked about
                 me&rdquo; log. Follow-ups in this chat are answered with this chat&rsquo;s
@@ -316,38 +314,34 @@ export function Ask() {
                     <p className="ask-turn-q">{turn.question}</p>
 
                     {turn.busy && (
-                      <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>Asking&hellip;</span>
-                      </div>
+                      <div className="answer-card is-busy"><LoadingState label={`Asking ${targetPerson?.name ?? 'their'} agent`} /></div>
                     )}
 
-                    {turn.error && (
-                      <p style={{ fontSize: 12, color: 'var(--hold)', background: 'var(--hold-bg)', border: '1px solid var(--rule2)', borderRadius: 2, padding: '7px 11px' }}>
-                        {turn.error}
-                      </p>
-                    )}
+                    {turn.error && <div className="answer-card is-error">{turn.error}</div>}
 
                     {turn.result && (
                       <>
-                        <div className="runtime-card" style={{ background: '#f8f9fa' }}>
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                            ANSWER{turn.result.withheldCount > 0 ? ` · ${turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld by your organization’s sharing rules` : ''}
-                          </span>
-                          <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', fontSize: 13 }}>{turn.result.answer}</p>
+                        <div className="answer-card">
+                          {turn.result.withheldCount > 0 && (
+                            <div className="answer-kicker">
+                              <span className="withheld">
+                                {turn.result.withheldCount === 1 ? '1 item' : `${turn.result.withheldCount} items`} withheld by your organization’s sharing rules
+                              </span>
+                            </div>
+                          )}
+                          <p>{turn.result.answer}</p>
                         </div>
                         {turn.result.consultedSources.length > 0 && (
-                          <p style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)', margin: '6px 0 0' }}>
-                            CHECKED &middot; {turn.result.consultedSources.join(', ')}
-                          </p>
+                          <div className="answer-tools">
+                            <span className="answer-tools-label">Checked</span>
+                            {turn.result.consultedSources.map((src) => <span key={src} className="answer-tool">{src}</span>)}
+                          </div>
                         )}
-                        <button
-                          onClick={() => toggleDetail(turn.id)}
-                          style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--ink3)', textDecoration: 'underline', cursor: 'pointer' }}
-                        >
+                        <button className="answer-detail-toggle" onClick={() => toggleDetail(turn.id)}>
                           {expandedIds.has(turn.id) ? 'Hide' : 'Show'} where this answer came from
                         </button>
                         {expandedIds.has(turn.id) && (
-                          <div style={{ marginTop: 8 }}>
+                          <div className="answer-detail">
                             {turn.result.items.map((item, i) => <ClaimItem key={i} item={item} />)}
                             <div className="coverage-note">{turn.result.coverage.text}</div>
                             <RefusalGlossary />
@@ -361,21 +355,22 @@ export function Ask() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 8, marginTop: displayedThread.length ? 12 : 0 }}>
+            <div className="composer">
               <input
                 aria-label="Question"
                 placeholder="What's the status of the payments migration?"
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') ask(question); }}
-                style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
               />
               <button
+                type="button"
+                className="composer-send"
+                aria-label={busy ? 'Asking' : 'Ask'}
                 onClick={() => ask(question)}
                 disabled={busy || !question.trim()}
-                style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
               >
-                {busy ? 'Asking…' : 'Ask'}
+                <IconSend />
               </button>
             </div>
           </div>
@@ -408,9 +403,7 @@ export function Ask() {
           </p>
 
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
-              Asking as
-            </div>
+            <div className="field-label" style={{ marginBottom: 5 }}>Asking as</div>
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
               {ROLES.map((r) => (
                 <button
@@ -426,10 +419,8 @@ export function Ask() {
           </div>
 
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink3)', marginBottom: 5 }}>
-              About ({multiSelected.size} selected)
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 140, overflowY: 'auto', border: '1px solid var(--rule2)', borderRadius: 2, padding: 8 }}>
+            <div className="field-label" style={{ marginBottom: 5 }}>About ({multiSelected.size} selected)</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 140, overflowY: 'auto', border: '1px solid var(--rule2)', borderRadius: 'var(--radius-sm)', padding: 8, background: '#fff' }}>
               {others.map((p) => (
                 <button
                   key={p.id}
@@ -444,21 +435,21 @@ export function Ask() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="form-row">
             <input
               aria-label="Question"
               placeholder="What's the status of the payments migration?"
               value={multiQuestion}
               onChange={(e) => setMultiQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') askMulti(multiQuestion); }}
-              style={{ flex: 1, height: 32, border: '1px solid var(--rule2)', borderRadius: 2, padding: '0 9px', fontSize: 13 }}
+              className="input"
             />
             <button
               onClick={() => askMulti(multiQuestion)}
               disabled={multiBusy || !multiQuestion.trim() || multiSelected.size === 0}
-              style={{ height: 32, padding: '0 12px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+              className="btn btn-primary"
             >
-              {multiBusy ? 'Asking…' : 'Ask selected'}
+              {multiBusy ? 'Asking…' : `Ask ${multiSelected.size > 0 ? multiSelected.size : ''} selected`.replace('  ', ' ')}
             </button>
           </div>
 

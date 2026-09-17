@@ -3,6 +3,7 @@ import { api, type Person, type Surface } from '../lib/api';
 import { swatchStyle } from '../components/primitives';
 import { useMe } from '../lib/MeContext';
 import { navigate } from '../lib/navigate';
+import { LoadingState } from '../components/EmptyState';
 
 const STATE_LABEL: Record<string, string> = {
   connected: 'Reading', partial: 'Reading (limited)', stale: 'Out of date',
@@ -55,7 +56,7 @@ export function Controls() {
     }
   };
 
-  if (!me) return <p className="sub">Loading&hellip;</p>;
+  if (!me) return <LoadingState />;
 
   return (
     <>
@@ -71,32 +72,28 @@ export function Controls() {
         <div className="panel" style={{ marginTop: 0 }}>
           <header>
             <span className="label">Tools your agent reads</span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-              {me.coverage.connectedCount} of {me.coverage.inScopeCount} reading
-            </span>
+            <span className="small muted">{me.coverage.connectedCount} of {me.coverage.inScopeCount} reading</span>
           </header>
           <div>
             {surfaces.map((s) => {
               const state = me.surfaces[s.key];
               const outOfScope = state === 'outOfScope';
               return (
-                <div key={s.key} style={{ padding: '11px 14px', borderBottom: '1px solid #f1f3f4' }}>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <i style={{ width: 9, height: 9, display: 'inline-block', ...swatchStyle(state) }} />
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</span>
-                    <span style={{ fontSize: 11, color: 'var(--ink4)' }}>{TIER_WORDS[s.feedsTier] ?? s.feedsTier}</span>
+                <div key={s.key} className="tool-row">
+                  <div className="tool-row-head">
+                    <i className="swatch" style={swatchStyle(state)} />
+                    <span className="tool-row-name">{s.name}</span>
+                    <span className="tool-row-kind">{TIER_WORDS[s.feedsTier] ?? s.feedsTier}</span>
                     <span className="spacer" />
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>{STATE_LABEL[state]}</span>
+                    <span className={`tool-row-state${state === 'connected' || state === 'partial' ? ' is-on' : ''}`}>{STATE_LABEL[state]}</span>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--ink3)', margin: '5px 0 0' }}>{s.reads}</p>
-                  <div style={{ marginTop: 9 }}>
+                  <p className="tool-row-reads">{s.reads}</p>
+                  <div className="tool-row-actions">
                     {outOfScope ? (
-                      <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
-                        Not used for your role, so it doesn&rsquo;t count against you.
-                      </span>
+                      <span>Not used for your role, so it doesn&rsquo;t count against you.</span>
                     ) : (
                       state === 'absent' ? (
-                        <span style={{ fontSize: 12, color: 'var(--ink3)' }}>
+                        <span>
                           <button type="button" className="linklike" onClick={() => navigate('/me/setup')}>Connect it</button>
                           {' '}in Set up my agent, or{' '}
                           <button type="button" className="linklike" onClick={() => cycle(s.key)}>resume</button>
@@ -107,7 +104,7 @@ export function Controls() {
                       )
                     )}
                     {rowError?.key === s.key && (
-                      <p role="alert" style={{ fontSize: 12, color: 'var(--hold)', margin: '6px 0 0' }}>{rowError.message}</p>
+                      <p role="alert" className="form-error">{rowError.message}</p>
                     )}
                   </div>
                 </div>
@@ -120,7 +117,7 @@ export function Controls() {
           <div className="panel" style={{ marginTop: 0 }}>
             <header><span className="label">Export everything held about you</span></header>
             <div className="inner">
-              <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--ink2)' }}>
+              <p className="small" style={{ margin: '0 0 12px', color: 'var(--ink2)' }}>
                 Everything your agent says about you, where each item came from, and every time
                 someone asked about you &mdash; including what they weren&rsquo;t told &mdash; as
                 one JSON file.
@@ -128,12 +125,12 @@ export function Controls() {
               <button
                 onClick={requestExport}
                 disabled={exportState === 'busy'}
-                style={{ height: 30, padding: '0 11px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                className="btn btn-primary btn-sm"
               >
                 {exportState === 'busy' ? 'Preparing…' : exportState === 'done' ? 'Downloaded — download again' : 'Download my data'}
               </button>
               {exportState === 'error' && (
-                <p style={{ fontSize: 12, color: 'var(--hold)', marginTop: 8 }}>Could not prepare the export — try again.</p>
+                <p className="form-error">Could not prepare the export — try again.</p>
               )}
             </div>
           </div>
@@ -141,16 +138,10 @@ export function Controls() {
           <div className="panel" style={{ marginTop: 0 }}>
             <header><span className="label">Retention</span></header>
             <div className="inner">
-              <div style={{ display: 'grid', gap: 7, fontSize: 12, color: 'var(--ink2)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span>What your agent says about you</span><span style={{ fontFamily: 'var(--mono)', color: 'var(--ink3)' }}>30 days</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span>Signals from chat tools</span><span style={{ fontFamily: 'var(--mono)', color: 'var(--ink3)' }}>7 days</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span>Record of who asked</span><span style={{ fontFamily: 'var(--mono)', color: 'var(--ink3)' }}>kept permanently</span>
-                </div>
+              <div className="kv">
+                <div><span>What your agent says about you</span><span className="kv-value">30 days</span></div>
+                <div><span>Signals from chat tools</span><span className="kv-value">7 days</span></div>
+                <div><span>Record of who asked</span><span className="kv-value">kept permanently</span></div>
               </div>
               <p className="glossary" style={{ marginTop: 12 }}>
                 The record of who asked is the one thing no one can delete, you included &mdash;

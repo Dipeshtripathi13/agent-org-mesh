@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
 import { useMe } from '../lib/MeContext';
+import { EmptyState, LoadingState } from '../components/EmptyState';
+import { IconBell, IconChevron } from '../components/icons';
 
 type Data = Awaited<ReturnType<typeof api.auditForSubject>>;
 
@@ -11,7 +13,7 @@ export function WhoAsked() {
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => { api.auditForSubject(meId).then(setData); }, [meId]);
-  if (!data) return <p className="sub">Loading&hellip;</p>;
+  if (!data) return <LoadingState />;
 
   return (
     <>
@@ -28,35 +30,27 @@ export function WhoAsked() {
         </header>
 
         {data.entries.length === 0 ? (
-          <div className="inner">
-            <p style={{ margin: 0, fontSize: 12, color: 'var(--ink2)' }}>
-              No one has asked about you yet. When someone does, it appears here straight away,
-              and the bell at the top of the page lights up.
-            </p>
-          </div>
+          <EmptyState icon={<IconBell />} title="No one has asked about you yet">
+            When someone does, it appears here straight away and the bell at the top of the page lights up.
+          </EmptyState>
         ) : (
           data.entries.map((e) => (
-            <div key={e.id} style={{ borderBottom: '1px solid var(--rule)' }}>
+            <div key={e.id} className={`entry${open === e.id ? ' is-open' : ''}`}>
               <button
+                className="entry-row"
+                aria-expanded={open === e.id}
                 onClick={() => setOpen(open === e.id ? null : e.id)}
-                style={{ width: '100%', textAlign: 'left', background: 'transparent', border: 0, padding: '10px 14px', display: 'grid', gridTemplateColumns: '16px 150px 1fr auto', gap: 12, alignItems: 'center' }}
               >
-                <span style={{ fontFamily: 'var(--mono)', color: 'var(--ink3)' }}>
-                  {open === e.id ? '−' : '+'}
-                </span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink3)' }}>
-                  {new Date(e.createdAt).toISOString().slice(11, 19)}Z
-                </span>
-                <span style={{ fontSize: 12 }}>
+                <span className="entry-toggle"><IconChevron /></span>
+                <span className="entry-time">{new Date(e.createdAt).toISOString().slice(11, 19)}Z</span>
+                <span className="entry-text">
                   <strong>{e.requesterRole === 'Self' ? 'You' : `As ${e.requesterRole.toLowerCase()}`}</strong>: {e.question}
                 </span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink3)' }}>
-                  rev {e.policyRevisionId}
-                </span>
+                <span className="entry-rev">rev {e.policyRevisionId}</span>
               </button>
 
               {open === e.id && (
-                <div style={{ padding: '0 14px 14px 42px' }}>
+                <div className="entry-body">
                   {e.snapshot.items.map((item, i) => <ClaimItem key={i} item={item} />)}
                   <div className="coverage-note">{e.snapshot.coverage.text}</div>
                   <RefusalGlossary />

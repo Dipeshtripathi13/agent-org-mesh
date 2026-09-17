@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type AgentResponse, type Disposition, type Person } from '../lib/api';
 import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
+import { LoadingState } from '../components/EmptyState';
 import { useStepUp } from '../lib/StepUpContext';
 import { ClaimItem, RefusalGlossary } from '../components/primitives';
 
@@ -53,7 +54,7 @@ export function PolicyMatrix() {
     await loadPolicy();
   };
 
-  if (!grid) return <p className="sub">Loading&hellip;</p>;
+  if (!grid) return <LoadingState />;
 
   return (
     <>
@@ -142,7 +143,7 @@ export function PolicyMatrix() {
                 aria-label="Target agent"
                 value={target ?? ''}
                 onChange={(e) => setTarget(Number(e.target.value))}
-                style={{ height: 32, border: '1px solid var(--rule2)', borderRadius: 2, fontSize: 12, padding: '0 6px', width: '100%', marginBottom: 12 }}
+                className="input" style={{ width: '100%', marginBottom: 12 }}
               >
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>

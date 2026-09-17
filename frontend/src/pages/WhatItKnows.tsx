@@ -78,7 +78,7 @@ export function WhatItKnows() {
                   <button
                     onClick={() => submit(c.id)}
                     disabled={busy || !note.trim()}
-                    style={{ height: 28, padding: '0 10px', fontSize: 12, background: 'var(--ink)', color: '#fff', border: '1px solid var(--ink)', borderRadius: 2 }}
+                    className="btn btn-primary btn-sm"
                   >
                     Submit correction
                   </button>
