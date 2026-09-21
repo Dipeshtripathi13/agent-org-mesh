@@ -301,6 +301,10 @@ export const api = {
     ),
   removePerson: (orgId: number, personId: number) =>
     req<{ ok: true }>(`/organizations/${orgId}/people/${personId}`, { method: 'DELETE' }),
+  /** Archives the organization — owner-only, and refused while anyone else is still in its
+   *  chart. Nothing it owns is deleted; see the endpoint's own comment in server.ts. */
+  deleteOrganization: (orgId: number) =>
+    req<{ ok: true }>(`/organizations/${orgId}`, { method: 'DELETE' }),
   /** Admin-initiated reset — the no-email half of "I forgot my password". Returns a fresh
    *  one-time temp password to hand over; 409s for an account that also belongs to another
    *  organization (see the endpoint's own comment in server.ts). */

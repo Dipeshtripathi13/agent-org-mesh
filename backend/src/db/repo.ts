@@ -324,6 +324,7 @@ export async function listOrganizationsForAccount(accountId: number): Promise<Or
      FROM organizations o
      JOIN org_admins oa ON oa.org_id = o.id AND oa.account_id = $1
      LEFT JOIN people p ON p.org_id = o.id AND p.removed_at IS NULL
+     WHERE NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = o.id)
      GROUP BY o.id
      ORDER BY o.id`,
     [accountId],
@@ -404,15 +405,25 @@ export async function createOrganization(
   }
 }
 
+/** Nobody holds a role in an archived organization — this one filter is what closes every
+ *  admin route on it, rather than a check repeated per route (migration 0008). */
 export async function getOrgRole(orgId: number, accountId: number): Promise<OrgRole | null> {
-  const { rows } = await pool.query('SELECT role FROM org_admins WHERE org_id = $1 AND account_id = $2', [orgId, accountId]);
+  const { rows } = await pool.query(
+    `SELECT role FROM org_admins oa WHERE oa.org_id = $1 AND oa.account_id = $2
+       AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = oa.org_id)`,
+    [orgId, accountId],
+  );
   return rows.length ? rows[0].role : null;
 }
 
 /** Every org an account administers, and their role in each — what the frontend uses to
  *  decide which actions to even show as available, per org. */
 export async function getOrgRolesForAccount(accountId: number): Promise<Record<number, OrgRole>> {
-  const { rows } = await pool.query('SELECT org_id, role FROM org_admins WHERE account_id = $1', [accountId]);
+  const { rows } = await pool.query(
+    `SELECT oa.org_id, oa.role FROM org_admins oa WHERE oa.account_id = $1
+       AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = oa.org_id)`,
+    [accountId],
+  );
   const out: Record<number, OrgRole> = {};
   for (const row of rows) out[row.org_id] = row.role;
   return out;
@@ -933,10 +944,39 @@ export async function createPersonWithinSeatLimit(orgId: number, input: NewPerso
 /** How many organizations this account owns — what MAX_ORGS_PER_ACCOUNT is checked against. */
 export async function countOrganizationsOwnedBy(accountId: number): Promise<number> {
   const { rows } = await pool.query(
-    "SELECT count(*)::int AS n FROM org_admins WHERE account_id = $1 AND role = 'owner'",
+    `SELECT count(*)::int AS n FROM org_admins oa
+      WHERE oa.account_id = $1 AND oa.role = 'owner'
+        AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = oa.org_id)`,
     [accountId],
   );
   return rows[0].n as number;
+}
+
+/** Archives an organization: one row in `archived_organizations`, which every role, identity
+ *  and listing query above then treats as gone. Nothing is deleted — audit_log and
+ *  policy_revisions reference the org and are append-only (rules 2 and 3).
+ *
+ *  Refuses while anyone else is still in the chart. Archiving hides the organization from its
+ *  members too, so letting an owner do it to a populated chart would take everyone else's
+ *  access with it in one click; removing each person is its own deliberate, visible step. */
+export async function archiveOrganization(
+  orgId: number,
+  accountId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { rows } = await pool.query(
+    'SELECT count(*)::int AS n FROM people WHERE org_id = $1 AND removed_at IS NULL', [orgId]);
+  if (rows[0].n > 1) {
+    return {
+      ok: false,
+      error: 'remove everyone else from this organization\u2019s chart first, then delete it',
+    };
+  }
+  await pool.query(
+    `INSERT INTO archived_organizations (org_id, archived_at, archived_by) VALUES ($1,$2,$3)
+     ON CONFLICT (org_id) DO NOTHING`,
+    [orgId, new Date().toISOString(), accountId],
+  );
+  return { ok: true };
 }
 
 export const MAX_ORGS = MAX_ORGS_PER_ACCOUNT;
@@ -960,7 +1000,9 @@ interface NewPersonInput {
 export async function getPeopleForAccount(accountId: number): Promise<(Person & { orgId: number; orgName: string })[]> {
   const { rows } = await pool.query(
     `SELECT p.*, o.name AS org_name FROM people p JOIN organizations o ON o.id = p.org_id
-     WHERE p.account_id = $1 AND p.removed_at IS NULL ORDER BY p.org_id, p.id`,
+     WHERE p.account_id = $1 AND p.removed_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = p.org_id)
+     ORDER BY p.org_id, p.id`,
     [accountId],
   );
   return rows.map((row) => ({ ...toPerson(row), orgId: row.org_id, orgName: row.org_name }));

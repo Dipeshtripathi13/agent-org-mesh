@@ -672,6 +672,24 @@ app.post('/api/organizations', { schema: bodySchema({ name: str(120, 1) }, ['nam
    OAuth ingestion, not that), so it's returned once in the response, same "shown once"
    pattern ingest tokens already use in the UI. */
 
+/** Deleting an organization archives it (migration 0008) — the rows it owns are append-only,
+ *  so nothing is actually removed. Owner-only and step-up gated, like every other write that
+ *  can't be taken back. This is what the organizations-per-account 402 points people at. */
+app.delete('/api/organizations/:orgId', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'owner', 'only an owner can delete this organization', { elevated: true });
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const result = await repo.archiveOrganization(orgId, check.accountId);
+  if (!result.ok) {
+    reply.code(409);
+    return { error: result.error };
+  }
+  return { ok: true };
+});
+
 app.get('/api/organizations/:orgId/admins', async (req, reply) => {
   const orgId = Number((req.params as { orgId: string }).orgId);
   const check = await requireOrgRole(req, orgId, 'viewer', 'not authorized for this organization');

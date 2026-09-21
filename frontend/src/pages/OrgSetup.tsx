@@ -13,11 +13,13 @@ const SCOPE_LABEL: Record<'full' | 'narrow' | 'pending', string> = {
 
 function OrganizationList() {
   const { orgId, organizations, setOrgId, refresh } = useOrg();
-  const { refresh: refreshAuth } = useAuth();
+  const { refresh: refreshAuth, orgRoles } = useAuth();
   const { runWithStepUp } = useStepUp();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const selected = organizations.find((o) => o.id === orgId);
 
   const create = async () => {
     if (!name.trim()) return;
@@ -35,6 +37,28 @@ function OrganizationList() {
       setOrgId(organization.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not create organization');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Owner-only, and the server refuses while anyone else is still in the chart. Offered on
+  // the selected organization so there's a real way out of the organizations-per-account cap.
+  const del = async (o: { id: number; name: string; peopleCount: number }) => {
+    setError(null);
+    const ok = window.confirm(
+      `Delete ${o.name}?\n\n` +
+      `It disappears for everyone and frees one of your organization slots. Questions already ` +
+      `asked in it stay in the permanent record — they can\u2019t be deleted — but nobody will be ` +
+      `able to open this organization again. This can\u2019t be undone.`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await runWithStepUp(() => api.deleteOrganization(o.id));
+      await Promise.all([refresh(), refreshAuth()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not delete organization');
     } finally {
       setBusy(false);
     }
@@ -86,6 +110,17 @@ function OrganizationList() {
           One admin, several organizations. Switching here changes what every other Admin
           screen shows — the same selector is in the topbar.
         </p>
+        {selected && orgRoles[selected.id] === 'owner' && (
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--rule)', paddingTop: 12 }}>
+            <button disabled={busy} onClick={() => del(selected)} className="btn btn-sm">
+              Delete {selected.name}
+            </button>
+            <p className="glossary" style={{ marginTop: 6 }}>
+              Frees one of your organization slots. Everyone else has to be removed from its
+              chart first, and what was already asked stays in the record.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

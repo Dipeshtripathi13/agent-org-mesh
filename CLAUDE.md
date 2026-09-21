@@ -1569,6 +1569,40 @@ leaves the chart, the seat count drops, and their row and claim are still in the
 afterwards. Not built: restoring someone (re-add them as a new chart entry), and no
 back-fill — nobody was removable before this, so there is no historical state to migrate.
 
+**Deleting an organization archives it, and that is what makes the organizations cap
+honest (2026-09-20).** The 402 from `MAX_ORGS_PER_ACCOUNT` told people to "remove one you no
+longer need" and there was no way to remove one — signup creates an organization
+automatically, so reaching the cap was easy and had no self-serve way out. As with people,
+a real delete is impossible by construction: `audit_log.org_id` and `policy_revisions.org_id`
+reference `organizations(id)` with no cascade and are append-only (rules 2 and 3), and
+`organizations` itself is SELECT/INSERT for `mesh_app` — deliberately, so the runtime role
+can't rewrite an org's plan or name — which also rules out an `archived_at` column on it.
+Hence `archived_organizations` (migration 0008, SELECT/INSERT only), the same shape as
+`hidden_conversations`.
+
+`DELETE /api/organizations/:orgId` is owner-only and step-up gated. One row in that table is
+all it takes, because the checks everything else already funnels through read it:
+`getOrgRole` (so every admin route 403s), `getOrgRolesForAccount`, `getPeopleForAccount` (so
+it stops being one of your identities), the organizations listing, and
+`countOrganizationsOwnedBy` — which is what frees the slot. It refuses while anyone else is
+still in the chart: archiving hides the organization from its members too, so allowing it on
+a populated chart would take everyone's access in one click, where removing each person is
+its own deliberate step. Guarded by `orgDeletion.api.test.ts` (6, including a real persisted
+ask whose audit rows are still there afterwards); six mutations — dropping each of the four
+filters, allowing a populated org, and relaxing owner+step-up to admin — each fail it.
+Checked in a real browser: create a second organization, delete it, and the list, the topbar
+selector and the chart panel all recover onto the remaining one with no error.
+
+**A trade-off worth stating, since it applies to both removals above:** someone removed from
+a chart, or a member of an archived organization, loses their own view of "Who asked about
+me" for it, because every route on that organization closes to them. The rows are never
+deleted — admins and the audit log still have them, and rule 2 still holds at the storage
+layer — but the subject can no longer read them there. This is ordinary deprovisioning (a
+leaver loses access to company systems), and it is the reason archiving refuses a populated
+chart rather than cutting off a whole team at once. If this ever needs to change, the fix is
+a personal, account-scoped "asked about me" history that survives losing org access, not a
+weakening of the access checks.
+
 **Plan limits live in one file, and are enforced in one transaction (2026-09-17).**
 `backend/src/plans.ts` is the single place to change them: `PLAN_SEATS` (starter 10, business
 200, enterprise `null` for unlimited — `null`, never `Infinity`, which JSON turns into `null`
