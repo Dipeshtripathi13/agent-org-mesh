@@ -309,7 +309,7 @@ export async function setAccountPassword(
 export async function accountBelongsToOtherOrgs(accountId: number, orgId: number): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT EXISTS (
-       SELECT 1 FROM people     WHERE account_id = $1 AND org_id <> $2
+       SELECT 1 FROM people     WHERE account_id = $1 AND org_id <> $2 AND removed_at IS NULL
        UNION ALL
        SELECT 1 FROM org_admins WHERE account_id = $1 AND org_id <> $2
      ) AS present`,
@@ -323,7 +323,7 @@ export async function listOrganizationsForAccount(accountId: number): Promise<Or
     `SELECT o.*, count(p.id)::int AS people_count
      FROM organizations o
      JOIN org_admins oa ON oa.org_id = o.id AND oa.account_id = $1
-     LEFT JOIN people p ON p.org_id = o.id
+     LEFT JOIN people p ON p.org_id = o.id AND p.removed_at IS NULL
      GROUP BY o.id
      ORDER BY o.id`,
     [accountId],
@@ -335,7 +335,7 @@ export async function getOrganization(id: number): Promise<Organization> {
   const { rows } = await pool.query(
     `SELECT o.*, count(p.id)::int AS people_count
      FROM organizations o
-     LEFT JOIN people p ON p.org_id = o.id
+     LEFT JOIN people p ON p.org_id = o.id AND p.removed_at IS NULL
      WHERE o.id = $1
      GROUP BY o.id`,
     [id],
@@ -571,7 +571,7 @@ export async function listPeopleAdminDetails(orgId: number): Promise<PersonAdmin
           WHERE person_id = p.id AND kind = 'person' AND accepted_at IS NULL AND revoked_at IS NULL
           ORDER BY created_at DESC LIMIT 1
        ) inv ON true
-      WHERE p.org_id = $1
+      WHERE p.org_id = $1 AND p.removed_at IS NULL
       ORDER BY p.id`,
     [orgId],
   );
@@ -632,12 +632,15 @@ export async function acceptInvitation(tokenHash: string, accountId: number, now
 
     if (inv.kind === 'person') {
       const { rows: personRows } = await client.query(
-        'SELECT account_id FROM people WHERE id = $1 AND org_id = $2 FOR UPDATE',
+        'SELECT account_id, removed_at FROM people WHERE id = $1 AND org_id = $2 FOR UPDATE',
         [inv.person_id, inv.org_id],
       );
-      if (!personRows[0]) return fail(404, 'that person is no longer in this organization');
+      if (!personRows[0] || personRows[0].removed_at != null) {
+        return fail(404, 'that person is no longer in this organization');
+      }
       if (personRows[0].account_id != null) return fail(409, 'that place in the chart is already linked to a login');
-      const { rowCount } = await client.query('SELECT 1 FROM people WHERE org_id = $1 AND account_id = $2', [inv.org_id, accountId]);
+      const { rowCount } = await client.query(
+        'SELECT 1 FROM people WHERE org_id = $1 AND account_id = $2 AND removed_at IS NULL', [inv.org_id, accountId]);
       if (rowCount) return fail(409, 'you already have a place in this organization’s chart');
       await client.query('UPDATE people SET account_id = $1 WHERE id = $2', [accountId, inv.person_id]);
     } else {
@@ -839,8 +842,11 @@ export async function elevateSession(tokenHash: string, until: string): Promise<
 
 /* ---------- org chart: people ---------- */
 
+/** The org's *current* chart. A removed person keeps their row (their history references it)
+ *  but is gone from every roster this returns — see migration 0007. */
 export async function getPeople(orgId: number): Promise<Person[]> {
-  const { rows } = await pool.query('SELECT * FROM people WHERE org_id = $1 ORDER BY id', [orgId]);
+  const { rows } = await pool.query(
+    'SELECT * FROM people WHERE org_id = $1 AND removed_at IS NULL ORDER BY id', [orgId]);
   return rows.map(toPerson);
 }
 
@@ -848,6 +854,15 @@ export async function getPerson(id: number): Promise<Person> {
   const { rows } = await pool.query('SELECT * FROM people WHERE id = $1', [id]);
   if (rows.length === 0) throw new Error(`No person ${id}`);
   return toPerson(rows[0]);
+}
+
+/** Is this person still in their org's chart? `getPerson`/`getOrgIdOfPerson` deliberately
+ *  keep resolving someone who was removed — their claims and audit history stay visible, and
+ *  the admin audit-subject view needs them — so this is the separate question of whether they
+ *  can still be acted on now. */
+export async function isPersonInChart(id: number): Promise<boolean> {
+  const { rows } = await pool.query('SELECT 1 FROM people WHERE id = $1 AND removed_at IS NULL', [id]);
+  return rows.length > 0;
 }
 
 export async function getOrgIdOfPerson(id: number): Promise<number> {
@@ -892,7 +907,8 @@ export async function createPersonWithinSeatLimit(orgId: number, input: NewPerso
     const { rows: orgRows } = await client.query('SELECT plan FROM organizations WHERE id = $1', [orgId]);
     if (orgRows.length === 0) throw new Error(`No organization ${orgId}`);
     const plan = orgRows[0].plan as OrgPlan;
-    const { rows: countRows } = await client.query('SELECT count(*)::int AS n FROM people WHERE org_id = $1', [orgId]);
+    const { rows: countRows } = await client.query(
+      'SELECT count(*)::int AS n FROM people WHERE org_id = $1 AND removed_at IS NULL', [orgId]);
     const used = countRows[0].n as number;
     const limit = seatLimit(plan);
     if (limit != null && used >= limit) {
@@ -944,20 +960,58 @@ interface NewPersonInput {
 export async function getPeopleForAccount(accountId: number): Promise<(Person & { orgId: number; orgName: string })[]> {
   const { rows } = await pool.query(
     `SELECT p.*, o.name AS org_name FROM people p JOIN organizations o ON o.id = p.org_id
-     WHERE p.account_id = $1 ORDER BY p.org_id, p.id`,
+     WHERE p.account_id = $1 AND p.removed_at IS NULL ORDER BY p.org_id, p.id`,
     [accountId],
   );
   return rows.map((row) => ({ ...toPerson(row), orgId: row.org_id, orgName: row.org_name }));
 }
 
-/** Refuses to remove anyone still listed as someone else's manager — reassign first. */
-export async function deletePerson(orgId: number, personId: number): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { rows: reports } = await pool.query('SELECT count(*)::int AS n FROM people WHERE manager_id = $1', [personId]);
+/** Takes someone out of the chart. Refuses anyone still listed as someone else's manager —
+ *  reassign first.
+ *
+ *  Marks rather than deletes (migration 0007). `DELETE FROM people` only ever worked for a
+ *  person with no history: claims, evidence, escalations and audit_log all reference
+ *  people(id) with no cascade, and this role holds no DELETE on any of them, so removing
+ *  anyone real raised a foreign-key error the route turned into a 500. Keeping the row is
+ *  also what rule 2 requires — the people they answered still see those asks in "Who asked
+ *  about me" after they leave.
+ *
+ *  Their ingest tokens are revoked in the same transaction. `resolveIngestToken` already
+ *  refuses a removed person, so this is belt and braces — but it also means the tokens read
+ *  as revoked in their own listing, rather than looking live while silently doing nothing. */
+export async function removePersonFromChart(
+  orgId: number,
+  personId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { rows: reports } = await pool.query(
+    'SELECT count(*)::int AS n FROM people WHERE manager_id = $1 AND removed_at IS NULL', [personId]);
   if (reports[0].n > 0) {
     return { ok: false, error: 'this person still has direct reports — reassign or remove them first' };
   }
-  await pool.query('DELETE FROM people WHERE id = $1 AND org_id = $2', [personId, orgId]);
-  return { ok: true };
+  const now = new Date().toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rowCount } = await client.query(
+      'UPDATE people SET removed_at = $3 WHERE id = $1 AND org_id = $2 AND removed_at IS NULL',
+      [personId, orgId, now],
+    );
+    if (!rowCount) {
+      await client.query('ROLLBACK');
+      return { ok: false, error: 'that person is not in this organization' };
+    }
+    await client.query(
+      'UPDATE ingest_tokens SET revoked_at = $2 WHERE person_id = $1 AND revoked_at IS NULL',
+      [personId, now],
+    );
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updatePersonSurface(id: number, key: SurfaceKey, state: SurfaceState): Promise<Person> {
@@ -1755,8 +1809,11 @@ export async function revokeIngestToken(personId: number, tokenId: string): Prom
  *  authentication boundary for /api/ingest/:source: identity comes from the token, never
  *  from anything else in the request. */
 export async function resolveIngestToken(tokenHash: string): Promise<{ personId: number } | null> {
+  // Joined to people rather than checked afterwards: a token belonging to someone who has been
+  // removed from the chart must read as unknown, exactly like a revoked one.
   const { rows } = await pool.query(
-    'SELECT person_id FROM ingest_tokens WHERE token_hash = $1 AND revoked_at IS NULL',
+    `SELECT t.person_id FROM ingest_tokens t JOIN people p ON p.id = t.person_id
+      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND p.removed_at IS NULL`,
     [tokenHash],
   );
   if (rows.length === 0) return null;

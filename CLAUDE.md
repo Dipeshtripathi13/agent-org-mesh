@@ -1536,6 +1536,39 @@ the prompt the OpenAI-compatible adapter actually sends), `eventIngestion.test.t
 covered by a test: the Anthropic adapter's own `safePromptName` calls (same change, applied by the
 same script as the tested adapter).
 
+**Removing someone from a chart marks them removed; it never deletes them (2026-09-20).**
+Found by reading the seat-limit copy shipped three days earlier ("Remove someone to free a
+place") and checking that the action behind it worked. It did not: `deletePerson` ran
+`DELETE FROM people`, and `claims`, `evidence`, `escalations` and `audit_log` all reference
+`people(id)` with no cascade while `mesh_app` holds no DELETE on any of them (rules 2 and 3).
+So removing anyone who had ever connected a tool or been asked about raised a foreign-key
+error the route turned into a bare 500 — reproduced through the real route with a real admin
+session against a seeded person with four claims, before any fix.
+
+Marking is also the only honest option: what someone answered has to stay visible to the
+people who asked, in "Who asked about me", after they leave (rule 2).
+`repo.removePersonFromChart` sets `people.removed_at` (migration 0007) and revokes their
+ingest tokens in the same transaction. Every question that means "who is in the chart now"
+filters on it — the roster, the org list's `peopleCount`, the seat check, the admin details
+panel, `getPeopleForAccount` (so `requireSessionPerson`/`requireSelf` end their access to that
+org), `accountBelongsToOtherOrgs`, and both invitation-claim checks. `getPerson` and
+`getOrgIdOfPerson` deliberately still resolve a removed person, because the admin
+audit-subject view and every stored answer reference them; `repo.isPersonInChart` is the
+separate "can they be acted on now" question, used by `/api/query` and `/api/agent/ask` to say
+"no longer in this organization's chart" rather than letting the role check blame the org
+relationship. A removed person's push token is refused twice over: revoked at removal, and
+`resolveIngestToken` joins `people` so a still-live token reads as unknown.
+
+Guarded by `personRemoval.api.test.ts` (6); six mutations — restoring the hard delete, and
+dropping the filter from the roster, the identity lookup, the org people count, the ingest
+join and the ask check — each fail it. The ingest-join mutation initially passed, because the
+revoke already covered it; the test now re-validates the token directly after removal so the
+two protections are proved separately rather than one hiding the other's rot. Checked in a
+real browser end to end: the confirm says what removal keeps, step-up prompts, the person
+leaves the chart, the seat count drops, and their row and claim are still in the database
+afterwards. Not built: restoring someone (re-add them as a new chart entry), and no
+back-fill — nobody was removable before this, so there is no historical state to migrate.
+
 **Plan limits live in one file, and are enforced in one transaction (2026-09-17).**
 `backend/src/plans.ts` is the single place to change them: `PLAN_SEATS` (starter 10, business
 200, enterprise `null` for unlimited — `null`, never `Infinity`, which JSON turns into `null`

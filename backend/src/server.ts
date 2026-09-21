@@ -1162,7 +1162,9 @@ app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
   }
 
   const personId = Number((req.params as { personId: string }).personId);
-  const result = await repo.deletePerson(orgId, personId);
+  // Takes them out of the chart and revokes their push tokens; their claims and the audit
+  // rows about them stay, so whoever asked about them keeps seeing it (rule 2).
+  const result = await repo.removePersonFromChart(orgId, personId);
   if (!result.ok) {
     reply.code(409);
     return { error: result.error };
@@ -2805,6 +2807,13 @@ app.post('/api/query', {
     reply.code(404);
     return { error: 'no such person' };
   }
+  // Someone removed from the chart still resolves (their history is still theirs), but can no
+  // longer be asked about. Said plainly here — the role check below would otherwise blame the
+  // org relationship for what is really "they have left".
+  if (!(await repo.isPersonInChart(body.targetId))) {
+    reply.code(404);
+    return { error: 'that person is no longer in this organization\u2019s chart' };
+  }
   const requesterId = (await repo.getPeopleForAccount(accountId)).find((p) => p.orgId === orgId)?.id;
 
   if (body.persist) {
@@ -2935,6 +2944,13 @@ app.post('/api/agent/ask', {
   if (orgId == null) {
     reply.code(404);
     return { error: 'no such person' };
+  }
+  // Someone removed from the chart still resolves (their history is still theirs), but can no
+  // longer be asked about. Said plainly here — the role check below would otherwise blame the
+  // org relationship for what is really "they have left".
+  if (!(await repo.isPersonInChart(body.targetId))) {
+    reply.code(404);
+    return { error: 'that person is no longer in this organization\u2019s chart' };
   }
 
   // The requester is the session's own identity in this org — never body.requesterId

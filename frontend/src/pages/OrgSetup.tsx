@@ -186,8 +186,14 @@ function ChartBuilder() {
     }
   };
 
-  const removePerson = async (id: number) => {
+  const removePerson = async (id: number, name: string) => {
     setError(null);
+    const ok = window.confirm(
+      `Remove ${name} from this chart?\n\n` +
+      `They lose access to this organization, their tools stop reporting into it, and their seat frees up. ` +
+      `What they already answered stays in the permanent record, so anyone who asked about them can still see it. This can\u2019t be undone.`,
+    );
+    if (!ok) return;
     try {
       await runWithStepUp(() => api.removePerson(orgId, id));
       await load();
@@ -358,7 +364,7 @@ function ChartBuilder() {
                     Reset password
                   </button>
                 )}
-                {canEdit && <button className="chip" onClick={() => removePerson(p.id)}>Remove</button>}
+                {canEdit && <button className="chip" onClick={() => removePerson(p.id, p.name)}>Remove</button>}
               </span>
               {openDetails === p.id && details.get(p.id) && (
                 <PersonDetailsPanel
