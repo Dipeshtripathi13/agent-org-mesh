@@ -1593,6 +1593,26 @@ filters, allowing a populated org, and relaxing owner+step-up to admin — each 
 Checked in a real browser: create a second organization, delete it, and the list, the topbar
 selector and the chart panel all recover onto the remaining one with no error.
 
+**Two doors archiving missed, found by probing rather than by reading the code
+(2026-09-22).** Everything that reads an organization funnels through `getOrgRole` or the
+identity lookup, so filtering those closed every screen at once — but two paths reach an
+organization without touching either, and both were still open a day after archiving
+shipped. A pushed event (`POST /api/ingest/:source`) authenticates by token alone, so
+activity kept landing in a deleted organization: `resolveIngestToken` now refuses a token
+whose person sits in an archived org, the same way it already refused a removed person's.
+And an outstanding invitation still resolved: the link rendered the deleted organization's
+name, and accepting an *admin* invite wrote a real `org_admins` row and answered
+`{accepted: true}` — a join the invitee could never see, since every read path correctly
+hid it. `getInvitationByTokenHash` now treats such a link as not valid, and
+`acceptInvitation` fails with "that organization has been deleted" inside the same locked
+transaction as its other checks. Both are covered by `orgDeletion.api.test.ts` (8 now) and
+mutation-tested. The lesson worth keeping: when a feature is enforced by filtering shared
+read paths, the things that *don't* use those paths — token auth and one-time links — are
+exactly where it will leak, and they have to be enumerated deliberately rather than assumed.
+Checked and found already closed by the same sweep: every `/api/person/:id/...` connector and
+ingest-token route goes through `requireSelf` → `requireSessionPerson`, which reads the
+filtered identity lookup.
+
 **A trade-off worth stating, since it applies to both removals above:** someone removed from
 a chart, or a member of an archived organization, loses their own view of "Who asked about
 me" for it, because every route on that organization closes to them. The rows are never

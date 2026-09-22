@@ -115,6 +115,65 @@ describe('deleting an organization', () => {
     expect(after.rows[0].n, 'asked questions are permanent (rule 2)').toBe(before.rows[0].n);
   });
 
+  // Pushes and invitations don't pass through getOrgRole or an identity lookup, so archiving
+  // has to close those two doors itself. Both were found open by probing after the fact: a
+  // push kept returning 202, and an admin invitation still reported a successful join.
+  it('stops accepting pushed activity', async () => {
+    const owner = await newOwner('push');
+    const orgId = (await createOrg(owner.cookie, 'Pushes Here')).json().organization.id as number;
+    const me = (await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: owner.cookie } }))
+      .json().people.find((p: { orgId: number }) => p.orgId === orgId).id as number;
+    const minted = await app.inject({
+      method: 'POST', url: `/api/person/${me}/ingest-tokens`, headers: { cookie: owner.cookie },
+      payload: { label: 'laptop' },
+    });
+    expect(minted.statusCode, minted.body).toBe(200);
+    const token = minted.json().token as string;
+    const push = () => app.inject({
+      method: 'POST', url: '/api/ingest/claude-code', headers: { authorization: `Bearer ${token}` },
+      payload: { events: [{ kind: 'tool_use', summary: 'Edited server.ts', occurredAt: new Date().toISOString() }] },
+    });
+    expect((await push()).statusCode).toBe(202);
+
+    expect((await deleteOrg(owner.cookie, orgId)).statusCode).toBe(200);
+
+    expect((await push()).statusCode).toBe(401);
+  });
+
+  it('kills invitations that were still outstanding', async () => {
+    const owner = await newOwner('invite');
+    const orgId = (await createOrg(owner.cookie, 'Invites Out')).json().organization.id as number;
+    const inviteeEmail = `orgdel-invitee-${Date.now()}-${++ip}@example.test`;
+    const invited = await app.inject({
+      method: 'POST', url: `/api/organizations/${orgId}/admins`, headers: { cookie: owner.cookie },
+      payload: { email: inviteeEmail, name: 'Invitee', role: 'admin' },
+    });
+    expect(invited.statusCode, invited.body).toBe(200);
+    const token = (invited.json().invite.url as string).split('/invite/')[1];
+    expect((await app.inject({ method: 'GET', url: `/api/invitations/${token}` })).statusCode).toBe(200);
+
+    expect((await deleteOrg(owner.cookie, orgId)).statusCode).toBe(200);
+
+    // The link now reads as dead rather than showing a deleted organization...
+    expect((await app.inject({ method: 'GET', url: `/api/invitations/${token}` })).statusCode).toBe(404);
+
+    // ...and accepting it says so, instead of reporting a join nobody can see.
+    const signup = await app.inject({
+      method: 'POST', url: '/api/auth/signup', remoteAddress: `10.41.${ip % 250}.${(ip % 250) + 1}`,
+      payload: { name: 'Invitee', email: inviteeEmail, password: 'org-deletion-pass-2' },
+    });
+    expect(signup.statusCode, signup.body).toBe(200);
+    await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [inviteeEmail]);
+    const accept = await app.inject({
+      method: 'POST', url: `/api/invitations/${token}/accept`, headers: { cookie: cookieOf(signup) },
+    });
+    expect(accept.statusCode).toBe(410);
+    expect(accept.json().error).toMatch(/has been deleted/i);
+    const granted = await pool.query(
+      'SELECT 1 FROM org_admins WHERE org_id = $1 AND account_id = $2', [orgId, signup.json().account.id]);
+    expect(granted.rows.length, 'no role may be written for a deleted organization').toBe(0);
+  });
+
   it('refuses while anyone else is still in the chart', async () => {
     const owner = await newOwner('populated');
     const orgId = (await createOrg(owner.cookie, 'Still Populated')).json().organization.id as number;

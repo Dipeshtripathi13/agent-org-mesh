@@ -541,7 +541,13 @@ export async function getInvitationById(orgId: number, id: string): Promise<Invi
 }
 
 export async function getInvitationByTokenHash(tokenHash: string): Promise<Invitation | null> {
-  const { rows } = await pool.query(`${INVITATION_SELECT} WHERE i.token_hash = $1`, [tokenHash]);
+  // An invitation into a deleted organization reads as no invitation at all, matching what
+  // accepting it now does (acceptInvitation below).
+  const { rows } = await pool.query(
+    `${INVITATION_SELECT} WHERE i.token_hash = $1
+       AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = i.org_id)`,
+    [tokenHash],
+  );
   return rows.length ? toInvitation(rows[0]) : null;
 }
 
@@ -630,6 +636,12 @@ export async function acceptInvitation(tokenHash: string, accountId: number, now
     if (inv.revoked_at) return fail(410, 'this invitation was revoked — ask for a new one');
     if (inv.accepted_at) return fail(410, 'this invitation has already been used');
     if (new Date(inv.expires_at).getTime() <= new Date(now).getTime()) return fail(410, 'this invitation has expired — ask for a new one');
+    // The organization may have been deleted since the link was sent. Without this the admin
+    // branch below happily writes an org_admins row and reports success for an organization
+    // every read path then refuses to show (migration 0008).
+    const { rowCount: archived } = await client.query(
+      'SELECT 1 FROM archived_organizations WHERE org_id = $1', [inv.org_id]);
+    if (archived) return fail(410, 'that organization has been deleted');
 
     const { rows: accountRows } = await client.query('SELECT email, email_verified_at FROM accounts WHERE id = $1', [accountId]);
     if (!accountRows[0] || accountRows[0].email.toLowerCase() !== inv.email.toLowerCase()) {
@@ -1852,10 +1864,13 @@ export async function revokeIngestToken(personId: number, tokenId: string): Prom
  *  from anything else in the request. */
 export async function resolveIngestToken(tokenHash: string): Promise<{ personId: number } | null> {
   // Joined to people rather than checked afterwards: a token belonging to someone who has been
-  // removed from the chart must read as unknown, exactly like a revoked one.
+  // removed from the chart, or whose organization has been deleted, must read as unknown,
+  // exactly like a revoked one. Pushes don't pass through getOrgRole or an identity lookup, so
+  // this is the only place either of those can be enforced for them.
   const { rows } = await pool.query(
     `SELECT t.person_id FROM ingest_tokens t JOIN people p ON p.id = t.person_id
-      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND p.removed_at IS NULL`,
+      WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND p.removed_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = p.org_id)`,
     [tokenHash],
   );
   if (rows.length === 0) return null;
