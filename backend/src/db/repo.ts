@@ -1254,8 +1254,12 @@ export async function appendAuditEntry(input: {
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1, $2)', [AUDIT_APPEND_LOCK_CLASS, input.orgId]);
+    // Ordered by seq, never by created_at: the app's own timestamp ties (ask-multi writes one
+    // row per target with a single `now`) and its uuid tiebreaker is random, so the row being
+    // appended was not guaranteed to sort after the one it points at — which forked the chain
+    // and made verifyAudit report tampering on untouched data (migration 0009).
     const { rows: last } = await client.query(
-      'SELECT row_hash FROM audit_log WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
+      'SELECT row_hash FROM audit_log WHERE org_id = $1 ORDER BY seq DESC LIMIT 1',
       [input.orgId],
     );
     const base: Omit<AuditEntry, 'rowHash'> = {
@@ -1293,8 +1297,11 @@ export async function appendAuditEntry(input: {
   }
 }
 
+/** In `seq` order — the order the rows were appended in, which is the order the chain was
+ *  built in. verifyAudit below feeds this straight into verifyChain, so it has to match how
+ *  appendAuditEntry picks a predecessor exactly (migration 0009). */
 export async function listAuditEntries(orgId: number): Promise<AuditEntry[]> {
-  const { rows } = await pool.query('SELECT * FROM audit_log WHERE org_id = $1 ORDER BY created_at, id', [orgId]);
+  const { rows } = await pool.query('SELECT * FROM audit_log WHERE org_id = $1 ORDER BY seq', [orgId]);
   return rows.map(toAuditEntry);
 }
 

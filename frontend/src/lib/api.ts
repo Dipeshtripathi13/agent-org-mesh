@@ -379,7 +379,8 @@ export const api = {
       snapshot: AgentResponse;
     }[];
     currentRevision: number;
-    integrity: { valid: boolean };
+    /** brokenAt is the 0-based index of the first entry whose link doesn't hold. */
+    integrity: { valid: boolean; brokenAt: number | null };
   }>(`/audit?orgId=${orgId}`),
   auditForSubject: (id: number) => req<{
     entries: {

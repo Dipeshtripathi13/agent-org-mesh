@@ -25,21 +25,25 @@ export function AuditLog() {
       <div className="crumb">Admin &middot; governance</div>
       <h1>Audit log</h1>
       <p className="sub">
-        Append-only and hash-chained. Each entry stores the answer exactly as it was returned,
-        never re-derived &mdash; so a later policy change cannot rewrite it.
+        Every answer this organization has given, kept exactly as it was sent. Entries can only be
+        added &mdash; never edited or deleted &mdash; and each one is sealed against tampering, so
+        changing the rules later can&rsquo;t rewrite what was already said.
       </p>
 
       <div className="panel stagger">
         <header>
           <span className="label">
-            {data.entries.length} exchanges &middot; chain {data.integrity.valid ? 'verified' : 'BROKEN'}
+            {data.entries.length} answers &middot; tamper check{' '}
+            {data.integrity.valid
+              ? 'passed'
+              : `FAILED${data.integrity.brokenAt == null ? '' : ` at entry ${data.integrity.brokenAt + 1}`}`}
           </span>
           <span className="small muted">current policy revision {data.currentRevision}</span>
         </header>
 
         {data.entries.length === 0 ? (
-          <EmptyState icon={<IconLedger />} title="No reads yet">
-            Run a query from the Ask screen and it will appear here, and in the subject&rsquo;s own log at the same instant.
+          <EmptyState icon={<IconLedger />} title="Nothing asked yet">
+            Ask about someone from the Ask screen and it appears here &mdash; and in their own &ldquo;Who asked about me&rdquo; at the same moment.
           </EmptyState>
         ) : (
           data.entries.map((e) => (
