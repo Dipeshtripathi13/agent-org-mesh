@@ -47,9 +47,8 @@ export function Escalations() {
       <div className="crumb">Admin &middot; governance</div>
       <h1>Escalations</h1>
       <p className="sub">
-        What the mesh pushed upward on its own, where it landed, and what has not been
-        acknowledged. Detected automatically from real activity &mdash; see the three rules
-        in docs/escalation-triage.md.
+        What the agents raised on their own, who it reached, and what nobody has acknowledged
+        yet. Raised automatically from real activity &mdash; never from a person filing it.
       </p>
 
       <p className="sub" style={{ fontSize: 12, marginTop: 12 }}>

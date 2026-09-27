@@ -40,8 +40,8 @@ export function CoverageMatrix() {
       <div className="crumb">Admin &middot; governance</div>
       <h1>Coverage matrix</h1>
       <p className="sub">
-        People &times; surfaces. This is what makes an answer authoritative, so gaps are shown
-        rather than averaged away.
+        Every person, every tool. A missing tool is what makes an answer less trustworthy, so
+        gaps are listed one by one rather than averaged away.
       </p>
 
       <div className="panel">

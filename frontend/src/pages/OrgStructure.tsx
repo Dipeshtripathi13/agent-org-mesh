@@ -72,9 +72,9 @@ export function OrgStructure() {
       <div className="crumb">My agent &middot; org structure</div>
       <h1>Org structure</h1>
       <p className="sub">
-        Who is where, and who is able to ask your agent anything &mdash; derived from the live
-        policy matrix. You see the structure, not other people&rsquo;s coverage, claims, or
-        logs; that asymmetry is deliberate.
+        Who is where, and who is allowed to ask about you &mdash; taken from the rules as they
+        stand right now. You see the shape of the organization, not what anyone else&rsquo;s tools
+        say about them or who has asked about them; that one-sidedness is deliberate.
       </p>
 
       <div className="panel">

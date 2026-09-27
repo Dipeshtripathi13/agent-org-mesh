@@ -399,7 +399,7 @@ export function Ask() {
             still verified against the org chart separately for each person, and anyone
             it isn&rsquo;t truthful for is shown as a plain, visible rejection rather than
             silently left out. Everyone it does hold for still gets their own real,
-            audited disclosure event, exactly like asking about them one at a time.
+            recorded answer, shown to them by name, exactly like asking about them one at a time.
           </p>
 
           <div style={{ marginBottom: 10 }}>

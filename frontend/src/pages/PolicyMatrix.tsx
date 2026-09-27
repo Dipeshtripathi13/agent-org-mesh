@@ -61,15 +61,15 @@ export function PolicyMatrix() {
       <div className="crumb">Admin &middot; governance</div>
       <h1>Policy matrix</h1>
       <p className="sub">
-        Who may learn what. Excluded classes are never ingested, so they aren&rsquo;t a permission
-        you can grant. Editing writes revision {revision + 1}; past answers keep the revision they
-        were served under.
+        Who may learn what about whom. Pay, performance, health and legal matters are never read
+        by any agent at all, so they aren&rsquo;t a permission you could grant here. Editing starts
+        revision {revision + 1}; answers already given keep the rules they were given under.
       </p>
 
       <div className="grid2" style={{ marginTop: 18 }}>
         <div className="panel" style={{ marginTop: 0 }}>
           <header>
-            <span className="label">Requester role &times; data class</span>
+            <span className="label">Who&rsquo;s asking &times; kind of information</span>
             <span style={{ fontSize: 12, color: 'var(--ink3)' }}>
               Click a cell to cycle: allow &rarr; redact &rarr; refuse
             </span>

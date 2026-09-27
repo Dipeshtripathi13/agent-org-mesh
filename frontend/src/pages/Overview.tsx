@@ -38,16 +38,16 @@ export function Overview() {
   return (
     <>
       <div className="crumb">Admin &middot; governance</div>
-      <h1>Deployment overview</h1>
+      <h1>Overview</h1>
       <p className="sub">
-        Every number here is computed from the org, never a literal. Coverage is weighted by
-        surfaces in scope for each role &mdash; surfaces that don&rsquo;t apply are excluded from
-        the denominator rather than counted as failures.
+        Every number here is counted from what this organization actually has &mdash; none of it is
+        illustrative. A tool that doesn&rsquo;t apply to someone&rsquo;s role isn&rsquo;t counted
+        against them.
       </p>
 
       <div className="cards stagger">
         <div className="card">
-          <h3>Org coverage</h3>
+          <h3>Tool coverage</h3>
           <div className="metric"><AnimatedNumber value={data.coverage.percent} /><small>%</small></div>
           <div className="bar">
             <div style={{ flex: bands.connected / total, ...swatchStyle('connected') }} />
@@ -59,7 +59,7 @@ export function Overview() {
         </div>
 
         <div className="card">
-          <h3>Agents live</h3>
+          <h3>Agents set up</h3>
           <div className="metric">
             <AnimatedNumber value={data.coverage.agentsLive} /><small>/{data.coverage.totalPeople}</small>
           </div>
@@ -71,23 +71,23 @@ export function Overview() {
         </div>
 
         <div className="card">
-          <h3>Queries logged</h3>
+          <h3>Questions answered</h3>
           <div className="metric"><AnimatedNumber value={data.queries} /></div>
-          <p className="note">Each written to the subject&rsquo;s own log, attributed</p>
+          <p className="note">Each one shown to the person it was about, with the asker&rsquo;s name</p>
         </div>
 
         <div className="card">
           <h3>Refusals</h3>
           <div className="metric"><AnimatedNumber value={data.refusals.total} /></div>
           <p className="note">
-            {data.refusals.wont} won&rsquo;t answer &middot; {data.refusals.cant} can&rsquo;t answer
+            {data.refusals.wont} withheld by your rules &middot; {data.refusals.cant} never collected
           </p>
         </div>
 
         <div className="card accent">
-          <h3>Silent gaps</h3>
+          <h3>Gaps not named</h3>
           <div className="metric"><AnimatedNumber value={data.silentGaps} /></div>
-          <p className="note">Confident answers on incomplete coverage &mdash; drive this to zero</p>
+          <p className="note">Answers that read as complete while tools were missing &mdash; drive this to zero</p>
         </div>
       </div>
 

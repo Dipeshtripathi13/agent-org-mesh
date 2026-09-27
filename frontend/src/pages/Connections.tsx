@@ -26,8 +26,8 @@ export function Connections() {
       <div className="crumb">Admin &middot; governance</div>
       <h1>Connections</h1>
       <p className="sub">
-        Org-wide connectors, what tier each feeds, and where they are failing. Every count here
-        is computed from the org roster, never a literal.
+        Every tool this organization can read from, how strong its answers are, and where it is
+        failing. Every count comes from the real chart, not an example.
       </p>
 
       <div className="panel">
@@ -67,14 +67,14 @@ export function Connections() {
         </header>
         <div className="inner">
           <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--ink2)', maxWidth: '84ch' }}>
-            These are not permissioned reads that get redacted at answer time. They are absent
-            from ingestion: no agent holds this data, so no policy change can surface it and no
-            query can leak it.
+            These aren&rsquo;t things the rules hide at answer time. Nothing here is ever read in the
+            first place: no agent holds this data, so no rule change could reveal it and no
+            question could leak it.
           </p>
           {neverIngested.map((n) => (
             <div key={n} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '7px 0', borderTop: '1px solid #f1f3f4', alignItems: 'center' }}>
               <span style={{ fontSize: 12 }}>{n}</span>
-              <span className="locked">&#8856; not ingested</span>
+              <span className="locked">&#8856; never collected</span>
             </div>
           ))}
         </div>

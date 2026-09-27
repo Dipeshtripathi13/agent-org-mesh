@@ -1536,6 +1536,60 @@ the prompt the OpenAI-compatible adapter actually sends), `eventIngestion.test.t
 covered by a test: the Anthropic adapter's own `safePromptName` calls (same change, applied by the
 same script as the tested adapter).
 
+**The audit chain never actually had an order, and ask-multi broke it (2026-09-27).** Found
+while screenshotting the Admin screens for a wording pass: the audit log reported a failed
+tamper check on a dev database nobody had tampered with. `appendAuditEntry` picked each row's
+predecessor with `ORDER BY created_at DESC, id DESC` and `listAuditEntries`/`verifyAudit` read
+the chain back with `ORDER BY created_at, id` — exact reverses, so they agree only while every
+new row is the greatest by `(created_at, id)`. Nothing guaranteed that: `created_at` is the
+app's own timestamp, and `POST /api/agent/ask-multi` computes it once and writes one row per
+target with that identical value, four at a time, so the tiebreaker was a random uuid. A new
+row could sort *before* the row it points at. Measured on a brand-new organization: **one
+ask-multi about three people left the tamper check failing in 3 of 5 runs**, and concurrent
+appends that picked the same predecessor could fork the chain outright (a dev org had 3 of 14
+rows off the chain). The worst possible false alarm on the one guarantee this table exists to
+provide — and a real weakening of it, since verifyChain can't detect tampering across a fork.
+
+Migration 0009 gives the chain the explicit order it always needed: `audit_log.seq`, from a
+sequence, appended and read in that order. `seq` is deliberately **not** part of `hashEntry()`
+— hashing it would invalidate every row already stored, which rule 2 forbids — and it can't be
+used to forge an order either: `prev_hash`/`row_hash` are still the chain, `mesh_app` holds no
+UPDATE on the table, and `verifyChain` checks the links, so a rewritten `seq` surfaces as a
+failure rather than hiding one. The backfill walks each organization's links from its root and
+numbers them in that order (not in the order the broken sort implied), parking rows the links
+can't reach after them; it applied cleanly to a live database with existing rows.
+`domain/audit.ts` is untouched — this was never a flaw in the hashing, only in the order the
+rows were fed to it. The Admin screen now also names where a failure starts ("tamper check
+failed at entry 5") instead of a bare alarm, so an admin can see its scope.
+
+Guarded by `auditChain.api.test.ts` (3): five rounds of ask-multi must keep the chain valid
+(five, because the old bug was a coin flip per adjacent pair, and it asserts the rows really do
+share a timestamp, or the test isn't exercising the bug); `seq` is distinct and in insertion
+order with each row pointing at the one before it; and a row altered by the schema owner
+(`mesh_app` can't — that's the point) is still caught, at the right index. Both mutations —
+appending by `created_at` again, reading by `created_at` again — fail it on every run.
+**One consequence that can't be fixed and shouldn't be hidden:** an organization whose chain
+already forked keeps reporting a failure, because audit rows can never be rewritten. The fix
+stops new damage; it cannot repair old. Production has not been checked for pre-existing forks
+— the Railway CLI session had expired this session, so `railway ssh` was unavailable; run
+`railway login`, then verify each org's chain before assuming production is clean.
+
+**The Admin screens speak plainly now, finishing the pass that stopped at them (2026-09-27).**
+The 2026-09-13 rewording did the employee-facing screens and explicitly deferred Admin. Overview,
+Coverage matrix, Policy matrix, Audit log, Connections, Escalations, Org structure, Preview and
+one line of Ask lost "surfaces", "requester role × data class", "computed from the org, never a
+literal", "excluded from the denominator", "append-only and hash-chained", "not ingested",
+"audited disclosure event" and "that asymmetry is deliberate", in favour of what each thing
+actually is ("Every person, every tool", "Who's asking × kind of information", "never read by any
+agent at all"). Refusal counts on Overview now read "7 withheld by your rules · 15 never
+collected", matching the withheld/never-collected distinction rule 4 requires everywhere else.
+Two leftovers went with it: Escalations still described "what the mesh pushed upward" (the old
+product name's concept, missed by the rename) and pointed admins at `docs/escalation-triage.md`,
+a repo path they can't open. Type and variable names were left alone — only what a reader sees
+changed. Checked in a real browser, every screen, signed in as the seeded admin against the
+40-person org so the numbers were real; no console errors. `Legal.tsx` deliberately untouched
+(its own wording is on hold with the legal work).
+
 **Removing someone from a chart marks them removed; it never deletes them (2026-09-20).**
 Found by reading the seat-limit copy shipped three days earlier ("Remove someone to free a
 place") and checking that the action behind it worked. It did not: `deletePerson` ran

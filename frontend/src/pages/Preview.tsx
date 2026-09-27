@@ -19,8 +19,8 @@ export function Preview() {
       <div className="crumb">My agent &middot; preview</div>
       <h1>Preview</h1>
       <p className="sub">
-        See the answer each requester would get right now, under the policy as it stands. No
-        surprises &mdash; this is a simulation and is never written to your log.
+        See what someone in each of these positions would be told about you right now, under the
+        rules as they stand. This is a simulation: nothing here is recorded, and nobody is told.
       </p>
 
       <div className="panel">
