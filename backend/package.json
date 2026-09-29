@@ -20,7 +20,8 @@
     "db:migrate:up": "tsx --env-file-if-exists=.env src/migrate-up.ts",
     "db:seed": "tsx scripts/seed-db.ts",
     "db:reset": "npm run db:migrate && npm run db:seed",
-    "check:connectors": "tsx scripts/check-connector-endpoints.ts"
+    "check:connectors": "tsx scripts/check-connector-endpoints.ts",
+    "check:audit-chains": "tsx --env-file-if-exists=.env scripts/check-audit-chains.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

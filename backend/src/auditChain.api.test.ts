@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { Pool as PgPool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -15,6 +16,8 @@ let pool: Pool;
 /** The schema owner. mesh_app deliberately holds no UPDATE on audit_log (rule 2), so altering a
  *  stored row — the thing the chain exists to expose — can only be done from outside the app. */
 let admin: Pool;
+let repo: typeof import('./db/repo.js');
+let hashEntry: typeof import('./domain/audit.js')['hashEntry'];
 let ip = 0;
 
 const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
@@ -46,13 +49,19 @@ async function orgWithReports(count: number) {
 const integrityOf = async (cookie: string, orgId: number) => {
   const res = await app.inject({ method: 'GET', url: `/api/audit?orgId=${orgId}`, headers: { cookie } });
   expect(res.statusCode, res.body).toBe(200);
-  return res.json() as { entries: unknown[]; integrity: { valid: boolean; brokenAt: number | null } };
+  return res.json() as {
+    entries: unknown[];
+    integrity: { valid: boolean; brokenAt: number | null };
+    chain: { alteredRows: number; unlinkedRows: number; reorderable: boolean };
+  };
 };
 
 beforeAll(async () => {
   ({ app } = await import('./server.js'));
   ({ pool } = await import('./db/pool.js'));
   admin = new PgPool({ connectionString: process.env.TEST_DATABASE_ADMIN_URL }) as unknown as Pool;
+  repo = await import('./db/repo.js');
+  ({ hashEntry } = await import('./domain/audit.js'));
 });
 
 afterAll(async () => {
@@ -101,6 +110,45 @@ describe('the audit chain reads back in the order it was written', () => {
     expect(rows.rows[2].prev_hash).toBe(rows.rows[1].row_hash);
   });
 
+  it('separates a row someone altered from rows the old defect left unlinked', async () => {
+    const { cookie, orgId, managerId } = await orgWithReports(0);
+    for (const question of ['One', 'Two', 'Three']) {
+      const ask = await app.inject({
+        method: 'POST', url: '/api/agent/ask', headers: { cookie },
+        payload: { targetId: managerId, role: 'Self', question, persist: true },
+      });
+      expect(ask.statusCode, ask.body).toBe(200);
+    }
+    const clean = await integrityOf(cookie, orgId);
+    expect(clean.integrity.valid).toBe(true);
+    expect(clean.chain).toEqual({ alteredRows: 0, unlinkedRows: 0, reorderable: false });
+
+    // Reproduce the pre-0009 damage exactly: a second row appended against a predecessor that
+    // already has one. It has to be minted with a real hash — a row with a made-up hash is an
+    // *altered* row, which is the opposite finding. (Written the wrong way first; the test
+    // caught it, which is the same trap the unit test for diagnoseChain documents.)
+    const domainRows = await repo.listAuditEntries(orgId);
+    const source = domainRows[1];
+    const rival = { ...source, id: randomUUID() };
+    const { rowHash: _drop, ...rivalBase } = rival;
+    const rivalHash = hashEntry(rivalBase);
+    const raw = await admin.query('SELECT * FROM audit_log WHERE id = $1', [source.id]);
+    const r = raw.rows[0];
+    await admin.query(
+      `INSERT INTO audit_log (id, org_id, requester_id, requester_role, target_person_id, question,
+                              snapshot, policy_revision_id, subject_notified_at, created_at,
+                              prev_hash, row_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [rival.id, r.org_id, r.requester_id, r.requester_role, r.target_person_id, r.question,
+       JSON.stringify(r.snapshot), r.policy_revision_id, r.subject_notified_at, r.created_at,
+       r.prev_hash, rivalHash]);
+
+    const forked = await integrityOf(cookie, orgId);
+    expect(forked.integrity.valid).toBe(false);
+    expect(forked.chain.alteredRows, 'a fork is not an alteration').toBe(0);
+    expect(forked.chain.unlinkedRows).toBeGreaterThan(0);
+  });
+
   it('still catches a row that was actually altered', async () => {
     const { cookie, orgId, managerId } = await orgWithReports(0);
     for (const question of ['First question', 'Second question']) {
@@ -120,5 +168,8 @@ describe('the audit chain reads back in the order it was written', () => {
     const after = await integrityOf(cookie, orgId);
     expect(after.integrity.valid).toBe(false);
     expect(after.integrity.brokenAt).toBe(0);
+    // And it is reported as an alteration, never as the benign unlinked case.
+    expect(after.chain.alteredRows).toBe(1);
+    expect(after.chain.reorderable).toBe(false);
   });
 });

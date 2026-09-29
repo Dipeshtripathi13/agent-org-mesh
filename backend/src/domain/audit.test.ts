@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AuditLog, hashEntry, verifyChain } from './audit.js';
+import { AuditLog, diagnoseChain, hashEntry, verifyChain } from './audit.js';
 import type { AgentResponse, AuditEntry } from './types.js';
 
 /**
@@ -194,5 +194,77 @@ describe('verifyChain — tamper detection', () => {
     const entry = log.append(baseInput({ requesterRole: 'Direct manager' }));
     const tampered: AuditEntry = { ...entry, requesterRole: 'Executive' };
     expect(verifyChain([tampered]).valid).toBe(true);
+  });
+});
+
+/**
+ * A failed check tells an operator nothing about *what* failed, and the two causes could not
+ * be further apart: rows left unlinked by the ordering defect that migration 0009 fixed are
+ * permanent but harmless, while a row whose contents no longer match its own hash means
+ * someone changed stored history. Confusing the two either cries wolf forever or buries a
+ * real alarm under known noise.
+ */
+describe('diagnoseChain — why a chain failed', () => {
+  const threeInOrder = () => {
+    const log = new AuditLog();
+    return [
+      log.append(baseInput({ question: 'first' })),
+      log.append(baseInput({ question: 'second' })),
+      log.append(baseInput({ question: 'third' })),
+    ];
+  };
+
+  it('reports a healthy chain as healthy, with nothing to explain', () => {
+    const d = diagnoseChain(threeInOrder());
+    expect(d).toEqual({ ok: true, entries: 3, altered: [], forkedAt: [], orphans: [], roots: 1, reorderable: false });
+  });
+
+  it('calls an empty log healthy rather than rootless', () => {
+    expect(diagnoseChain([])).toMatchObject({ ok: true, entries: 0, roots: 0, reorderable: false });
+  });
+
+  it('names the altered row, and only that row', () => {
+    const entries = threeInOrder();
+    const tampered: AuditEntry = { ...entries[1], question: 'something else entirely' };
+    const d = diagnoseChain([entries[0], tampered, entries[2]]);
+    expect(d.ok).toBe(false);
+    expect(d.altered).toEqual([tampered.id]);
+    expect(d.forkedAt).toEqual([]);
+    expect(d.reorderable).toBe(false);
+  });
+
+  it('calls a merely mis-ordered chain reorderable, and never altered', () => {
+    const [a, b, c] = threeInOrder();
+    const d = diagnoseChain([b, a, c]); // exactly what the pre-0009 read order could produce
+    expect(d.ok).toBe(false);
+    expect(d.altered, 'nobody touched these rows').toEqual([]);
+    expect(d.reorderable, 'the links are sound — only the order was wrong').toBe(true);
+  });
+
+  it('spots a fork: two rows claiming the same predecessor', () => {
+    const log = new AuditLog();
+    const first = log.append(baseInput({ question: 'first' }));
+    const second = log.append(baseInput({ question: 'second' }));
+    // A real fork is two rows that were each appended legitimately against the same
+    // predecessor — which is exactly what the pre-0009 append produced. Both are internally
+    // consistent, so this has to be minted with a real hash rather than by editing a row:
+    // changing any hashed field (`id` included) would make it *altered* instead, which is a
+    // different finding entirely. Caught by this test failing on the first attempt.
+    const rivalBase = { ...second, id: 'rival-row' } as Omit<AuditEntry, 'rowHash'>;
+    const rival: AuditEntry = { ...rivalBase, rowHash: hashEntry(rivalBase) };
+    const d = diagnoseChain([first, second, rival]);
+    expect(d.ok).toBe(false);
+    expect(d.forkedAt).toEqual([first.rowHash]);
+    expect(d.reorderable, 'a fork is structural damage, not an ordering problem').toBe(false);
+    expect(d.altered, 'a forked row is still internally consistent').toEqual([]);
+  });
+
+  it('spots an orphan pointing at a row that is not here', () => {
+    const [a, , c] = threeInOrder();
+    const d = diagnoseChain([a, c]); // c's predecessor is missing
+    expect(d.ok).toBe(false);
+    expect(d.orphans).toEqual([c.id]);
+    expect(d.altered).toEqual([]);
+    expect(d.reorderable).toBe(false);
   });
 });

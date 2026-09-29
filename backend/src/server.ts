@@ -3288,15 +3288,24 @@ app.get('/api/audit', async (req, reply) => {
     reply.code(check.code);
     return { error: check.error };
   }
-  const [entries, current, integrity] = await Promise.all([
+  const [entries, current, integrity, diagnosis] = await Promise.all([
     repo.listAuditEntries(orgId),
     repo.getCurrentRevision(orgId),
     repo.verifyAudit(orgId),
+    repo.diagnoseAudit(orgId),
   ]);
   return {
     entries: entries.map((e) => ({ ...e, policyChangedSince: e.policyRevisionId !== current.id })),
     currentRevision: current.id,
+    // `integrity` is the plain pass/fail; `chain` says which kind of failure it is, because a
+    // row someone altered and the unlinked rows left by the pre-0009 ordering defect are wholly
+    // different findings and the screen must not blur them (migration 0009).
     integrity,
+    chain: {
+      alteredRows: diagnosis.altered.length,
+      unlinkedRows: diagnosis.forkedAt.length + diagnosis.orphans.length,
+      reorderable: diagnosis.reorderable,
+    },
   };
 });
 

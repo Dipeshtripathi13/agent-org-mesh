@@ -381,6 +381,10 @@ export const api = {
     currentRevision: number;
     /** brokenAt is the 0-based index of the first entry whose link doesn't hold. */
     integrity: { valid: boolean; brokenAt: number | null };
+    /** Which kind of failure: `alteredRows` means stored answers were changed — the real
+     *  alarm — while `unlinkedRows` is the permanent damage left by the ordering defect fixed
+     *  on 2026-09-27, which cannot be repaired because audit rows are never rewritten. */
+    chain: { alteredRows: number; unlinkedRows: number; reorderable: boolean };
   }>(`/audit?orgId=${orgId}`),
   auditForSubject: (id: number) => req<{
     entries: {

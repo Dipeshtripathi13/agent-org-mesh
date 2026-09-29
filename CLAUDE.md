@@ -1574,6 +1574,39 @@ stops new damage; it cannot repair old. Production has not been checked for pre-
 — the Railway CLI session had expired this session, so `railway ssh` was unavailable; run
 `railway login`, then verify each org's chain before assuming production is clean.
 
+**A failed tamper check now says which kind of failure it is, and there's a command to ask
+across every organization (2026-09-28).** The 0009 fix stopped new damage but left the
+operator with nothing: a chain forked before it keeps failing forever (audit rows can never be
+rewritten), so "tamper check failed" was about to become permanent noise on real
+organizations — exactly the state in which a genuine alteration goes unnoticed. The two causes
+could not be further apart and were indistinguishable.
+
+`domain/audit.ts`'s `diagnoseChain` (pure, read-only, beside `verifyChain`) separates them by
+rehashing every row: **altered** (a row's contents no longer match its own hash — real
+tampering), **forkedAt** (two rows claim one predecessor), **orphans** (a row points at a hash
+no row has), and **reorderable** (links sound, only the order handed in was wrong — the
+pre-0009 symptom). `repo.diagnoseAudit` feeds `/api/audit`'s new `chain` field, and the Admin
+screen now reads "tamper check incomplete from entry 5" with a plain note saying the break came
+from the ordering defect and **every answer still matches its own seal** — a claim the rehash
+actually checks, never an assumption. A row someone altered still reads "FAILED — 1 answer was
+altered", and the reassuring note is rendered only when `alteredRows === 0`, so a real alarm can
+never be softened by it. `npm run check:audit-chains`
+(`scripts/check-audit-chains.ts`, same convention as `check:connectors`, run it from the
+deployed container) walks every organization and exits non-zero **only** for altered rows, since
+failing a deploy on unrepairable history would be noise forever. First run against the dev
+database: one organization OK, one reported `DAMAGED … 1 fork(s); pre-0009 defect, cannot be
+repaired` — which is what that data actually is.
+
+Tests: 6 unit tests on `diagnoseChain` and 2 more in `auditChain.api.test.ts`; three mutations
+(not rehashing rows, passing damage off as reorderable, and the endpoint always reporting zero
+altered) each fail them. **Worth knowing for the next test of this kind:** the fork fixture was
+written wrong twice — first by copying a row and changing its `id`, then by inserting SQL with a
+made-up `row_hash`. Both are *altered* rows by definition, which is the opposite finding, and
+both times the test caught it. A genuine fork has to be minted with a real `hashEntry` so it
+stays internally consistent. Still unchecked: whether production has pre-existing forks — the
+Railway CLI session is expired, so run `railway login`, then
+`railway ssh 'cd /app/backend && npx tsx scripts/check-audit-chains.ts'`.
+
 **The Admin screens speak plainly now, finishing the pass that stopped at them (2026-09-27).**
 The 2026-09-13 rewording did the employee-facing screens and explicitly deferred Admin. Overview,
 Coverage matrix, Policy matrix, Audit log, Connections, Escalations, Org structure, Preview and

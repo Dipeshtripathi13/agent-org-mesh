@@ -61,6 +61,69 @@ export function verifyChain(entries: readonly AuditEntry[]): { valid: boolean; b
   return { valid: true, brokenAt: null };
 }
 
+/** What kind of trouble a chain is in. Only `altered` means someone changed a stored row;
+ *  the rest is structural damage from the ordering defect fixed by migration 0009, which is
+ *  permanent because audit rows can never be rewritten. Telling those apart is the whole
+ *  point — an operator seeing a failed check needs to know which one they are looking at. */
+export interface ChainDiagnosis {
+  /** Does the chain verify in the order given? */
+  ok: boolean;
+  entries: number;
+  /** Ids of rows whose stored hash doesn't match their own contents. Real tampering. */
+  altered: string[];
+  /** prevHash values claimed by more than one row — the chain forks and stops being a chain. */
+  forkedAt: string[];
+  /** Ids of rows pointing at a hash no row in this set has. */
+  orphans: string[];
+  /** Rows claiming to start the chain. Healthy is exactly 1 (or 0 for an empty log). */
+  roots: number;
+  /** Every link is sound and they form one sequence — only the order handed in was wrong.
+   *  Benign, and what the pre-0009 read order produced. */
+  reorderable: boolean;
+}
+
+/** Read-only. Explains *why* verifyChain failed, without ever touching a row. */
+export function diagnoseChain(entries: readonly AuditEntry[]): ChainDiagnosis {
+  const ok = verifyChain(entries).valid;
+  const altered: string[] = [];
+  for (const entry of entries) {
+    const { rowHash, ...rest } = entry;
+    if (hashEntry(rest) !== rowHash) altered.push(entry.id);
+  }
+
+  const byPrev = new Map<string | null, AuditEntry[]>();
+  for (const entry of entries) {
+    const list = byPrev.get(entry.prevHash) ?? [];
+    list.push(entry);
+    byPrev.set(entry.prevHash, list);
+  }
+  const forkedAt = [...byPrev.entries()]
+    .filter(([prev, rows]) => prev !== null && rows.length > 1)
+    .map(([prev]) => prev as string);
+  const roots = (byPrev.get(null) ?? []).length;
+
+  const hashes = new Set(entries.map((e) => e.rowHash));
+  const orphans = entries.filter((e) => e.prevHash !== null && !hashes.has(e.prevHash)).map((e) => e.id);
+
+  // Sound links plus one root and no forks means the rows themselves are fine and only the
+  // order they were handed in was wrong — walk it to be sure it reaches every row.
+  let reorderable = false;
+  if (!ok && altered.length === 0 && orphans.length === 0 && forkedAt.length === 0 && roots === 1) {
+    const next = new Map(entries.map((e) => [e.prevHash, e] as const));
+    let cursor = next.get(null);
+    let reached = 0;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      reached += 1;
+      cursor = next.get(cursor.rowHash);
+    }
+    reorderable = reached === entries.length;
+  }
+
+  return { ok, entries: entries.length, altered, forkedAt, orphans, roots, reorderable };
+}
+
 export class AuditLog {
   private entries: AuditEntry[] = [];
 

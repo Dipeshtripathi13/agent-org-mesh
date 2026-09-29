@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { MAX_ORGS_PER_ACCOUNT, seatLimit, type OrgPlan } from '../plans.js';
-import { hashEntry, verifyChain } from '../domain/audit.js';
+import { diagnoseChain, hashEntry, verifyChain } from '../domain/audit.js';
+import type { ChainDiagnosis } from '../domain/audit.js';
 import { computeEscalationAge } from '../domain/escalations.js';
 import { decryptCredential, encryptCredential } from '../domain/credentials.js';
 import type {
@@ -1487,6 +1488,13 @@ export async function getRecentAuditForPair(requesterId: number, targetPersonId:
 
 export async function verifyAudit(orgId: number): Promise<{ valid: boolean; brokenAt: number | null }> {
   return verifyChain(await listAuditEntries(orgId));
+}
+
+/** Why a chain failed, not just that it did — a row someone altered reads very differently
+ *  from the unlinked rows the pre-0009 ordering defect left behind, and only the first is an
+ *  alarm. Read-only (domain/audit.ts's diagnoseChain). */
+export async function diagnoseAudit(orgId: number): Promise<ChainDiagnosis> {
+  return diagnoseChain(await listAuditEntries(orgId));
 }
 
 /* ---------- agent runtimes ---------- */

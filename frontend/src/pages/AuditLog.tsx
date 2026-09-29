@@ -36,10 +36,21 @@ export function AuditLog() {
             {data.entries.length} answers &middot; tamper check{' '}
             {data.integrity.valid
               ? 'passed'
-              : `FAILED${data.integrity.brokenAt == null ? '' : ` at entry ${data.integrity.brokenAt + 1}`}`}
+              : data.chain.alteredRows > 0
+                ? `FAILED — ${data.chain.alteredRows} answer${data.chain.alteredRows === 1 ? ' was' : 's were'} altered`
+                : `incomplete from entry ${(data.integrity.brokenAt ?? 0) + 1}`}
           </span>
           <span className="small muted">current policy revision {data.currentRevision}</span>
         </header>
+
+        {!data.integrity.valid && data.chain.alteredRows === 0 && (
+          <p className="glossary" style={{ padding: '10px 14px', margin: 0 }}>
+            Some entries below this point aren&rsquo;t linked to the ones before them. That came
+            from a defect in how entries were ordered, fixed on 2026-09-27 &mdash; every answer
+            still matches its own seal, so none of them has been altered. Entries can never be
+            rewritten, so the earlier break stays visible here rather than being tidied away.
+          </p>
+        )}
 
         {data.entries.length === 0 ? (
           <EmptyState icon={<IconLedger />} title="Nothing asked yet">
