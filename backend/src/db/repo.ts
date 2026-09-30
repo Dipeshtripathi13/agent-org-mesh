@@ -1329,6 +1329,12 @@ export interface AskedAboutYouNotification {
   unread: boolean;
 }
 
+/** The bell reads `audit_log` directly rather than going through `getPeopleForAccount`, so it
+ *  needs that function's two filters restated here or it outlives the access it reports on:
+ *  someone removed from a chart, or a member of a deleted organization, kept seeing items they
+ *  could no longer open — the badge led straight to a 403 (found by probing, 2026-09-30). Both
+ *  queries below carry them; the count and the list must agree, or the badge outlives the items.
+ */
 export async function listAskedAboutYou(accountId: number, limit = 20): Promise<{ items: AskedAboutYouNotification[]; unreadCount: number }> {
   const [{ rows }, { rows: countRows }] = await Promise.all([
     pool.query(
@@ -1336,11 +1342,12 @@ export async function listAskedAboutYou(accountId: number, limit = 20): Promise<
               o.name AS org_name, COALESCE(r.name, 'Someone') AS asker_name,
               a.created_at > COALESCE(nr.seen_through, '-infinity') AS unread
          FROM audit_log a
-         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1
+         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1 AND t.removed_at IS NULL
          JOIN organizations o ON o.id = a.org_id
          LEFT JOIN people r ON r.id = a.requester_id
          LEFT JOIN notification_reads nr ON nr.account_id = $1
         WHERE a.requester_id <> a.target_person_id
+          AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = a.org_id)
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT $2`,
       [accountId, limit],
@@ -1348,9 +1355,10 @@ export async function listAskedAboutYou(accountId: number, limit = 20): Promise<
     pool.query(
       `SELECT count(*)::int AS n
          FROM audit_log a
-         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1
+         JOIN people t ON t.id = a.target_person_id AND t.account_id = $1 AND t.removed_at IS NULL
          LEFT JOIN notification_reads nr ON nr.account_id = $1
         WHERE a.requester_id <> a.target_person_id
+          AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = a.org_id)
           AND a.created_at > COALESCE(nr.seen_through, '-infinity')`,
       [accountId],
     ),

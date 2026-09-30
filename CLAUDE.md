@@ -1574,6 +1574,30 @@ stops new damage; it cannot repair old. Production has not been checked for pre-
 — the Railway CLI session had expired this session, so `railway ssh` was unavailable; run
 `railway login`, then verify each org's chain before assuming production is clean.
 
+**A third door the removal/archiving sweep missed: the notification bell (2026-09-30).** Found
+by probing for the same pattern the 2026-09-22 note describes — a path that reaches organization
+data without going through `getOrgRole` or `getPeopleForAccount`. `listAskedAboutYou` reads
+`audit_log` directly, joining `people` on `account_id` alone, so it kept reporting on access its
+owner no longer had: after being removed from a chart, or after that organization was deleted,
+the subject still saw items and an unread badge — and opening one returned **403**. A badge that
+can't be cleared by looking at it, pointing at an error screen, and inconsistent with the access
+trade-off this file already records (a leaver loses that history; the fix for that is a
+personal, account-scoped history, never a weakening of the checks). Both of its queries — the
+list and the count — now carry `t.removed_at IS NULL` and a `NOT EXISTS archived_organizations`
+guard, matching `getPeopleForAccount` exactly. The two must agree or the badge outlives the
+items, which is why the count is mutation-tested separately.
+
+Guarded by 4 new tests in `notifications.api.test.ts` (11 now); all four filters fail it when
+removed. **The archiving pair initially passed both mutations**, for the same reason the
+ingest-token join did on 2026-09-20: archiving requires an empty chart, so the test removed the
+subject first and the *removal* filter already hid the row. The archived-organization filter is
+only reachable when the subject stays in the chart — which the owner does, since archiving
+allows exactly one person. The added test reaches that state (an IT-team colleague asks about
+the owner truthfully, leaves, then the organization is deleted) and asserts the owner's
+`removed_at` is still null, so the test bites for the right reason. Twice now a redundant-looking
+protection has turned out to be untested rather than unnecessary: check *why* a mutation
+survived before deleting the code it covers.
+
 **A failed tamper check now says which kind of failure it is, and there's a command to ask
 across every organization (2026-09-28).** The 0009 fix stopped new damage but left the
 operator with nothing: a chain forked before it keeps failing forever (audit rows can never be
