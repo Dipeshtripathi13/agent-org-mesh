@@ -1574,6 +1574,33 @@ stops new damage; it cannot repair old. Production has not been checked for pre-
 — the Railway CLI session had expired this session, so `railway ssh` was unavailable; run
 `railway login`, then verify each org's chain before assuming production is clean.
 
+**Our own SSRF guard had the bug an advisory was published about, found because that
+advisory turned CI red (2026-09-30).** `npm audit` failed the build on three production
+advisories — `brace-expansion` (high, DoS), `fast-uri`, and `ip-address`, the last of which is
+**GHSA-rpw4-54j3-4h4q: `Address6.isLinkLocal()` recognising fe80::/64 instead of fe80::/10,
+allowing SSRF to on-link hosts**. Taking the lockfile bumps was the easy half. The half worth
+recording: `integrations/urlSafety.ts` — this app's own guard on the single URL an org admin
+supplies (`org_main_agent.base_url`) — does not use `ip-address` at all, it hand-rolls its
+checks, and it had made **the same mistake**: it matched the string `"fe80:"`, which is
+fe80::/16, so `fe81::` through `febf::` passed as public. Reading our own code against a
+dependency's advisory was what surfaced it.
+
+Closed alongside it, each one an address that the guard called public until now: an
+IPv4-mapped address written in hex (`::ffff:7f00:1` *is* 127.0.0.1, and a resolver may hand
+back that form, which the dotted-quad regex alone let through — `::ffff:a9fe:a9fe` is the
+metadata endpoint), the unspecified address (`::`), RFC6598 carrier-grade NAT space
+(100.64.0.0/10, genuinely used for cloud internals), and multicast/broadcast (224.0.0.0/4 up).
+`fec0::` (site-local) is deliberately *not* flagged — it sits outside fe80::/10 — and tests
+pin both edges of every range so the next widening can't quietly over-reach into public space.
+19 unit tests (was 14); five mutations — narrowing link-local back to fe80::/16, ignoring
+hex-form mapped addresses, and dropping each of the three new ranges — each fail.
+
+Two process notes. `npm audit fix --omit=dev` **prunes devDependencies from node_modules**
+(vitest vanished mid-run); `npm install` restores them, and the lockfile change itself was
+clean — four transitive bumps, `package.json` untouched. And `npx tsc` in this repo fetches an
+unrelated `tsc` package from the registry that exits 0 without checking anything: use
+`npm run typecheck`, which runs the local compiler.
+
 **A third door the removal/archiving sweep missed: the notification bell (2026-09-30).** Found
 by probing for the same pattern the 2026-09-22 note describes — a path that reaches organization
 data without going through `getOrgRole` or `getPeopleForAccount`. `listAskedAboutYou` reads

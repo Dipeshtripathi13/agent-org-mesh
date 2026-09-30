@@ -307,12 +307,17 @@ export async function setAccountPassword(
  *  org B — a real cross-tenant takeover, not a theoretical one. So a reset is only offered
  *  for accounts whose entire footprint is this one org; anyone else has to go through a
  *  self-service reset instead. */
+/** A deleted organization grants nothing — it isn't one of their identities and every route on
+ *  it refuses them — so counting it here only produced a refusal an admin could neither
+ *  understand nor clear (same sweep as the notification bell, 2026-09-30). */
 export async function accountBelongsToOtherOrgs(accountId: number, orgId: number): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT EXISTS (
        SELECT 1 FROM people     WHERE account_id = $1 AND org_id <> $2 AND removed_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = people.org_id)
        UNION ALL
        SELECT 1 FROM org_admins WHERE account_id = $1 AND org_id <> $2
+         AND NOT EXISTS (SELECT 1 FROM archived_organizations ar WHERE ar.org_id = org_admins.org_id)
      ) AS present`,
     [accountId, orgId],
   );

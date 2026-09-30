@@ -19,7 +19,22 @@ function isPrivateIpv4(a: number, b: number): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
   if (a === 192 && b === 168) return true; // RFC1918
   if (a === 0) return true; // "this network"
+  if (a === 100 && b >= 64 && b <= 127) return true; // RFC6598 shared space — real cloud internals
+  if (a >= 224) return true; // multicast and reserved, up to 255.255.255.255
   return false;
+}
+
+/** Is this address inside fe80::/10 — the *whole* link-local range, not just fe80::/16?
+ *  The first 10 bits are fixed, so the second hextet's top 6 bits are: fe80 … febf. Worth
+ *  spelling out, because matching the string "fe80:" (which this did until 2026-09-30) leaves
+ *  fe81:: … febf:: reachable, and that is precisely the mistake GHSA-rpw4-54j3-4h4q was
+ *  published about in `ip-address` — found by reading our own guard after that advisory failed
+ *  CI's dependency audit. */
+function isIpv6LinkLocal(lower: string): boolean {
+  const firstHextet = lower.split(':')[0];
+  if (!/^[0-9a-f]{1,4}$/.test(firstHextet)) return false;
+  const value = parseInt(firstHextet, 16);
+  return value >= 0xfe80 && value <= 0xfebf;
 }
 
 export function isPrivateIp(ip: string): boolean {
@@ -31,10 +46,19 @@ export function isPrivateIp(ip: string): boolean {
   }
   const lower = ip.toLowerCase();
   if (lower === '::1') return true; // loopback
-  if (lower.startsWith('fe80:')) return true; // link-local
+  if (lower === '::' || lower === '0:0:0:0:0:0:0:0') return true; // unspecified
+  if (isIpv6LinkLocal(lower)) return true; // fe80::/10
   if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // unique local, fc00::/7
-  const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  // IPv4-mapped, written either way: ::ffff:127.0.0.1 and ::ffff:7f00:1 are the same address,
+  // and a resolver may hand back the hex form, which the dotted-quad match alone lets through.
+  const mapped = lower.match(/^(?:0*:)*:?ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   if (mapped) return isPrivateIp(mapped[1]);
+  const mappedHex = lower.match(/^(?:0*:)*:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    // ::ffff:7f00:1 is 127.0.0.1 — the two hextets are the four octets, high byte first.
+    const high = parseInt(mappedHex[1], 16);
+    return isPrivateIpv4(high >> 8, high & 0xff);
+  }
   return false;
 }
 

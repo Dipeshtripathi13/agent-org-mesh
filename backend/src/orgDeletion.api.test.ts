@@ -25,8 +25,12 @@ async function newOwner(label: string) {
   expect(res.statusCode, res.body).toBe(200);
   await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [email]);
   const cookie = cookieOf(res);
+  // Same address as the signup above: step-up is rate limited per IP like login, so sharing one
+  // default address across every account in the suite starts returning 429 as it grows.
   const step = await app.inject({
-    method: 'POST', url: '/api/auth/step-up', headers: { cookie }, payload: { password: 'org-deletion-pass-1' },
+    method: 'POST', url: '/api/auth/step-up', headers: { cookie },
+    remoteAddress: `10.40.${ip % 250}.${(ip % 250) + 1}`,
+    payload: { password: 'org-deletion-pass-1' },
   });
   expect(step.statusCode, step.body).toBe(200);
   return { cookie, email, orgId: res.json().organization.id as number, accountId: res.json().account.id as number };
@@ -192,6 +196,40 @@ describe('deleting an organization', () => {
       headers: { cookie: owner.cookie },
     });
     expect((await deleteOrg(owner.cookie, orgId)).statusCode).toBe(200);
+  });
+
+  // A deleted organization has to stop counting everywhere, not just on the screens. The
+  // admin password reset refuses anyone who also belongs to another organization (minting a
+  // password there would hand this admin a login to someone else's org) — but an organization
+  // that has been deleted grants nothing at all, so counting it only produced a refusal the
+  // admin could neither understand nor clear.
+  it('stops counting as "another organization" for an admin password reset', async () => {
+    const employer = await newOwner('employer');
+    const employee = await newOwner('employee'); // signup gave them their own workspace, which they own
+
+    const added = await app.inject({
+      method: 'POST', url: `/api/organizations/${employer.orgId}/people`, headers: { cookie: employer.cookie },
+      payload: { name: 'Their Employee', title: 'Engineer', team: 'Eng', managerId: null, agentDeployed: true },
+    });
+    expect(added.statusCode, added.body).toBe(200);
+    const personId = added.json().person.id as number;
+    await pool.query('UPDATE people SET account_id = $1 WHERE id = $2', [employee.accountId, personId]);
+
+    const reset = () => app.inject({
+      method: 'POST', url: `/api/organizations/${employer.orgId}/people/${personId}/reset-password`,
+      headers: { cookie: employer.cookie },
+    });
+
+    const refused = await reset();
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error).toMatch(/another organization/i);
+
+    // They delete their own workspace. It now grants nothing to anyone.
+    expect((await deleteOrg(employee.cookie, employee.orgId)).statusCode).toBe(200);
+
+    const allowed = await reset();
+    expect(allowed.statusCode, allowed.body).toBe(200);
+    expect(allowed.json().tempPassword).toBeTruthy();
   });
 
   it('is owner-only, and closed to outsiders', async () => {

@@ -39,6 +39,48 @@ describe('isPrivateIp', () => {
     expect(isPrivateIp('::ffff:10.0.0.1')).toBe(true);
   });
 
+  /**
+   * Every case below passed the guard as "public" until 2026-09-30. Found by reading this file
+   * after GHSA-rpw4-54j3-4h4q (`ip-address` recognising fe80::/64 instead of fe80::/10) failed
+   * CI's dependency audit — the same mistake was sitting in our own check, which matched the
+   * string "fe80:" and so covered only fe80::/16.
+   */
+  it('flags the whole of fe80::/10, not just addresses starting fe80:', () => {
+    expect(isPrivateIp('fe80::1'), 'the bottom of the range still works').toBe(true);
+    expect(isPrivateIp('fe81::1')).toBe(true);
+    expect(isPrivateIp('fe9f::1')).toBe(true);
+    expect(isPrivateIp('feb0::1')).toBe(true);
+    expect(isPrivateIp('febf:ffff::1'), 'the top of the range').toBe(true);
+  });
+
+  it('does not over-reach past fe80::/10 into real public space', () => {
+    expect(isPrivateIp('fec0::1'), 'site-local, deprecated and routable-ish — not link-local').toBe(false);
+    expect(isPrivateIp('fe7f::1')).toBe(false);
+    expect(isPrivateIp('2001:db8::1')).toBe(false);
+  });
+
+  it('flags an IPv4-mapped address written in hex, which reads as a different string', () => {
+    expect(isPrivateIp('::ffff:7f00:1'), '127.0.0.1').toBe(true);
+    expect(isPrivateIp('::ffff:a00:1'), '10.0.0.1').toBe(true);
+    expect(isPrivateIp('::ffff:a9fe:a9fe'), '169.254.169.254, the metadata endpoint').toBe(true);
+    expect(isPrivateIp('::ffff:cb00:710f'), '203.0.113.15 is public, mapped or not').toBe(false);
+  });
+
+  it('flags the unspecified address and carrier-grade NAT space', () => {
+    expect(isPrivateIp('::')).toBe(true);
+    expect(isPrivateIp('0:0:0:0:0:0:0:0')).toBe(true);
+    expect(isPrivateIp('100.64.0.1'), 'RFC6598, used for real cloud internals').toBe(true);
+    expect(isPrivateIp('100.127.255.255')).toBe(true);
+    expect(isPrivateIp('100.63.255.255'), 'just below the range, genuinely public').toBe(false);
+    expect(isPrivateIp('100.128.0.1'), 'just above it').toBe(false);
+  });
+
+  it('flags multicast and broadcast', () => {
+    expect(isPrivateIp('224.0.0.1')).toBe(true);
+    expect(isPrivateIp('255.255.255.255')).toBe(true);
+    expect(isPrivateIp('223.255.255.255'), 'the last ordinary unicast address').toBe(false);
+  });
+
   it('does not flag real public addresses', () => {
     expect(isPrivateIp('8.8.8.8')).toBe(false);
     expect(isPrivateIp('1.1.1.1')).toBe(false);
