@@ -1190,6 +1190,40 @@ app.delete('/api/organizations/:orgId/people/:personId', async (req, reply) => {
   return { ok: true };
 });
 
+/** Who has been taken out of this chart. Admin-only, like the people-details panel it sits
+ *  next to — it names people and when they left. */
+app.get('/api/organizations/:orgId/people/removed', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to view this organization');
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  return { people: await repo.listRemovedPeople(orgId) };
+});
+
+/** Puts someone back on the row they left on, so their history reattaches. Admin + step-up,
+ *  the same gate as removing them, and it takes a seat so it can be refused by the plan. */
+app.post('/api/organizations/:orgId/people/:personId/restore', async (req, reply) => {
+  const orgId = Number((req.params as { orgId: string }).orgId);
+  const check = await requireOrgRole(req, orgId, 'admin', 'not authorized to edit this organization', { elevated: true });
+  if (!check.ok) {
+    reply.code(check.code);
+    return { error: check.error };
+  }
+  const personId = Number((req.params as { personId: string }).personId);
+  const restored = await repo.restorePersonToChart(orgId, personId);
+  if (!restored.ok) {
+    if (restored.reason === 'full') {
+      reply.code(402);
+      return { error: `This organization is on the ${restored.plan} plan (${restored.limit} people max) and is already at that limit. Upgrade, or remove someone else, to bring them back.` };
+    }
+    reply.code(409);
+    return { error: 'that person is not on this organization\u2019s removed list' };
+  }
+  return { ok: true, managerCleared: restored.managerCleared };
+});
+
 /* ---------- org ---------- */
 
 app.get('/api/org', async (req, reply) => {

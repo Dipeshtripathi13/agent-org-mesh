@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, type AgentRuntime, type OrgAdmin, type OrgMainAgent, type OrgRole, type Person } from '../lib/api';
+import { api, type AgentRuntime, type OrgAdmin, type OrgMainAgent, type OrgRole, type Person, type RemovedPerson } from '../lib/api';
 import { CredentialsFields } from '../components/primitives';
 import { useAuth } from '../lib/AuthContext';
 import { useOrg } from '../lib/OrgContext';
@@ -148,11 +148,16 @@ function ChartBuilder() {
   // still renders without them.
   const [details, setDetails] = useState<Map<number, Awaited<ReturnType<typeof api.orgPeopleDetails>>['people'][number]>>(new Map());
   const [openDetails, setOpenDetails] = useState<number | null>(null);
+  // Removed people are invisible everywhere else by design, so this is the only place an
+  // admin can see — or undo — a removal. Viewers get a 403 and simply see no section.
+  const [removed, setRemoved] = useState<RemovedPerson[]>([]);
+  const [showRemoved, setShowRemoved] = useState(false);
   const load = () => Promise.all([
     api.org(orgId).then((d) => setPeople(d.people)),
     api.orgPeopleDetails(orgId)
       .then((d) => setDetails(new Map(d.people.map((x) => [x.personId, x]))))
       .catch(() => setDetails(new Map())),
+    api.removedPeople(orgId).then((d) => setRemoved(d.people)).catch(() => setRemoved([])),
   ]);
   useEffect(() => { void load(); setForm(EMPTY_FORM); setError(null); setJustAdded(null); }, [orgId]);
 
@@ -235,6 +240,27 @@ function ChartBuilder() {
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'could not remove person');
+    }
+  };
+
+  const restorePerson = async (person: RemovedPerson) => {
+    setError(null);
+    const ok = window.confirm(
+      `Bring ${person.name} back into this chart?\n\n` +
+      `They return on the same record they left on, so what was already asked and answered about ` +
+      `them is theirs again, and any login they had works here once more. It uses a seat. Tools ` +
+      `they had connected stay disconnected, and the push tokens revoked when they left stay revoked.`,
+    );
+    if (!ok) return;
+    try {
+      const { managerCleared } = await runWithStepUp(() => api.restorePerson(orgId, person.id));
+      await load();
+      await refresh();
+      if (managerCleared) {
+        setError(`${person.name} is back at the top of the chart — the manager they reported to has since left.`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'could not bring that person back');
     }
   };
 
@@ -412,6 +438,46 @@ function ChartBuilder() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {removed.length > 0 && (
+        <div className="inner" style={{ borderTop: '1px solid var(--rule)' }}>
+          <button
+            className="chip"
+            aria-expanded={showRemoved}
+            onClick={() => setShowRemoved((v) => !v)}
+          >
+            {showRemoved ? 'Hide' : 'Show'} {removed.length} removed {removed.length === 1 ? 'person' : 'people'}
+          </button>
+          {showRemoved && (
+            <>
+              <p className="glossary" style={{ marginTop: 10 }}>
+                Removing someone never deletes their record, so they can come back to it. What was
+                already asked and answered about them is kept either way.
+              </p>
+              {removed.map((r) => (
+                <div
+                  key={r.id}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid var(--rule)' }}
+                >
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: 13 }}>{r.name}</span>{' '}
+                    <span style={{ fontSize: 11, color: 'var(--ink3)' }}>
+                      {r.title} &middot; left {formatDate(r.removedAt)}
+                      {r.claimCount > 0 && ` · ${r.claimCount} ${r.claimCount === 1 ? 'answer' : 'answers'} on record`}
+                      {r.hadLogin && ' · had a login'}
+                    </span>
+                  </span>
+                  {canEdit && (
+                    <button className="chip" onClick={() => restorePerson(r)}>
+                      Bring back
+                    </button>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

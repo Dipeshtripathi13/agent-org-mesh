@@ -158,6 +158,15 @@ export interface Organization {
   /** People this organization's plan allows; null means unlimited. */
   seatLimit: number | null;
 }
+export interface RemovedPerson {
+  id: number;
+  name: string;
+  title: string;
+  team: string;
+  removedAt: string;
+  hadLogin: boolean;
+  claimCount: number;
+}
 export interface NewPerson {
   name: string; title: string; team: string; managerId: number | null; agentDeployed: boolean;
   /** Optional — sends this person a one-time invitation link to claim this chart entry. */
@@ -301,6 +310,15 @@ export const api = {
     ),
   removePerson: (orgId: number, personId: number) =>
     req<{ ok: true }>(`/organizations/${orgId}/people/${personId}`, { method: 'DELETE' }),
+  /** Everyone taken out of this chart — the only view that shows them, since every other
+   *  roster read filters them out. Admin-only. */
+  removedPeople: (orgId: number) =>
+    req<{ people: RemovedPerson[] }>(`/organizations/${orgId}/people/removed`),
+  /** Puts them back on the row they left on, so their history reattaches. Takes a seat, so it
+   *  can be refused by the plan; `managerCleared` means their old manager has since left and
+   *  they came back at the top of the chart. */
+  restorePerson: (orgId: number, personId: number) =>
+    req<{ ok: true; managerCleared: boolean }>(`/organizations/${orgId}/people/${personId}/restore`, { method: 'POST' }),
   /** Archives the organization — owner-only, and refused while anyone else is still in its
    *  chart. Nothing it owns is deleted; see the endpoint's own comment in server.ts. */
   deleteOrganization: (orgId: number) =>

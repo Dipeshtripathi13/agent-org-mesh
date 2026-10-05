@@ -1707,6 +1707,39 @@ leaves the chart, the seat count drops, and their row and claim are still in the
 afterwards. Not built: restoring someone (re-add them as a new chart entry), and no
 back-fill — nobody was removable before this, so there is no historical state to migrate.
 
+**Someone removed from a chart can be brought back, onto the row they left on (2026-10-05).**
+The gap the removal work left behind — this file said "Not built: restoring someone (re-add them
+as a new chart entry)", and re-adding was all an admin could do. That starts a *new* `people`
+row, so the claims about them, the audit rows naming them and their own linked login all stay
+attached to the old one: the mistake is unfixable in the product even though nothing was ever
+deleted. `repo.restorePersonToChart` clears `removed_at` on the original row instead, so all of
+it reattaches, and `GET /api/organizations/:orgId/people/removed` is the only place removed
+people are visible at all (every roster read filters them out).
+
+Three decisions worth keeping. **Restoring is an add as far as the plan is concerned**, so it
+runs behind the same `hashtext('org-seats')` advisory lock as `createPersonWithinSeatLimit` and
+returns the same 402 when the seats are full — someone else may have taken the seat in the
+meantime, and without the lock it would be the identical race that once put 21 people in a
+10-seat org. **Their manager may have left too**: rather than refuse, or leave them pointing at
+someone outside the chart (which hides them from the tree entirely, since it renders from
+managers down), they come back at the top and the response says `managerCleared` so the screen
+can tell them. **Revoked push tokens stay revoked** — those are credentials that were handed out
+and may have travelled; new ones can be minted. Admin + step-up, the same gate as removing them;
+the list is admin-only too, since it names people and when they left.
+
+Guarded by 6 new tests in `personRemoval.api.test.ts` (11 now); six mutations — ignoring the
+seat limit, keeping a departed manager, restoring someone who never left, and opening either
+route to viewers or dropping step-up — each fail it. **Two of those only started failing after
+the test got stronger**: the authorization case originally used an outsider with no role at
+all, so flipping the gate from `admin` to `viewer` passed, and every account in the suite is
+elevated at creation, so dropping `{ elevated: true }` passed too. It now adds a real viewer and
+expires `elevated_until` directly. Same lesson as the ingest-token join and the archived-org
+filter: a mutation that survives usually means the test is weaker than it reads, not that the
+code is redundant. Checked in a real browser end to end: the removed person is listed with what
+is still on record about them ("1 answer on record"), the confirm says what comes back and what
+does not, step-up prompts, the seat count goes 1 → 2, and the database shows the same row id
+with its claim still attached.
+
 **Deleting an organization archives it, and that is what makes the organizations cap
 honest (2026-09-20).** The 402 from `MAX_ORGS_PER_ACCOUNT` told people to "remove one you no
 longer need" and there was no way to remove one — signup creates an organization

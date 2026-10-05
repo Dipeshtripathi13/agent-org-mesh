@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PLAN_SEATS } from './plans.js';
 
 /**
  * Removing someone from a chart (migration 0007). Until 2026-09-20 this was a plain
@@ -28,10 +29,11 @@ async function newOwner(label: string) {
   // Removing someone is a step-up action, like every other destructive admin write.
   const step = await app.inject({
     method: 'POST', url: '/api/auth/step-up', headers: { cookie: cookieOf(res) },
+    remoteAddress: `10.30.${ip % 250}.${(ip % 250) + 1}`,
     payload: { password: 'person-removal-pass-1' },
   });
   expect(step.statusCode, step.body).toBe(200);
-  return { cookie: cookieOf(res), orgId: res.json().organization.id as number, personId: res.json().person.id as number };
+  return { cookie: cookieOf(res), orgId: res.json().organization.id as number, personId: res.json().person.id as number, accountId: res.json().account.id as number };
 }
 
 async function addPerson(cookie: string, orgId: number, name: string, managerId: number | null = null) {
@@ -190,5 +192,140 @@ describe('removing someone from the chart', () => {
     expect((await remove(owner.cookie, owner.orgId, leaver)).statusCode).toBe(200);
     const again = await remove(owner.cookie, owner.orgId, leaver);
     expect(again.statusCode).toBe(409);
+  });
+});
+
+/**
+ * Putting someone back. Removal marks rather than deletes precisely so this is possible: the
+ * same row comes back, so their claims, the audit rows about them and their linked login all
+ * reattach — which is the one thing "add them again" could never do.
+ */
+describe('restoring someone to the chart', () => {
+  const removedList = async (cookie: string, orgId: number) => {
+    const res = await app.inject({
+      method: 'GET', url: `/api/organizations/${orgId}/people/removed`, headers: { cookie },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json().people as { id: number; name: string; removedAt: string; claimCount: number; hadLogin: boolean }[];
+  };
+
+  const restore = (cookie: string, orgId: number, personId: number) =>
+    app.inject({ method: 'POST', url: `/api/organizations/${orgId}/people/${personId}/restore`, headers: { cookie } });
+
+  it('brings back the same row, with their history still attached to it', async () => {
+    const owner = await newOwner('restore');
+    const leaver = await addPerson(owner.cookie, owner.orgId, 'Returning Person');
+    await giveThemAClaim(owner.orgId, leaver);
+    expect((await remove(owner.cookie, owner.orgId, leaver)).statusCode).toBe(200);
+
+    const listed = await removedList(owner.cookie, owner.orgId);
+    const entry = listed.find((p) => p.id === leaver)!;
+    expect(entry, 'they have to be findable before they can be restored').toBeTruthy();
+    expect(entry.claimCount, 'what is still on record about them').toBe(1);
+
+    const res = await restore(owner.cookie, owner.orgId, leaver);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().managerCleared).toBe(false);
+
+    expect(await rosterIds(owner.cookie, owner.orgId)).toContain(leaver);
+    expect((await removedList(owner.cookie, owner.orgId)).some((p) => p.id === leaver)).toBe(false);
+    const claims = await pool.query('SELECT count(*)::int AS n FROM claims WHERE person_id = $1', [leaver]);
+    expect(claims.rows[0].n, 'the same row, so the same history').toBe(1);
+  });
+
+  it('gives their own login its access back', async () => {
+    const owner = await newOwner('restore-access');
+    const personId = await addPerson(owner.cookie, owner.orgId, 'Returning With Login');
+    const email = `restore-leaver-${Date.now()}-${++ip}@example.test`;
+    const signup = await app.inject({
+      method: 'POST', url: '/api/auth/signup', remoteAddress: `10.32.${ip % 250}.${(ip % 250) + 1}`,
+      payload: { name: 'Returning With Login', email, password: 'restore-own-pass-1' },
+    });
+    expect(signup.statusCode, signup.body).toBe(200);
+    const theirCookie = cookieOf(signup);
+    await pool.query('UPDATE accounts SET email_verified_at = now() WHERE email = $1', [email]);
+    await pool.query('UPDATE people SET account_id = $1 WHERE id = $2', [signup.json().account.id, personId]);
+
+    expect((await remove(owner.cookie, owner.orgId, personId)).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: `/api/org?orgId=${owner.orgId}`, headers: { cookie: theirCookie } })).statusCode).toBe(403);
+    expect((await removedList(owner.cookie, owner.orgId)).find((p) => p.id === personId)!.hadLogin).toBe(true);
+
+    expect((await restore(owner.cookie, owner.orgId, personId)).statusCode).toBe(200);
+
+    const org = await app.inject({ method: 'GET', url: `/api/org?orgId=${owner.orgId}`, headers: { cookie: theirCookie } });
+    expect(org.statusCode, 'the same login is theirs again').toBe(200);
+  });
+
+  it('brings them back at the top when their manager has since left', async () => {
+    const owner = await newOwner('restore-orphan');
+    const manager = await addPerson(owner.cookie, owner.orgId, 'The Manager');
+    const report = await addPerson(owner.cookie, owner.orgId, 'Their Report', manager);
+
+    expect((await remove(owner.cookie, owner.orgId, report)).statusCode).toBe(200);
+    expect((await remove(owner.cookie, owner.orgId, manager)).statusCode).toBe(200);
+
+    const res = await restore(owner.cookie, owner.orgId, report);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().managerCleared, 'their manager is gone, so they come back at the top').toBe(true);
+
+    // Not left pointing at someone outside the chart, which would hide them from the tree.
+    const row = await pool.query('SELECT manager_id FROM people WHERE id = $1', [report]);
+    expect(row.rows[0].manager_id).toBeNull();
+    expect(await rosterIds(owner.cookie, owner.orgId)).toContain(report);
+  });
+
+  it('counts as an add against the plan, and is refused when the seats are full', async () => {
+    const owner = await newOwner('restore-full');
+    const starter = PLAN_SEATS.starter!;
+    for (let i = 2; i <= starter; i += 1) {
+      await addPerson(owner.cookie, owner.orgId, `Person ${i}`);
+    }
+    const last = (await pool.query('SELECT id FROM people WHERE org_id = $1 ORDER BY id DESC LIMIT 1', [owner.orgId])).rows[0].id;
+    expect((await remove(owner.cookie, owner.orgId, last)).statusCode).toBe(200);
+
+    // Their seat went to someone else in the meantime.
+    await addPerson(owner.cookie, owner.orgId, 'Took The Seat');
+
+    const refused = await restore(owner.cookie, owner.orgId, last);
+    expect(refused.statusCode).toBe(402);
+    expect(refused.json().error).toContain(`${starter} people max`);
+    expect(await rosterIds(owner.cookie, owner.orgId)).not.toContain(last);
+  });
+
+  it('refuses for someone who is still in the chart, and for strangers', async () => {
+    const owner = await newOwner('restore-guards');
+    const active = await addPerson(owner.cookie, owner.orgId, 'Still Here');
+    const outsider = await newOwner('restore-outsider');
+
+    const notRemoved = await restore(owner.cookie, owner.orgId, active);
+    expect(notRemoved.statusCode).toBe(409);
+
+    expect((await remove(owner.cookie, owner.orgId, active)).statusCode).toBe(200);
+    expect((await restore(outsider.cookie, owner.orgId, active)).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: `/api/organizations/${owner.orgId}/people/removed`, headers: { cookie: outsider.cookie } })).statusCode).toBe(403);
+
+    // A real viewer of this organization, not just a stranger: bringing someone back is a
+    // write, so viewer access must not be enough. (The stranger case alone left the gate
+    // mutable from 'admin' to 'viewer' without any test noticing.)
+    await pool.query(
+      `INSERT INTO org_admins (org_id, account_id, role, added_at) VALUES ($1,$2,'viewer',now())
+       ON CONFLICT (org_id, account_id) DO UPDATE SET role = 'viewer'`,
+      [owner.orgId, outsider.accountId],
+    );
+    expect((await app.inject({ method: 'GET', url: `/api/organizations/${owner.orgId}/people/removed`, headers: { cookie: outsider.cookie } })).statusCode,
+      'a viewer cannot even see the list — it names people and when they left').toBe(403);
+    expect((await restore(outsider.cookie, owner.orgId, active)).statusCode).toBe(403);
+
+    // And it needs a fresh password confirmation, like removing them did.
+    await pool.query("UPDATE sessions SET elevated_until = now() - interval '1 hour' WHERE account_id = $1", [owner.accountId]);
+    expect((await restore(owner.cookie, owner.orgId, active)).statusCode).toBe(428);
+
+    const step = await app.inject({
+      method: 'POST', url: '/api/auth/step-up', headers: { cookie: owner.cookie },
+      remoteAddress: `10.30.${ip % 250}.${(ip % 250) + 1}`,
+      payload: { password: 'person-removal-pass-1' },
+    });
+    expect(step.statusCode, step.body).toBe(200);
+    expect((await restore(owner.cookie, owner.orgId, active)).statusCode).toBe(200);
   });
 });

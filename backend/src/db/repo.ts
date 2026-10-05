@@ -999,6 +999,18 @@ export async function archiveOrganization(
 
 export const MAX_ORGS = MAX_ORGS_PER_ACCOUNT;
 
+export interface RemovedPerson {
+  id: number;
+  name: string;
+  title: string;
+  team: string;
+  removedAt: string;
+  /** Whether a real login was linked when they left — restoring reattaches it. */
+  hadLogin: boolean;
+  /** What is still on record about them, and the reason their row was never deleted. */
+  claimCount: number;
+}
+
 interface NewPersonInput {
   name: string;
   title: string;
@@ -1066,6 +1078,96 @@ export async function removePersonFromChart(
     );
     await client.query('COMMIT');
     return { ok: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Everyone taken out of this organization's chart, most recently first. The only way to see
+ *  them: every other roster read filters them out (migration 0007). */
+export async function listRemovedPeople(orgId: number): Promise<RemovedPerson[]> {
+  const { rows } = await pool.query(
+    `SELECT p.id, p.name, p.title, p.team, p.removed_at, p.account_id IS NOT NULL AS had_login,
+            (SELECT count(*)::int FROM claims c WHERE c.person_id = p.id) AS claim_count
+       FROM people p
+      WHERE p.org_id = $1 AND p.removed_at IS NOT NULL
+      ORDER BY p.removed_at DESC, p.id DESC`,
+    [orgId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    title: r.title,
+    team: r.team,
+    removedAt: iso(r.removed_at),
+    hadLogin: r.had_login === true,
+    claimCount: r.claim_count as number,
+  }));
+}
+
+/** Puts someone back in the chart, on the same row they left on — so their claims, the audit
+ *  rows about them, and their own linked login all reattach rather than starting over as a new
+ *  entry (which is all "add them again" could do).
+ *
+ *  Takes a seat, so it runs behind the same `org-seats` lock as `createPersonWithinSeatLimit`
+ *  and refuses the same way when the plan is full — restoring is an add as far as the limit is
+ *  concerned, and without the lock it would be the identical race.
+ *
+ *  Their manager may have left in the meantime. Rather than refuse, or leave them pointing at
+ *  someone no longer in the chart (which hides them from the tree entirely, since it renders
+ *  from managers down), they come back at the top and the caller is told so it can say that.
+ *
+ *  Deliberately *not* undone: the ingest tokens revoked at removal stay revoked. Those are
+ *  credentials that were handed out and may have travelled; the person can mint new ones. */
+export async function restorePersonToChart(orgId: number, personId: number): Promise<
+  | { ok: true; managerCleared: boolean }
+  | { ok: false; reason: 'not-removed' }
+  | { ok: false; reason: 'full'; plan: OrgPlan; limit: number; used: number }
+> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('org-seats'), $1)", [orgId]);
+
+    const { rows: personRows } = await client.query(
+      'SELECT manager_id FROM people WHERE id = $1 AND org_id = $2 AND removed_at IS NOT NULL',
+      [personId, orgId],
+    );
+    if (personRows.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not-removed' };
+    }
+
+    const { rows: orgRows } = await client.query('SELECT plan FROM organizations WHERE id = $1', [orgId]);
+    if (orgRows.length === 0) throw new Error(`No organization ${orgId}`);
+    const plan = orgRows[0].plan as OrgPlan;
+    const { rows: countRows } = await client.query(
+      'SELECT count(*)::int AS n FROM people WHERE org_id = $1 AND removed_at IS NULL', [orgId]);
+    const used = countRows[0].n as number;
+    const limit = seatLimit(plan);
+    if (limit != null && used >= limit) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'full', plan, limit, used };
+    }
+
+    const managerId = personRows[0].manager_id as number | null;
+    let managerCleared = false;
+    if (managerId != null) {
+      const { rowCount } = await client.query(
+        'SELECT 1 FROM people WHERE id = $1 AND org_id = $2 AND removed_at IS NULL', [managerId, orgId]);
+      managerCleared = !rowCount;
+    }
+
+    await client.query(
+      `UPDATE people SET removed_at = NULL, manager_id = CASE WHEN $3 THEN NULL ELSE manager_id END
+        WHERE id = $1 AND org_id = $2`,
+      [personId, orgId, managerCleared],
+    );
+    await client.query('COMMIT');
+    return { ok: true, managerCleared };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
